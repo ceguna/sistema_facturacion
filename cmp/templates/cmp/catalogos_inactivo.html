@@ -1,0 +1,80 @@
+<div class="modal-dialog modal-lg">
+    <div class="modal-content">
+        <form method="POST" class="form-inline">
+            {% csrf_token %}
+            <div class="col-xl-12 col-md-12 mb-12">
+                <div class="card border-left-danger shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                    <div class="alert">
+                                        ¿ Inactivar {{ obj.descripcion }} ?
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-danger" id="btnInactivar"><i class="far fa-question-circle"></i> 
+                                    Si, Inactivar
+                                </button>
+                                <button type="button" class="btn btn-success" onclick="return cerrar_modal()">
+                                    No, Cancelar
+                                </button>
+                            </div>
+                            <div class="col-auto">
+                                <i class="far fa-question-circle fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+$(document).ready(function(){
+
+    var token = $('input[name=csrfmiddlewaretoken]').val();
+
+    $.ajaxSetup({
+        beforeSend: function(xhr, settings) {
+            if (!(/^http:.*/.test(settings.url) || /^https:.*/.test(settings.url))) {
+                xhr.setRequestHeader("X-CSRFToken", token);
+            }
+        }
+    });
+
+    $("#btnInactivar").click(function(e){
+        e.preventDefault();
+        //alert("Probando");
+
+        var id = {{ obj.id }}; //plantilla de django
+        var template="{% url 'cmp:proveedor_inactivar' obj.id %}"; //en esta variable se guarda la ruta que lleva a la opcion de inactivar.
+        var data = {"id":id} //en este variable se necesita guardar el id que viene de la vista
+
+        data = JSON.stringify(data); //con JSON se formatea la variable data
+
+        //Aqui se activa el metodo AJAX
+        $.ajax({
+            type: "POST", //se especifica que de tipo POST que se va ejecutar
+            url: template, //se especifica la url que se va a procesar
+            data:data, //se especifica la data que se va a enviar
+            beforeSend: function(xhr,settings){
+                $.ajaxSettings.beforeSend(xhr,settings)
+            },
+            success: function(response){ //si todo anda bien
+                console.log(response); //se envia a la consola la respuesta
+                cerrar_modal(); //cierra la ventana modal
+                //alert(response); //se manda imprimir un alerta
+                var tipo=(response.startsWith('Proveedor no existe') ? 'red':'green');
+                mensaje(response,tipo);
+            },
+            error: function(jqXHR, textStatus, errorThrow){ //si existiera algun error
+                console.log(textStatus, errorThrow); //se el error a la consola la respuesta
+                mensaje(errorThrow,'red');
+                cerrar_modal(); //cierra la ventana modal
+            }
+        });
+        //location.reload();
+    }); 
+});
+</script>
