@@ -1,0 +1,31 @@
+# requirements.txt - Sistema de Facturacion
+# Actualizado para Python 3.13 + Django 5.2 (LTS)
+# Generado y verificado (resolucion de dependencias sin conflictos) el 2026-07-13
+
+Django>=5.2,<5.3
+djangorestframework>=3.17
+django-userforeignkey>=0.6
+
+# Base de datos
+psycopg2-binary>=2.9.12
+
+# Imagenes
+Pillow>=12.0
+
+# Generacion y firma digital de PDFs (facturas)
+reportlab>=4.5
+pypdf>=6.14
+xhtml2pdf>=0.2.17
+pyHanko>=0.35
+pyhanko-certvalidator>=0.31
+svglib>=2.0
+qrcode>=8.2
+
+# Utilidades
+requests>=2.34
+PyYAML>=6.0.3
+python-bidi>=0.6
+tzlocal>=5.4
+
+# Servir archivos estaticos en produccion (Render)
+whitenoise>=6.12

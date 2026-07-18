@@ -1,0 +1,12 @@
+﻿entvirt/
+staticfiles/
+media/
+__pycache__/
+*.pyc
+*.pyo
+.env
+db.sqlite3
+*.log
+.vscode/
+.idea/
+files/
