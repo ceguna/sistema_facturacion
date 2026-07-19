@@ -1,5 +1,6 @@
 <!-- Hereda la plantilla base.html -->
 {% extends 'base/base.html' %}
+{% load l10n %}
 
 <!-- Bloque para sobreescribir el contenido de la pagina -->
 {% block page_content %}
@@ -68,7 +69,7 @@
                     <td>{{ item.celular }}</td>
                     <td>{{ item.email }}</td>
                     <td>{# item.estado|yesno:"Activo,Inactivo" #}
-                        <div onclick="inactivar({{item.id}})">
+                        <div onclick="inactivar({{item.id|unlocalize}})">
                           {% if item.estado %}
                             <i class="far fa-thumbs-up text-primary"></i>
                           {% else %}

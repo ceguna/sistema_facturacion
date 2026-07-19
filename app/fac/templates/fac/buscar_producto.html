@@ -1,4 +1,5 @@
 <div class="modal-dialog modal-lg">
+  {% load l10n %}
   <div class="modal-content">
       <div class="col-xl-12 col-md-12 mb-12">
           <div class="card border-left-warning shadow h-100 py-2">
@@ -40,7 +41,7 @@
                                   <td>
                                       {% if item.existencia > 0 and item.estado %}
                                       <button class="btn btn-warning btn-circle" id="btnSelect" 
-                                      onclick="seleccionarProducto({{item.id}},'{{item.codigo}}','{{item.descripcion}}',{{item.precio}},{{item.existencia}})">
+                                      onclick="seleccionarProducto({{item.id|unlocalize}},'{{item.codigo}}','{{item.descripcion}}',{{item.precio|unlocalize}},{{item.existencia|unlocalize}})">
                                           <i class="far fa-hand-pointer"></i>
                                       </button>
                                       {% endif %}

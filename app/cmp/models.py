@@ -89,7 +89,7 @@ class ComprasDet(ClaseModelo):
         self.total = self.sub_total - float(self.descuento)
         super(ComprasDet, self).save(*args, **kwargs)
     
-    class Mega:
+    class Meta:
         verbose_name_plural = "Detalles Compras"
         verbose_name="Detalle Compra"
 
@@ -102,8 +102,8 @@ def detalle_compra_borrar(sender,instance, **kwargs):
     if enc:
         sub_total = ComprasDet.objects.filter(compra=id_compra).aggregate(Sum('sub_total'))
         descuento = ComprasDet.objects.filter(compra=id_compra).aggregate(Sum('descuento'))
-        enc.sub_total=sub_total['sub_total__sum']
-        enc.descuento=descuento['descuento__sum']
+        enc.sub_total = sub_total['sub_total__sum'] or 0.00
+        enc.descuento = descuento['descuento__sum'] or 0.00
         enc.save()
     
     prod=Producto.objects.filter(pk=id_producto).first()

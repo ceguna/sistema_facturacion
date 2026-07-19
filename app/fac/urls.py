@@ -1,7 +1,8 @@
 from django.urls import path, include
 
 from .views import ClienteView,ClienteNew,ClienteEdit,clienteInactivar, \
-    FacturaView, facturas, ProductoView, borrar_detalle_factura, FacturaDetDelete
+    FacturaView, facturas, ProductoView, borrar_detalle_factura, FacturaDetDelete, \
+    anular_factura, eliminar_factura
 
 from .reportes import imprimir_factura_recibo, imprimir_factura_list
 
@@ -19,6 +20,9 @@ urlpatterns = [
     path('facturas/buscar-producto',ProductoView.as_view(), name="factura_producto"),
 
     path('facturas/borrar-detalle/<int:id>',borrar_detalle_factura, name="factura_borrar_detalle"),
+
+    path('facturas/anular/<int:id>', anular_factura, name="factura_anular"),
+    path('facturas/eliminar/<int:id>', eliminar_factura, name="factura_eliminar"),
 
     path('facturas/imprimir/<int:id>',imprimir_factura_recibo, name="factura_imprimir_one"),
 

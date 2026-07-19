@@ -61,11 +61,29 @@
         <td>{{ item.id }}</td>
         <td>{{ item.cliente }}</td>
         <td>{{ item.total }}</td>
-        <td>{{item.estado|yesno:"Activo,Inactivo"}}</td>
+        <td>
+          {% if item.anulado %}
+            <span class="badge badge-danger">Anulada</span>
+          {% else %}
+            {{item.estado|yesno:"Activo,Inactivo"}}
+          {% endif %}
+        </td>
         <td>
           <a href="{% url 'fac:factura_edit' item.id %}" class="href btn btn-warning btn-circle">
               <i class="far fa-edit"></i>
           </a>
+          {% if not item.anulado %}
+          <a href="#" class="href btn btn-secondary btn-circle" title="Anular factura"
+             onclick="return abrir_modal('{% url 'fac:factura_anular' item.id %}')">
+              <i class="fas fa-ban"></i>
+          </a>
+          {% endif %}
+          {% if user.is_superuser %}
+          <a href="#" class="href btn btn-danger btn-circle" title="Eliminar factura (superusuario)"
+             onclick="return abrir_modal('{% url 'fac:factura_eliminar' item.id %}')">
+              <i class="far fa-trash-alt"></i>
+          </a>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

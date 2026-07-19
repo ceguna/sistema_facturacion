@@ -1,0 +1,54 @@
+<div class="modal-dialog modal-lg">
+    <div class="modal-content">
+        <form role="form" action="{% url 'fac:factura_anular' enc.id %}" method="POST">
+            <div class="col-xl-12 col-md-12 mb-12">
+                <div class="card border-left-warning shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                Anular Factura
+                            </div>
+                            <div class="dropdown-divider"></div>
+                                {% csrf_token %}
+                                <div class="row">
+                                    <div class="col-12">
+                                        ¿Anular la factura número <b>{{ enc.id }}</b> del cliente
+                                        <b>{{ enc.cliente }}</b>, por un total de <b>{{ enc.total }}</b>?
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-12">
+                                        <small class="text-muted">
+                                            Esta acción NO borra la factura, solo la marca como
+                                            "Anulada" y devuelve el stock de los productos
+                                            facturados. Solo debe usarse cuando la operación no
+                                            se llegó a realizar.
+                                        </small>
+                                    </div>
+                                </div>
+                                <div class="row mt-2">
+                                    <div class="col-12">
+                                        <label for="motivo_anulacion">Motivo (opcional):</label>
+                                        <textarea class="form-control" id="motivo_anulacion"
+                                            name="motivo_anulacion" rows="2"></textarea>
+                                    </div>
+                                </div>
+                            <div class="dropdown-divider"></div>
+                                <div class="row">
+                                    <div class="col">
+                                        <button type="submit" class="btn btn-danger"><span class="fa fa-ban"></span> Si, Anular</button>
+                                        <button type="button" class="btn btn-success" onclick="return cerrar_modal()">Cancelar</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="far fa-calendar-times fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>

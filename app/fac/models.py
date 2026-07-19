@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth.models import User
 
 #Para los signals
 from django.db.models.signals import post_save, post_delete
@@ -71,6 +72,18 @@ class FacturaEnc(ClaseModelo2):
     descuento=models.FloatField(default=0)
     total=models.FloatField(default=0)
 
+    # Campos para anulacion (no se borra el registro, solo se marca)
+    anulado = models.BooleanField(default=False)
+    fecha_anulacion = models.DateTimeField(null=True, blank=True)
+    motivo_anulacion = models.CharField(max_length=250, null=True, blank=True)
+    usuario_anulacion = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    # Placeholder para Fase 3 (integracion SIN). Mientras sea null, la
+    # factura no ha sido reportada al SIN y puede eliminarse fisicamente.
+    cuf = models.CharField(max_length=100, null=True, blank=True)
+
     def __str__(self):
         return '{}'.format(self.id)
 
@@ -82,7 +95,8 @@ class FacturaEnc(ClaseModelo2):
         verbose_name_plural = "Encabezado Facturas"
         verbose_name="Encabezado Factura"
         permissions = [
-            ('sup_caja_facturaenc','Permisos de Supervisor de Caja Encabezado')
+            ('sup_caja_facturaenc','Permisos de Supervisor de Caja Encabezado'),
+            ('anular_facturaenc','Permiso para Anular Facturas')
         ]
     
 
@@ -123,9 +137,9 @@ def detalle_fac_guardar(sender,instance,**kwargs):
         
         descuento = FacturaDet.objects.filter(factura=factura_id) \
             .aggregate(descuento=Sum('descuento')).get('descuento',0.00)
-        
-        enc.sub_total = sub_total
-        enc.descuento = descuento
+
+        enc.sub_total = sub_total or 0.00
+        enc.descuento = descuento or 0.00
         enc.save()
 
     #Se dismimuye la cantidad facturada
@@ -141,15 +155,21 @@ def detalle_factura_borrar(sender,instance, **kwargs):
     id_factura = instance.factura.id
 
     enc = FacturaEnc.objects.filter(pk=id_factura).first()
+    ya_estaba_anulada = enc.anulado if enc else False
+
     if enc:
         sub_total = FacturaDet.objects.filter(factura=id_factura).aggregate(Sum('sub_total'))
         descuento = FacturaDet.objects.filter(factura=id_factura).aggregate(Sum('descuento'))
-        enc.sub_total=sub_total['sub_total__sum']
-        enc.descuento=descuento['descuento__sum']
+        enc.sub_total = sub_total['sub_total__sum'] or 0.00
+        enc.descuento = descuento['descuento__sum'] or 0.00
         enc.save()
-    
-    prod=Producto.objects.filter(pk=id_producto).first()
-    if prod:
-        cantidad = int(prod.existencia) + int(instance.cantidad)
-        prod.existencia = cantidad
-        prod.save()
+
+    # Si la factura ya estaba anulada, el stock de este producto ya se
+    # devolvio en ese momento (ver anular_factura). No volver a sumarlo
+    # aqui, o quedaria duplicado.
+    if not ya_estaba_anulada:
+        prod=Producto.objects.filter(pk=id_producto).first()
+        if prod:
+            cantidad = int(prod.existencia) + int(instance.cantidad)
+            prod.existencia = cantidad
+            prod.save()

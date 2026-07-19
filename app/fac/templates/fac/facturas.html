@@ -1,4 +1,5 @@
 {% extends 'base/base.html' %}
+{% load l10n %}
 
 {% block page_content %}
 <form method="post" id="frmFacturas" action="{% if enc.id %}{% url 'fac:factura_edit' enc.id %}{% else %}{% url 'fac:factura_new' %}{% endif %}">
@@ -8,7 +9,7 @@
         {% if enc %} Editar {% else %} Nueva {% endif %} Factura
     </div>
     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
-        <a href="#" class="btn btn-danger">Guardar</a>
+        <a href="{% url 'fac:factura_list' %}" class="btn btn-danger">Guardar</a>
         <a href="{% url 'fac:factura_imprimir_one' enc.id %}" class="btn btn-success" target="_factura">Imprimir</a>
         <a href="{% url 'fac:factura_list' %}" class="btn btn-info">Cancelar</a>
     </div>
@@ -35,16 +36,13 @@
                                     {% endfor %}
                                 </select> -->
                                 <div class="row">
-                                    <div class="col-lg-11 col-md-11">
+                                    <div class="col-lg-12 col-md-12">
                                         <select name="enc_cliente" id="enc_cliente" class="form-control">
                                             <option value="0">Seleccione Cliente</option>
                                             {% for item in clientes %}
                                                 <option value="{{item.id}}">{{ item.nombres }} {{item.apellidos}} </option>
                                             {% endfor %}
                                         </select>
-                                    </div>
-                                    <div class="col-lg-1 col-md-1">
-                                        <button class="btn btn-outline-danger btn-sm" id="btnEditCliente"><i class="far fa-edit"></i></button>
                                     </div>
                                 </div>
                             </div>
@@ -94,7 +92,7 @@
                 <!-- Sección Derecha -->
                 <div class="col-lg-6 from-group">
                     <div class="row p-2">
-                        <div class="col-lg-1">Cod</div>
+                        <div class="col-lg-1 pr-0 text-right">Cod.:</div>
                         <div class="col-lg-3">
                             <input type="text" class="form-control" name="codigo" id="codigo" placeholder="Cód. Producto">
                         </div>
@@ -108,7 +106,7 @@
                         </div>
                     </div>
                     <div class="row">
-                        <div class="col-lg-1">Cant</div>
+                        <div class="col-lg-1 pr-0 text-right">Cant.:</div>
                         <div class="col-lg-3">
                             <input type="number" class="form-control" name="cantidad" id="cantidad" placeholder="Cantidad" value="0">
                             <input type="hidden" class="form-control" name="existencia" id="existencia">
@@ -168,21 +166,25 @@
                             {% for item in det%}
                             <tr>
                                 <td>{{ item.id }}</td>
-                                <td>{{ item.producto }}</td>
+                                <td>{{ item.producto.codigo }}</td>
                                 <td>{{ item.producto.descripcion }}</td>
                                 <td>{{ item.cantidad }}</td>
                                 <td>{{ item.sub_total }}</td>
                                 <td>{{ item.descuento }}</td>
                                 <td>{{ item.total }}</td>
                             <td>
+                                {% if not enc.cuf and not enc.anulado %}
                                 <button type="button" class="btn btn-warning btn-circle"
-                                    onclick="borrar_detalle({{ item.id }})">
+                                    onclick="borrar_detalle({{ item.id|unlocalize }})">
                                     <i class="fas fa-history"></i>
                                 </button>
                                 <button class="btn btn-danger btn-circle" 
                                     onclick="return abrir_modal('{% url 'fac:facturas_del' enc.id item.id %}')">
                                     <i class="fas fa-trash-alt"></i>
                                 </button>
+                                {% else %}
+                                <span class="text-muted small">Sin acciones (factura {% if enc.anulado %}anulada{% else %}ya reportada al SIN{% endif %})</span>
+                                {% endif %}
                             </td>
                             </tr>
                             {% endfor %}
@@ -371,7 +373,7 @@
             },
             buttons:{
                 borrar:{
-                    text:"Borrar",
+                    text:"Confirmar Reversión",
                     btnClass:"btn btn-danger",
                     action: function(){
                         //Aqui se captura el usuario y contraseña

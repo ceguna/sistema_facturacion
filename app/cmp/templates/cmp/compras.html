@@ -1,4 +1,5 @@
 {% extends 'base/base.html'%}
+{% load l10n %}
 {% block page_content %}
     <form method="post" id="frmCompras">
         {% csrf_token %}
@@ -91,7 +92,7 @@
                                                         <td>{{ item.descripcion }}</td>
                                                         <td>
                                                             <button type="button" class="btn btn-warning btn-circle"
-                                                            onclick="selectProducto({{item.id}},'{{item.descripcion}}')" ><i class="far fa-hand-pointer"></i></button>
+                                                            onclick="selectProducto({{item.id|unlocalize}},'{{item.descripcion}}')" ><i class="far fa-hand-pointer"></i></button>
                                                         </td>
                                                         </tr>
                                                         {% endfor %}

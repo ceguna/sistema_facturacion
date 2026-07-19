@@ -10,6 +10,7 @@ from datetime import datetime
 from django.contrib import messages
 
 from django.contrib.auth import authenticate
+from django.utils import timezone
 
 from bases.views import SinPrivilegios
 
@@ -103,7 +104,9 @@ def facturas(request,id=None):
                 'cliente':0,
                 'sub_total':0.00,
                 'descuento':0.00,
-                'total': 0.00
+                'total': 0.00,
+                'anulado': False,
+                'cuf': None
             }
             detalle=None
         else:
@@ -113,7 +116,9 @@ def facturas(request,id=None):
                 'cliente':enc.cliente,
                 'sub_total':enc.sub_total,
                 'descuento':enc.descuento,
-                'total':enc.total
+                'total':enc.total,
+                'anulado': enc.anulado,
+                'cuf': enc.cuf
             }
 
         detalle=FacturaDet.objects.filter(factura=enc)
@@ -213,11 +218,119 @@ def borrar_detalle_factura(request, id):
     return render(request,template_name,context)
 
 class FacturaDetDelete(SinPrivilegios, generic.DeleteView):
-    permission_required = "fac.delete_facturasdet"
+    permission_required = "fac.delete_facturadet"
     model = FacturaDet
     template_name = "fac/factura_det_del.html"
     context_object_name = 'obj'
-    
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        messages.success(self.request, 'Producto Eliminado')
+        return response
+
     def get_success_url(self):
           id=self.kwargs['id']
           return reverse_lazy('fac:factura_edit', kwargs={'id': id})
+
+def _dentro_plazo_anulacion(fecha_factura, ahora):
+    """
+    Regla del SIN (RND 102100000011): las facturas de la modalidad
+    Electronica en Linea pueden anularse hasta el dia 9 del mes
+    siguiente a su emision.
+    """
+    if ahora.year == fecha_factura.year and ahora.month == fecha_factura.month:
+        return True
+
+    if fecha_factura.month == 12:
+        mes_siguiente, anio_siguiente = 1, fecha_factura.year + 1
+    else:
+        mes_siguiente, anio_siguiente = fecha_factura.month + 1, fecha_factura.year
+
+    if ahora.year == anio_siguiente and ahora.month == mes_siguiente and ahora.day <= 9:
+        return True
+
+    return False
+
+
+@login_required(login_url='/login/')
+def anular_factura(request, id):
+    """
+    Anula una factura (no la borra). Restituye el stock de los
+    productos facturados, y solo se permite dentro del plazo que
+    exige el SIN, a usuarios autorizados (superusuario o con el
+    permiso 'fac.anular_facturaenc').
+    """
+    enc = FacturaEnc.objects.filter(pk=id).first()
+    if not enc:
+        messages.error(request, 'Factura No Existe')
+        return redirect('fac:factura_list')
+
+    if not (request.user.is_superuser or request.user.has_perm('fac.anular_facturaenc')):
+        messages.error(request, 'No tiene permisos para anular facturas')
+        return redirect('fac:factura_edit', id=id)
+
+    if enc.anulado:
+        messages.error(request, 'Esta factura ya se encuentra anulada')
+        return redirect('fac:factura_edit', id=id)
+
+    ahora = timezone.now()
+    if not _dentro_plazo_anulacion(enc.fecha, ahora):
+        messages.error(
+            request,
+            'Fuera del plazo permitido para anular esta factura '
+            '(hasta el dia 9 del mes siguiente a su emision, segun normativa del SIN)'
+        )
+        return redirect('fac:factura_edit', id=id)
+
+    if request.method == 'POST':
+        motivo = request.POST.get('motivo_anulacion', '')
+
+        # Revertir el stock de cada producto de la factura (como una devolucion)
+        detalles = FacturaDet.objects.filter(factura=enc)
+        for det in detalles:
+            prod = det.producto
+            prod.existencia = int(prod.existencia) + int(det.cantidad)
+            prod.save()
+
+        enc.anulado = True
+        enc.fecha_anulacion = ahora
+        enc.motivo_anulacion = motivo
+        enc.usuario_anulacion = request.user
+        enc.save()
+
+        messages.success(request, 'Factura anulada correctamente. El stock fue restituido.')
+        return redirect('fac:factura_edit', id=id)
+
+    return render(request, 'fac/factura_anular.html', {'enc': enc})
+
+
+@login_required(login_url='/login/')
+def eliminar_factura(request, id):
+    """
+    Elimina fisicamente una factura. Reservado solo para superusuario.
+    Bloqueado si la factura ya tiene un CUF asignado (ya reportada al
+    SIN), ya que en ese caso la unica accion valida es Anular.
+    """
+    if not request.user.is_superuser:
+        messages.error(request, 'Solo el superusuario puede eliminar facturas')
+        return redirect('fac:factura_edit', id=id)
+
+    enc = FacturaEnc.objects.filter(pk=id).first()
+    if not enc:
+        messages.error(request, 'Factura No Existe')
+        return redirect('fac:factura_list')
+
+    if enc.cuf:
+        messages.error(
+            request,
+            'No se puede eliminar: esta factura ya fue reportada al SIN '
+            '(tiene CUF asignado). Use "Anular" en su lugar.'
+        )
+        return redirect('fac:factura_edit', id=id)
+
+    if request.method == 'POST':
+        enc.delete()  # cascada borra FacturaDet; la señal post_delete restituye stock
+        messages.success(request, 'Factura eliminada correctamente')
+        return redirect('fac:factura_list')
+
+    return render(request, 'fac/factura_eliminar.html', {'enc': enc})
