@@ -37,6 +37,17 @@
     <!-- Select2 from a CDN -->
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
 
+    <!-- CSG Sistemas - Tema moderno -->
+    <link href="{% static 'base/css/csg-theme.css' %}" rel="stylesheet">
+
+    <script>
+        /* Aplica el tema guardado ANTES de pintar la pagina, para evitar parpadeo */
+        (function () {
+            var tema = localStorage.getItem('csg-theme') || 'light';
+            document.documentElement.setAttribute('data-theme', tema);
+        })();
+    </script>
+
 </head>
 
 <body id="page-top" class="bg-gradient-primary">
@@ -186,14 +197,14 @@
 
             <!-- Nav Item - Charts -->
             <li class="nav-item">
-                <a class="nav-link" href="charts.html">
+                <a class="nav-link" href="{% url 'bases:charts' %}">
                     <i class="fas fa-fw fa-chart-area"></i>
                     <span>Charts</span></a>
             </li>
 
             <!-- Nav Item - Tables -->
             <li class="nav-item">
-                <a class="nav-link" href="tables.html">
+                <a class="nav-link" href="{% url 'bases:tables' %}">
                     <i class="fas fa-fw fa-table"></i>
                     <span>Tables</span></a>
             </li>
@@ -241,6 +252,14 @@
 
                     <!-- Topbar Navbar -->
                     <ul class="navbar-nav ml-auto">
+
+                        <!-- Interruptor de modo oscuro -->
+                        <li class="nav-item d-flex align-items-center mr-3">
+                            <div class="csg-theme-toggle" id="csgThemeToggle" title="Cambiar modo claro/oscuro">
+                                <i class="fas fa-moon" id="csgThemeIcon"></i>
+                                <span id="csgThemeLabel">Oscuro</span>
+                            </div>
+                        </li>
 
                         <!-- Nav Item - Search Dropdown (Visible Only XS) 
                         <li class="nav-item dropdown no-arrow d-sm-none">
@@ -502,6 +521,10 @@
 
     <!-- Bootstrap Table -->
      <script src="https://unpkg.com/bootstrap-table@1.22.1/dist/bootstrap-table.min.js"></script>
+     <!-- Librerias necesarias para exportar en Excel real (xlsx) y PDF -->
+     <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+     <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.core.min.js"></script>
+     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
      <script src="https://unpkg.com/tableexport.jquery.plugin/tableExport.min.js"></script> 
      <script src="https://unpkg.com/bootstrap-table@1.22.1/dist/bootstrap-table-locale-all.min.js"></script>
      <script src="https://unpkg.com/bootstrap-table@1.22.1/dist/extensions/export/bootstrap-table-export.min.js"></script>
@@ -599,6 +622,30 @@
                 });
                 return false;
             }*/
+
+            /* Interruptor de modo claro/oscuro */
+            function csgAplicarEstadoTema() {
+                var tema = localStorage.getItem('csg-theme') || 'light';
+                var icon = $("#csgThemeIcon");
+                var label = $("#csgThemeLabel");
+                if (tema === 'dark') {
+                    icon.removeClass('fa-moon').addClass('fa-sun');
+                    label.text('Claro');
+                } else {
+                    icon.removeClass('fa-sun').addClass('fa-moon');
+                    label.text('Oscuro');
+                }
+            }
+            $(function () {
+                csgAplicarEstadoTema();
+                $("#csgThemeToggle").click(function () {
+                    var actual = document.documentElement.getAttribute('data-theme') || 'light';
+                    var nuevo = actual === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', nuevo);
+                    localStorage.setItem('csg-theme', nuevo);
+                    csgAplicarEstadoTema();
+                });
+            });
             
             function cerrar_modal()
             {

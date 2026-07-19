@@ -14,19 +14,50 @@
                 <div class="card-body">
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
-                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                            <div class="csg-form-title">
                                 {% if obj %} Editar {% else %} Nuevo {% endif %} Proveedor
                             </div>
                             <div class="dropdown-divider"></div>
                                 {% csrf_token %}
                                 <div class="row">
-                                    {{ form.as_p }}    
+                                    <div class="col-4">
+                                        {{ form.descripcion.label_tag }}
+                                        {{ form.descripcion }}
+                                    </div>
+                                    <div class="col-4">
+                                        {{ form.nit.label_tag }}
+                                        {{ form.nit }}
+                                    </div>
+                                    <div class="col-4">
+                                        {{ form.direccion.label_tag }}
+                                        {{ form.direccion }}
+                                    </div>
+                                </div>
+                                <div class="row mt-3">
+                                    <div class="col-6">
+                                        {{ form.contacto.label_tag }}
+                                        {{ form.contacto }}
+                                    </div>
+                                    <div class="col-6">
+                                        {{ form.telefono.label_tag }}
+                                        {{ form.telefono }}
+                                    </div>
+                                </div>
+                                <div class="row mt-3">
+                                    <div class="col-8">
+                                        {{ form.email.label_tag }}
+                                        {{ form.email }}
+                                    </div>
+                                    <div class="col-4 d-flex align-items-center" style="padding-top: 1.9rem;">
+                                        <label for="id_estado">Estado</label>
+                                        {{ form.estado }}
+                                    </div>
                                 </div>
                             <div class="dropdown-divider"></div>
                                 <div class="row">
                                     <div class="col">
-                                        <button type="submit" class="btn btn-danger"><span class="fa fa-save"></span> Guardar</button>
-                                        <button type="button" class="btn btn-success" onclick="return cerrar_modal()">Cancelar</button>
+                                        <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                                        <button type="button" class="btn btn-outline-secondary" onclick="return cerrar_modal()">Cancelar</button>
                                     </div>
                                 </div>
                             </div>
@@ -37,4 +68,3 @@
         </form>
     </div>
 </div>
-

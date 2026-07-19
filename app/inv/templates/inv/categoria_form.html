@@ -12,22 +12,22 @@
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
                     <div class="col mr-2">
-                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                        <div class="csg-form-title">
                             {% if obj %} Editar {% else %} Nueva {% endif %} Categoría
                         </div>
                         <div class="dropdown-divider"></div>
                         <div class="row">
-                            <div class="col-10">
+                            <div class="col-9">
                                 <div class="input-group">
                                     <input type="text" name="descripcion" maxlength="100" class="form-control" required id="id_descripcion" placeholder="Descripción" 
                                     value="{% if obj %} {{obj.descripcion}} {% endif %}">
                                 </div>
                             </div> 
-                            <div class="col-2">
+                            <div class="col-3">
                                 <div class="form-group">
                                     <label for="id_estado"> Estado </label>
                                     <input type="checkbox" name="estado" class="form-control" id="id_estado" 
-                                    {% if obj.estado %} checked {% endif %} >
+                                    {% if not obj or obj.estado %} checked {% endif %} >
                                 </div>
                             </div>    
                             <!-- {{ form.as_p}}-->                        
@@ -35,8 +35,8 @@
                         <div class="dropdown-divider"></div>
                         <div class="row">
                             <div class="col">
-                                <button type="submit" class="btn btn-danger"><span class="fa fa-save"></span> Guardar</button>
-                                <a href="{% url 'inv:categoria_list' %}" class="btn btn-success"><span class="fa fa-undo"></span> Cancelar</a>
+                                <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                                <a href="{% url 'inv:categoria_list' %}" class="btn btn-outline-secondary"><span class="fa fa-undo"></span> Cancelar</a>
                             </div>
                         </div>
                     </div>

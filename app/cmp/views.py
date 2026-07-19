@@ -127,6 +127,10 @@ def compras(request,compra_id=None):
             form_compras = ComprasEncForm(e)
         else:
             det=None
+            form_compras = ComprasEncForm(initial={
+                'fecha_compra': datetime.date.today(),
+                'fecha_factura': datetime.date.today(),
+            })
         
         contexto={'productos':prod,'encabezado':enc,'detalle':det,'form_enc':form_compras}
 

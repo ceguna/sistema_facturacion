@@ -5,11 +5,11 @@
 <form method="post" id="frmFacturas" action="{% if enc.id %}{% url 'fac:factura_edit' enc.id %}{% else %}{% url 'fac:factura_new' %}{% endif %}">
     {% csrf_token %}
 <div class="card shadow mb-4">
-    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+    <div class="csg-form-title" style="padding: 16px 24px 0;">
         {% if enc %} Editar {% else %} Nueva {% endif %} Factura
     </div>
     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
-        <a href="{% url 'fac:factura_list' %}" class="btn btn-danger">Guardar</a>
+        <a href="{% url 'fac:factura_list' %}" class="btn btn-primary">Guardar</a>
         <a href="{% url 'fac:factura_imprimir_one' enc.id %}" class="btn btn-success" target="_factura">Imprimir</a>
         <a href="{% url 'fac:factura_list' %}" class="btn btn-info">Cancelar</a>
     </div>

@@ -12,7 +12,7 @@
                 <div class="card-body">
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                <div class="csg-form-title">
                                     {% if encabezado %} Editar {% else %} Nueva {% endif %} Compra
                                 </div>
                                 <div class="dropdown-divider"></div>
@@ -140,7 +140,7 @@
                                         <div class="dropdown-divider"></div>
                                         <div class="row">
                                             <div class="col">
-                                                <button type="submit" class="btn btn-danger"><span class="fa fa-save"></span> Guardar</button>
+                                                <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
                                                 <a href="{% url 'cmp:compras_list' %}" class="btn btn-success"><i class="far fa-hand-point-left"></i> Cancelar</a>
                                             </div>
                                         </div>

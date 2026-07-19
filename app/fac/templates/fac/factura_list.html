@@ -31,7 +31,7 @@
     <hr>
  
     {% if not obj %}
-    <div class="alert alert-info">No Hay Facturas</div>
+    <div class="alert alert-info"><i class="fas fa-file-invoice mr-2"></i>Todavía no registraste ninguna factura. Usa el botón <b>Nuevo</b> para comenzar.</div>
     {% endif %}
     <div class="buttons-toolbar">
         <a class="btn btn-success" href="{% url 'fac:factura_new' %}"><i class="far fa-calendar-plus"></i> Nuevo</a>
@@ -46,6 +46,8 @@
       data-show-toggle="true"
       data-show-fullscreen="true"
       data-toolbar=".buttons-toolbar"
+      data-show-export="True"
+      data-export-types='["csv","txt","xlsx","pdf"]'
       data-locale="es-NI"
     >
     <thead>
@@ -65,7 +67,7 @@
           {% if item.anulado %}
             <span class="badge badge-danger">Anulada</span>
           {% else %}
-            {{item.estado|yesno:"Activo,Inactivo"}}
+            <span class="badge badge-success">Activo</span>
           {% endif %}
         </td>
         <td>

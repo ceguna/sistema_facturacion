@@ -14,7 +14,7 @@
                 <div class="card-body">
                     <div class="row no-gutters align-items-center">
                     <div class="col mr-2">
-                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                        <div class="csg-form-title">
                             {% if obj %} Editar {% else %} Nuevo {% endif %} Cliente
                             {% if t %} En Factura {% endif %}
                         </div>
@@ -22,13 +22,52 @@
                         {% csrf_token %}
                         <div class="row">
                             <input type="hidden" name="id" id="id" class="form-class frmid">
-                            {{ form.as_p }}
+                            <div class="col-4">
+                                {{ form.nombres.label_tag }}
+                                {{ form.nombres }}
+                            </div>
+                            <div class="col-4">
+                                {{ form.apellidos.label_tag }}
+                                {{ form.apellidos }}
+                            </div>
+                            <div class="col-4">
+                                {{ form.ci.label_tag }}
+                                {{ form.ci }}
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-4">
+                                {{ form.nit.label_tag }}
+                                {{ form.nit }}
+                            </div>
+                            <div class="col-4">
+                                {{ form.razon.label_tag }}
+                                {{ form.razon }}
+                            </div>
+                            <div class="col-4">
+                                {{ form.tipo.label_tag }}
+                                {{ form.tipo }}
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-4">
+                                {{ form.celular.label_tag }}
+                                {{ form.celular }}
+                            </div>
+                            <div class="col-4">
+                                {{ form.email.label_tag }}
+                                {{ form.email }}
+                            </div>
+                            <div class="col-4 d-flex align-items-center" style="padding-top: 1.9rem;">
+                                <label for="id_estado">Estado</label>
+                                {{ form.estado }}
+                            </div>
                         </div>
                         <div class="dropdown-divider"></div>
                         <div class="row">
                             <div class="col">
-                                <button type="submit" class="btn btn-danger"><span class="fa fa-save"></span> Guardar</button>
-                                <button type="button" class="btn btn-success" onclick="return cerrar_modal()">
+                                <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                                <button type="button" class="btn btn-outline-secondary" onclick="return cerrar_modal()">
                                         Cancelar
                                 </button>
                             </div>

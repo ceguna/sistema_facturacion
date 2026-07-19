@@ -1,0 +1,549 @@
+/* ============================================================
+   CSG SISTEMAS — Tema moderno (Paso 1: base + login)
+   Capa de re-estilo sobre SB Admin 2 / Bootstrap 4, con variables
+   de diseño (tokens) y soporte de modo claro/oscuro.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    /* --- Paleta --- */
+    --csg-primary: #1E3A5F;
+    --csg-primary-light: #2E5590;
+    --csg-primary-dark: #142943;
+    --csg-accent: #14B8A6;
+    --csg-accent-dark: #0D9488;
+    --csg-warning: #F5A524;
+    --csg-danger: #E5484D;
+
+    /* --- Superficie / fondo --- */
+    --csg-bg: #F3F5F9;
+    --csg-surface: #FFFFFF;
+    --csg-surface-alt: #F8FAFC;
+    --csg-border: #E4E9F0;
+
+    /* --- Texto --- */
+    --csg-text: #1B2430;
+    --csg-text-muted: #64748B;
+    --csg-text-on-primary: #FFFFFF;
+
+    /* --- Sombra y radio --- */
+    --csg-radius: 14px;
+    --csg-radius-sm: 8px;
+    --csg-shadow: 0 4px 16px rgba(20, 30, 50, 0.06), 0 1px 3px rgba(20, 30, 50, 0.08);
+    --csg-shadow-lg: 0 12px 32px rgba(20, 30, 50, 0.12);
+
+    /* --- Tipografia --- */
+    --csg-font-display: 'Plus Jakarta Sans', sans-serif;
+    --csg-font-body: 'Inter', sans-serif;
+}
+
+[data-theme="dark"] {
+    --csg-primary: #4C7BDB;
+    --csg-primary-light: #6B93E5;
+    --csg-primary-dark: #16305A;
+    --csg-accent: #2DD4BF;
+    --csg-accent-dark: #14B8A6;
+
+    --csg-bg: #0F172A;
+    --csg-surface: #17223B;
+    --csg-surface-alt: #1D2A47;
+    --csg-border: #29385A;
+
+    --csg-text: #E6EBF5;
+    --csg-text-muted: #93A2BC;
+    --csg-text-on-primary: #FFFFFF;
+
+    --csg-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --csg-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+body {
+    font-family: var(--csg-font-body);
+    background-color: var(--csg-bg) !important;
+    color: var(--csg-text);
+    -webkit-font-smoothing: antialiased;
+    background-image: none !important; /* anula bg-gradient-primary heredado */
+}
+
+h1, h2, h3, h4, h5, h6,
+.h1, .h2, .h3, .h4, .h5, .h6 {
+    font-family: var(--csg-font-display);
+    color: var(--csg-text);
+    letter-spacing: -0.01em;
+}
+
+/* Numeros (totales, cantidades, precios) con figuras tabulares */
+input[type="number"], .table td, .form-control-user,
+#sub_total, #descuento, #total, .money {
+    font-variant-numeric: tabular-nums;
+}
+
+a { color: var(--csg-primary); }
+a:hover { color: var(--csg-accent-dark); }
+
+/* ============================================================
+   Sidebar
+   ============================================================ */
+.sidebar.sidebar-dark,
+.sidebar.bg-gradient-primary {
+    background: linear-gradient(180deg, var(--csg-primary-dark) 0%, var(--csg-primary) 100%) !important;
+}
+
+.sidebar .sidebar-brand-text {
+    font-family: var(--csg-font-display);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.sidebar .nav-item .nav-link {
+    font-family: var(--csg-font-body);
+    font-weight: 500;
+    border-radius: var(--csg-radius-sm);
+    margin: 2px 10px;
+    transition: background-color .15s ease;
+}
+
+.sidebar .nav-item .nav-link:hover,
+.sidebar .nav-item.active .nav-link {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+.sidebar-divider {
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sidebar-heading {
+    color: rgba(255, 255, 255, 0.55);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+
+/* ============================================================
+   Topbar
+   ============================================================ */
+.topbar {
+    background: var(--csg-surface) !important;
+    border-bottom: 1px solid var(--csg-border);
+    box-shadow: none !important;
+}
+
+/* Interruptor de modo oscuro */
+.csg-theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    border: 1px solid var(--csg-border);
+    border-radius: 999px;
+    padding: 6px 14px;
+    background: var(--csg-surface-alt);
+    color: var(--csg-text-muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all .15s ease;
+}
+.csg-theme-toggle:hover {
+    border-color: var(--csg-primary);
+    color: var(--csg-primary);
+}
+
+/* ============================================================
+   Tarjetas (Cards)
+   ============================================================ */
+.card {
+    background-color: var(--csg-surface);
+    border: 1px solid var(--csg-border);
+    border-radius: var(--csg-radius);
+    box-shadow: var(--csg-shadow);
+}
+
+.card-header {
+    background-color: transparent;
+    border-bottom: 1px solid var(--csg-border);
+    border-radius: var(--csg-radius) var(--csg-radius) 0 0 !important;
+    font-family: var(--csg-font-display);
+    font-weight: 700;
+}
+
+.border-left-primary  { border-left: .3rem solid var(--csg-primary) !important; }
+.border-left-success  { border-left: .3rem solid var(--csg-accent) !important; }
+.border-left-warning  { border-left: .3rem solid var(--csg-warning) !important; }
+.border-left-danger   { border-left: .3rem solid var(--csg-danger) !important; }
+
+/* ============================================================
+   Botones
+   ============================================================ */
+.btn {
+    font-family: var(--csg-font-body);
+    font-weight: 600;
+    border-radius: var(--csg-radius-sm);
+    transition: transform .1s ease, box-shadow .15s ease;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+
+.btn-primary {
+    background-color: var(--csg-primary);
+    border-color: var(--csg-primary);
+}
+.btn-primary:hover {
+    background-color: var(--csg-primary-light);
+    border-color: var(--csg-primary-light);
+    box-shadow: 0 6px 16px rgba(30, 58, 95, 0.25);
+}
+
+.btn-success {
+    background-color: var(--csg-accent);
+    border-color: var(--csg-accent);
+}
+.btn-success:hover {
+    background-color: var(--csg-accent-dark);
+    border-color: var(--csg-accent-dark);
+    box-shadow: 0 6px 16px rgba(20, 184, 166, 0.3);
+}
+
+.btn-circle {
+    box-shadow: var(--csg-shadow);
+}
+
+/* ============================================================
+   Formularios
+   ============================================================ */
+.form-control, .custom-select, .select2-container--default .select2-selection--single {
+    background-color: var(--csg-surface);
+    border: 1px solid var(--csg-border);
+    color: var(--csg-text);
+    border-radius: var(--csg-radius-sm);
+}
+.form-control:focus {
+    border-color: var(--csg-primary);
+    box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.15);
+}
+[data-theme="dark"] .form-control:focus {
+    box-shadow: 0 0 0 3px rgba(76, 123, 219, 0.25);
+}
+
+/* Checkboxes (ej. "Estado" en formularios) - se ven mal con .form-control
+   estirandolos como si fueran un input de texto. Los normalizamos. */
+input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--csg-primary);
+    cursor: pointer;
+}
+input[type="checkbox"].form-control {
+    width: 18px !important;
+    height: 18px !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    display: inline-block !important;
+    vertical-align: middle;
+}
+
+/* ============================================================
+   Tablas
+   ============================================================ */
+.table {
+    color: var(--csg-text);
+}
+.table thead th {
+    font-family: var(--csg-font-display);
+    font-weight: 700;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--csg-text-muted);
+    border-bottom: 2px solid var(--csg-border);
+    background-color: var(--csg-surface-alt);
+}
+.table td, .table th {
+    border-top: 1px solid var(--csg-border);
+    vertical-align: middle;
+}
+.table-hover tbody tr:hover {
+    background-color: var(--csg-surface-alt);
+}
+
+/* ============================================================
+   Espaciado general del contenido (que no quede pegado a los bordes)
+   ============================================================ */
+#content {
+    padding: 20px 28px 8px 28px;
+}
+#content > .container-fluid,
+#content > div > .container-fluid {
+    padding: 4px 0 32px 0;
+}
+#content .topbar {
+    border-radius: var(--csg-radius);
+    box-shadow: var(--csg-shadow);
+    margin-bottom: 1.5rem !important;
+}
+
+/* Que el sidebar respire abajo (el boton de colapsar no quede pegado) */
+.sidebar {
+    padding-bottom: 24px;
+}
+
+/* ============================================================
+   Sidebar — menu principal mas llamativo
+   ============================================================ */
+.sidebar .sidebar-brand-text {
+    font-size: 1.15rem;
+    line-height: 1.35;
+    letter-spacing: 0.02em;
+    padding: 0 6px;
+}
+
+.sidebar .nav-item .nav-link {
+    font-size: 1rem;
+    padding: 0.9rem 1.1rem;
+}
+.sidebar .nav-item .nav-link i,
+.sidebar .nav-item .nav-link .icon-collapse {
+    font-size: 1.05rem;
+    margin-right: 12px;
+    width: 22px;
+    text-align: center;
+}
+.sidebar .nav-item.active .nav-link,
+.sidebar .nav-item .nav-link:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+    border-left: 3px solid var(--csg-accent);
+    padding-left: calc(1.1rem - 3px);
+}
+.sidebar-heading {
+    font-size: 0.75rem;
+    margin-top: 1rem;
+}
+
+/* Submenus (Catalogos de Inventario, de Compras, etc.) */
+.sidebar .collapse-inner .collapse-header,
+.sidebar-heading + .collapse .collapse-header {
+    font-weight: 700;
+    color: var(--csg-primary);
+    padding: 0.6rem 1rem 0.3rem;
+}
+.sidebar .collapse-item {
+    font-size: 0.95rem;
+    padding: 0.6rem 1.25rem;
+    border-radius: var(--csg-radius-sm);
+    margin: 1px 8px;
+}
+.sidebar .collapse-item:hover,
+.sidebar .collapse-item.active {
+    background-color: var(--csg-surface-alt);
+    color: var(--csg-primary);
+    font-weight: 600;
+}
+
+/* ============================================================
+   Titulos de formularios (Nueva/Editar Categoria, Producto, etc.)
+   ============================================================ */
+.csg-form-title {
+    font-family: var(--csg-font-display);
+    font-size: 1.45rem;
+    font-weight: 800;
+    color: var(--csg-primary);
+    letter-spacing: 0.01em;
+    text-transform: none;
+    margin-bottom: 1rem;
+}
+
+/* ============================================================
+   Etiquetas y distribucion de los campos
+   ============================================================ */
+.form-group label,
+label.control-label,
+form label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--csg-text-muted);
+    margin-bottom: 0.35rem;
+}
+
+.form-control, .custom-select {
+    padding: 0.55rem 0.9rem;
+    font-size: 0.95rem;
+    min-height: 44px;
+}
+
+textarea.form-control {
+    min-height: 90px;
+}
+
+/* Mas espacio de "respiro" entre filas de un formulario */
+form .row {
+    margin-bottom: 0.35rem;
+}
+
+/* ============================================================
+   Dashboard — encabezado de bienvenida
+   ============================================================ */
+.csg-dashboard-title {
+    font-family: var(--csg-font-display);
+    font-size: 1.7rem;
+    font-weight: 800;
+}
+.csg-login-wrapper {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 20% 20%, var(--csg-primary-light) 0%, var(--csg-primary-dark) 65%);
+    padding: 24px;
+}
+
+.csg-login-card {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    max-width: 920px;
+    width: 100%;
+    background: var(--csg-surface);
+    border-radius: var(--csg-radius);
+    box-shadow: var(--csg-shadow-lg);
+    overflow: hidden;
+}
+
+.csg-login-aside {
+    background: linear-gradient(160deg, var(--csg-primary) 0%, var(--csg-primary-dark) 100%);
+    color: #fff;
+    padding: 48px 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+}
+
+.csg-login-aside h2 {
+    font-family: var(--csg-font-display);
+    font-weight: 800;
+    font-size: 1.7rem;
+    color: #fff;
+    margin-bottom: 12px;
+}
+
+.csg-login-aside p {
+    color: rgba(255,255,255,0.8);
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+/* Firma: borde perforado tipo recibo, entre las dos columnas */
+.csg-login-aside::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: -1px;
+    height: 100%;
+    width: 2px;
+    background-image: radial-gradient(circle, var(--csg-bg) 3px, transparent 3.5px);
+    background-size: 100% 18px;
+    background-repeat: repeat-y;
+}
+
+.csg-login-form {
+    padding: 48px 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.csg-login-form h1 {
+    font-family: var(--csg-font-display);
+    font-weight: 800;
+    font-size: 1.6rem;
+    margin-bottom: 4px;
+}
+
+.csg-login-form .csg-subtitle {
+    color: var(--csg-text-muted);
+    margin-bottom: 28px;
+    font-size: 0.92rem;
+}
+
+@media (max-width: 767px) {
+    .csg-login-card { grid-template-columns: 1fr; }
+    .csg-login-aside { display: none; }
+}
+
+/* ============================================================
+   Menu de acciones (los 3 puntos) en encabezados de listado
+   ============================================================ */
+.card-header .dropdown-toggle {
+    padding: 8px 12px;
+    border-radius: var(--csg-radius-sm);
+    transition: background-color .15s ease;
+}
+.card-header .dropdown-toggle:hover {
+    background-color: var(--csg-surface-alt);
+}
+.card-header .dropdown-toggle .fa-ellipsis-v {
+    font-size: 1.4rem !important;
+    color: var(--csg-primary) !important;
+}
+.dropdown-menu {
+    border-radius: var(--csg-radius-sm);
+    border: 1px solid var(--csg-border);
+    padding: 10px;
+    min-width: 200px;
+}
+.dropdown-header {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--csg-text);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.4rem 0.75rem;
+}
+.dropdown-item {
+    font-size: 1.05rem;
+    font-weight: 600;
+    padding: 0.65rem 0.85rem;
+    border-radius: var(--csg-radius-sm);
+    color: var(--csg-primary);
+}
+.dropdown-item:hover {
+    background-color: var(--csg-surface-alt);
+    color: var(--csg-accent-dark);
+}
+.dropdown-item i {
+    margin-right: 8px;
+    width: 18px;
+    text-align: center;
+}
+
+/* ============================================================
+   Campo "Estado" (checkbox Activo/Inactivo) en formularios
+   ============================================================ */
+label[for="id_estado"] {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--csg-text);
+    margin-right: 14px;
+    margin-bottom: 0;
+    display: inline-block;
+    vertical-align: middle;
+}
+input#id_estado {
+    width: 22px !important;
+    height: 22px !important;
+    vertical-align: middle;
+}
+
+/* ============================================================
+   Alinear a la izquierda las etiquetas que van ARRIBA de un campo
+   (Bootstrap las centra por defecto dentro de formularios
+   "form-inline"). La etiqueta de "Estado" queda aparte, porque
+   va al lado de su checkbox, no arriba.
+   ============================================================ */
+form.form-inline label:not([for="id_estado"]) {
+    display: block;
+    justify-content: flex-start;
+    text-align: left;
+    width: 100%;
+}

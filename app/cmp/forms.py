@@ -36,8 +36,6 @@ class ProveedorForm(forms.ModelForm):
         return self.cleaned_data #Se retorna toda la data que se valido
 
 class ComprasEncForm(forms.ModelForm):
-    fecha_compra = forms.DateInput()
-    fecha_factura = forms.DateInput()
 
     class Meta:
         model=ComprasEnc 
@@ -52,6 +50,12 @@ class ComprasEncForm(forms.ModelForm):
             })
         self.fields['fecha_compra'].widget.attrs['readonly'] = True 
         self.fields['fecha_factura'].widget.attrs['readonly'] = True
+        # Formato explicito (ISO) para que coincida con el datepicker JS
+        # (formato 'Y-m-d') y no dependa del formato regional del navegador.
+        self.fields['fecha_compra'].widget.format = '%Y-%m-%d'
+        self.fields['fecha_compra'].input_formats = ['%Y-%m-%d']
+        self.fields['fecha_factura'].widget.format = '%Y-%m-%d'
+        self.fields['fecha_factura'].input_formats = ['%Y-%m-%d']
         self.fields['sub_total'].widget.attrs['readonly'] = True 
         self.fields['descuento'].widget.attrs['readonly'] = True
         self.fields['total'].widget.attrs['readonly'] = True 

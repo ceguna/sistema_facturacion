@@ -1,0 +1,210 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+
+<h1 class="csg-dashboard-title mb-1">Tables</h1>
+<div class="text-muted mb-4">Reporte completo de inventario</div>
+
+<div class="row mb-4">
+    <div class="col-xl-4 col-md-6 mb-3">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-primary);">Valor Total del Inventario</div>
+                <div class="h5 mb-0 font-weight-bold">Bs. {{ valor_total_inventario|floatformat:2 }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4 col-md-6 mb-3">
+        <div class="card border-left-success shadow h-100 py-2">
+            <div class="card-body">
+                <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-accent);">Productos Activos</div>
+                <div class="h5 mb-0 font-weight-bold">{{ productos|length }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow">
+    <div class="card-header">Inventario detallado</div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover" id="tablaInventario" width="100%">
+                <thead>
+                    <tr>
+                        <th>Código</th>
+                        <th>Producto</th>
+                        <th>Categoría</th>
+                        <th>Marca</th>
+                        <th>U.M.</th>
+                        <th>Existencia</th>
+                        <th>Precio</th>
+                        <th>Valor Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in productos %}
+                    <tr>
+                        <td>{{ p.codigo }}</td>
+                        <td>{{ p.descripcion }}</td>
+                        <td>{{ p.subcategoria.categoria.descripcion }}</td>
+                        <td>{{ p.marca.descripcion }}</td>
+                        <td>{{ p.unidad_medida.descripcion }}</td>
+                        <td>
+                            {% if p.existencia <= 10 %}
+                                <span class="badge badge-warning">{{ p.existencia }}</span>
+                            {% else %}
+                                {{ p.existencia }}
+                            {% endif %}
+                        </td>
+                        <td>Bs. {{ p.precio|floatformat:2 }}</td>
+                        <td>Bs. {{ p.valor_total|floatformat:2 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Estado de Inventario (Kardex) -->
+<div class="card shadow mt-4">
+    <div class="card-header d-flex flex-wrap align-items-center justify-content-between">
+        <span>Estado de Inventario — {{ inicio_mes|date:"d/m/Y" }} al {{ hoy|date:"d/m/Y" }}</span>
+        <form method="get" class="form-inline">
+            <select name="producto_id" class="form-control mr-2" onchange="this.form.submit()">
+                <option value="">Todos los productos</option>
+                {% for p in todos_productos_activos %}
+                <option value="{{ p.id }}" {% if producto_seleccionado.id == p.id %}selected{% endif %}>{{ p.descripcion }}</option>
+                {% endfor %}
+            </select>
+            {% if producto_seleccionado %}
+            <a href="{% url 'bases:tables' %}" class="btn btn-outline-secondary btn-sm">Quitar filtro</a>
+            {% endif %}
+        </form>
+    </div>
+    <div class="card-body">
+
+        {% if producto_seleccionado and kardex_detalle %}
+            <!-- Vista detallada de UN producto -->
+            <div class="row mb-3">
+                <div class="col-md-4 mb-2">
+                    <div class="card border-left-primary shadow h-100 py-2">
+                        <div class="card-body">
+                            <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-primary);">Inventario Inicial del Mes</div>
+                            <div class="h5 mb-0 font-weight-bold">{{ kardex_detalle.inventario_inicio }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-2">
+                    <div class="card border-left-success shadow h-100 py-2">
+                        <div class="card-body">
+                            <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-accent);">Inventario a la Fecha</div>
+                            <div class="h5 mb-0 font-weight-bold">{{ kardex_detalle.inventario_actual }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-2">
+                    <div class="card border-left-warning shadow h-100 py-2">
+                        <div class="card-body">
+                            <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-warning);">Producto</div>
+                            <div class="h6 mb-0 font-weight-bold">{{ kardex_detalle.producto.descripcion }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Tipo</th>
+                            <th>Documento</th>
+                            <th>Entrada</th>
+                            <th>Salida</th>
+                            <th>Saldo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="table-light">
+                            <td>{{ inicio_mes|date:"d/m/Y" }}</td>
+                            <td colspan="4"><i>Inventario inicial del mes</i></td>
+                            <td><b>{{ kardex_detalle.inventario_inicio }}</b></td>
+                        </tr>
+                        {% for m in kardex_detalle.movimientos %}
+                        <tr>
+                            <td>{{ m.fecha|date:"d/m/Y" }}</td>
+                            <td><span class="badge badge-{{ m.tipo_class }}">{{ m.tipo }}</span></td>
+                            <td>{{ m.documento }}</td>
+                            <td>{% if m.entrada %}+{{ m.entrada }}{% endif %}</td>
+                            <td>{% if m.salida %}-{{ m.salida }}{% endif %}</td>
+                            <td>{{ m.saldo }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="6" class="text-center text-muted py-3">Sin movimientos este mes para este producto</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        {% else %}
+            <!-- Vista resumen de TODOS los productos -->
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Producto</th>
+                            <th>Inv. Inicial del Mes</th>
+                            <th>Compras del Mes</th>
+                            <th>Ventas del Mes</th>
+                            <th>Inv. a la Fecha</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in kardex_resumen %}
+                        <tr>
+                            <td>
+                                <a href="?producto_id={{ r.producto.id }}">{{ r.producto.descripcion }}</a>
+                            </td>
+                            <td>{{ r.inventario_inicio }}</td>
+                            <td class="text-success">{% if r.compras_mes %}+{{ r.compras_mes }}{% else %}—{% endif %}</td>
+                            <td class="text-danger">{% if r.ventas_mes %}-{{ r.ventas_mes }}{% else %}—{% endif %}</td>
+                            <td><b>{{ r.inventario_actual }}</b></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-center text-muted py-3">No hay productos para mostrar</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="text-muted small mt-2">
+                <i class="fas fa-info-circle mr-1"></i> Haz clic en un producto para ver su detalle cronológico de movimientos.
+            </div>
+        {% endif %}
+
+    </div>
+</div>
+
+{% endblock %}
+
+{% block js_page %}
+<script>
+    $(document).ready(function() {
+        $('#tablaInventario').DataTable({
+            "language": {
+                "sProcessing": "Procesando...",
+                "sLengthMenu": "Mostrar _MENU_ registros",
+                "sZeroRecords": "No se encontraron resultados",
+                "sEmptyTable": "Ningún dato disponible en esta tabla",
+                "sInfo": "Mostrando registros del _START_ al _END_ de un total de _TOTAL_ registros",
+                "sInfoEmpty": "Mostrando registros del 0 al 0 de un total de 0 registros",
+                "sInfoFiltered": "(filtrado de un total de _MAX_ registros)",
+                "sSearch": "Buscar:",
+                "oPaginate": {
+                    "sFirst": "Primero", "sLast": "Último", "sNext": "Siguiente", "sPrevious": "Anterior"
+                }
+            }
+        });
+    });
+</script>
+{% endblock js_page %}

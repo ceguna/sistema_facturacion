@@ -1,0 +1,91 @@
+{% extends 'base/base.html' %}
+{% load l10n %}
+{% load static %}
+
+{% block page_content %}
+
+<h1 class="csg-dashboard-title mb-1">Charts</h1>
+<div class="text-muted mb-4">Análisis visual de ventas, productos y clientes</div>
+
+<div class="row">
+    <div class="col-lg-7 mb-4">
+        <div class="card shadow h-100">
+            <div class="card-header">Ventas por mes — últimos 6 meses</div>
+            <div class="card-body">
+                <canvas id="chartMeses" height="110"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5 mb-4">
+        <div class="card shadow h-100">
+            <div class="card-header">Top 5 clientes (monto comprado)</div>
+            <div class="card-body">
+                <canvas id="chartClientes" height="110"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-12 mb-4">
+        <div class="card shadow">
+            <div class="card-header">Top 5 productos más vendidos (por cantidad)</div>
+            <div class="card-body">
+                <canvas id="chartProductos" height="70"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block js_page %}
+<script src="{% static 'base/vendor/chart.js/Chart.min.js' %}"></script>
+<script>
+    var paletaAzul = ['#1E3A5F', '#2E5590', '#4C7BDB', '#6B93E5', '#93B1EE'];
+    var paletaTurquesa = ['#0D9488', '#14B8A6', '#2DD4BF', '#5EEAD4', '#99F6E4'];
+
+    new Chart(document.getElementById('chartMeses').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: [{% for l in meses_labels %}'{{ l }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+            datasets: [{
+                label: 'Ventas (Bs.)',
+                data: [{% for d in meses_data %}{{ d|unlocalize }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                backgroundColor: '#1E3A5F',
+                borderRadius: 6
+            }]
+        },
+        options: { legend: { display: false }, scales: { yAxes: [{ ticks: { beginAtZero: true } }] } }
+    });
+
+    new Chart(document.getElementById('chartClientes').getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: [{% for l in top_clientes_labels %}'{{ l|escapejs }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+            datasets: [{
+                data: [{% for d in top_clientes_data %}{{ d|unlocalize }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                backgroundColor: paletaAzul
+            }]
+        },
+        options: { legend: { position: 'bottom' } }
+    });
+
+    new Chart(document.getElementById('chartProductos').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: [{% for l in top_productos_labels %}'{{ l|escapejs }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+            datasets: [{
+                label: 'Unidades vendidas',
+                data: [{% for d in top_productos_data %}{{ d|unlocalize }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                backgroundColor: '#14B8A6',
+                borderRadius: 6
+            }]
+        },
+        options: {
+            legend: { display: false },
+            scales: { yAxes: [{ ticks: { beginAtZero: true } }] }
+        }
+    });
+</script>
+{% endblock js_page %}

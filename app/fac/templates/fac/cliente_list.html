@@ -8,7 +8,7 @@
     <!-- Card Header - Dropdown -->
     <div
         class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
-        <h6 class="m-0 font-weight-bold text-primary">Listado de Cliente</h6>
+        <h4 class="m-0 font-weight-bold text-primary">Listado de Cliente</h4>
         <div class="dropdown no-arrow">
             <a class="dropdown-toggle" href="#" role="button" id="dropdownMenuLink"
                 data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
@@ -23,7 +23,7 @@
     <!-- Card Body -->
     <div class="card-body">
         {% if not obj %}
-            <div class="alert alert-info">No hay Cliente</div>
+            <div class="alert alert-info"><i class="fas fa-user-friends mr-2"></i>Aún no registraste ningún cliente. Usa el botón <b>Nuevo</b> para crear el primero.</div>
         {% endif %}
         <div class="buttons-toolbar">
             <!--<a class="dropdown-item" onclick="return abrir_modal('{% url 'fac:cliente_new' %}')" href="#"><i class="far fa-calendar-plus"></i> Nuevo</a>-->
@@ -39,6 +39,7 @@
          data-show-fullscreen="true"
          data-toolbar=".buttons-toolbar"
          data-show-export="True"
+         data-export-types='["csv","txt","xlsx","pdf"]'
          data-show-pagination-switch="true"
          data-locale="es-NI"
          data-show-footer="true"
@@ -68,12 +69,12 @@
                     <td>{{ item.razon }}</td>
                     <td>{{ item.celular }}</td>
                     <td>{{ item.email }}</td>
-                    <td>{# item.estado|yesno:"Activo,Inactivo" #}
-                        <div onclick="inactivar({{item.id|unlocalize}})">
+                    <td>
+                        <div onclick="inactivar({{item.id|unlocalize}})" style="cursor:pointer;" title="Clic para cambiar el estado">
                           {% if item.estado %}
-                            <i class="far fa-thumbs-up text-primary"></i>
+                            <span class="badge badge-success">Activo</span>
                           {% else %}
-                            <i class="far fa-thumbs-down text-danger"></i>
+                            <span class="badge badge-secondary">Inactivo</span>
                           {% endif %}
                         </div>
                     </td>
