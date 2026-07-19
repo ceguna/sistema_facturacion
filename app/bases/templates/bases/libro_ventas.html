@@ -1,0 +1,77 @@
+{% extends 'base/base.html' %}
+{% load l10n %}
+
+{% block page_content %}
+
+<h1 class="csg-dashboard-title mb-1">Libro de Ventas (IVA)</h1>
+<div class="text-muted mb-4">Detalle de facturas del período para la declaración mensual de impuestos</div>
+
+<div class="card shadow">
+    <div class="card-header d-flex flex-wrap align-items-center justify-content-between">
+        <span>Período</span>
+        <form method="get" class="form-inline">
+            <select name="mes" class="form-control mr-2">
+                {% for valor, nombre in meses %}
+                <option value="{{ valor }}" {% if valor == mes %}selected{% endif %}>{{ nombre }}</option>
+                {% endfor %}
+            </select>
+            <select name="anio" class="form-control mr-2">
+                {% for a in anios %}
+                <option value="{{ a }}" {% if a == anio %}selected{% endif %}>{{ a }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary">Filtrar</button>
+        </form>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="tablaLibroVentas"
+                data-toggle="table"
+                data-pagination="true"
+                data-search="true"
+                data-show-columns="true"
+                data-show-toggle="true"
+                data-show-fullscreen="true"
+                data-show-export="True"
+                data-export-types='["csv","txt","xlsx","pdf"]'
+                data-locale="es-NI">
+                <thead>
+                    <tr>
+                        <th data-sortable="true" data-field="fecha">Fecha</th>
+                        <th data-sortable="true" data-field="no_factura">No. Factura</th>
+                        <th data-sortable="true" data-field="cliente">Cliente</th>
+                        <th data-sortable="true" data-field="nit">NIT/CI</th>
+                        <th data-sortable="true" data-field="base_cf">Importe Base CF</th>
+                        <th data-sortable="true" data-field="iva">IVA (13%)</th>
+                        <th data-sortable="true" data-field="total">Importe Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fila in filas %}
+                    <tr>
+                        <td>{{ fila.factura.fecha|date:"d/m/Y" }}</td>
+                        <td data-tableexport-cellformat="">{{ fila.factura.id }}</td>
+                        <td>{{ fila.factura.cliente }}</td>
+                        <td data-tableexport-cellformat="">{{ fila.factura.cliente.nit|default:fila.factura.cliente.ci }}</td>
+                        <td data-tableexport-cellformat="">{{ fila.base_cf_fmt }}</td>
+                        <td data-tableexport-cellformat="">{{ fila.iva_fmt }}</td>
+                        <td data-tableexport-cellformat="">{{ fila.total_fmt }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="7" class="text-center text-muted py-4">No hay facturas para este período</td></tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="font-weight-bold">
+                        <td colspan="4">TOTALES</td>
+                        <td data-tableexport-cellformat="">{{ total_base_cf_fmt }}</td>
+                        <td data-tableexport-cellformat="">{{ total_iva_fmt }}</td>
+                        <td data-tableexport-cellformat="">{{ total_importe_fmt }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

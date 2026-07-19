@@ -11,8 +11,7 @@ https://docs.djangoproject.com/en/2.2/ref/settings/
 """
 
 import os
-#from decouple import config
-#import dj_database_url
+from decouple import config, Csv
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,14 +21,15 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # See https://docs.djangoproject.com/en/2.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-# SECRET_KEY = 'pzmaeg=(8-0#5yt^s#lk5+1km!h3jbg4wchu6souuv!9l#%2tc'
-SECRET_KEY = 'django-insecure-f*^kwe@@!hbof-#+u&q_k1da%ft&9o0f$ze5l*h=neg412kl!t'
-#SECRET_KEY=config("SECRET_KEY")
+# La clave se lee de la variable de entorno SECRET_KEY (ver archivo .env).
+# No hay valor por defecto a propósito: si falta la variable, el sistema
+# debe fallar de forma ruidosa en vez de arrancar con una clave insegura.
+SECRET_KEY = config("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config("DEBUG", default=False, cast=bool)
 
-ALLOWED_HOSTS = ["127.0.0.1",".herokuapp.com"]
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
 
 
 # Application definition
@@ -87,24 +87,13 @@ WSGI_APPLICATION = 'app.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': 'db_djfull',
-        'HOST': 'localhost',
-        'USER': 'debs',
-        'PASSWORD': '123456',
-        'PORT': 5432
+        'NAME': config('DB_NAME', default='db_djfull'),
+        'HOST': config('DB_HOST', default='localhost'),
+        'USER': config('DB_USER', default='debs'),
+        'PASSWORD': config('DB_PASSWORD', default='123456'),
+        'PORT': config('DB_PORT', default=5432, cast=int),
     }
 }
-
-#DATABASES = {
-#    'default': {
-#        'ENGINE': 'django.db.backends.postgresql',
-#        'NAME': 'db_djccmpfc_42',
-#        'HOST': 'localhost',
-#        'USER': 'postgres',
-#        'PASSWORD': '123456',
-#        'PORT': 5432
-#    }
-#}
 
 
 # Password validation

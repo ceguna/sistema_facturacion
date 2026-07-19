@@ -6,6 +6,9 @@ Django>=5.2,<5.3
 djangorestframework>=3.17
 django-userforeignkey>=0.6
 
+# Configuracion via variables de entorno (seguridad)
+python-decouple>=3.8
+
 # Base de datos
 psycopg2-binary>=2.9.12
 

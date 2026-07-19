@@ -1,0 +1,71 @@
+{% extends 'base/base.html' %}
+{% load l10n %}
+
+{% block page_content %}
+
+<h1 class="csg-dashboard-title mb-1">Facturas Anuladas</h1>
+<div class="text-muted mb-4">Historial completo de facturas anuladas, con motivo y responsable</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card border-left-danger shadow h-100 py-2">
+            <div class="card-body">
+                <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-danger);">Total Anulado</div>
+                <div class="h5 mb-0 font-weight-bold">Bs. {{ total_anulado_fmt }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-left-warning shadow h-100 py-2">
+            <div class="card-body">
+                <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-warning);">Cantidad de Facturas Anuladas</div>
+                <div class="h5 mb-0 font-weight-bold">{{ anuladas|length }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow">
+    <div class="card-header">Historial de Anulaciones</div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0"
+                data-toggle="table"
+                data-pagination="true"
+                data-search="true"
+                data-show-columns="true"
+                data-show-toggle="true"
+                data-show-fullscreen="true"
+                data-show-export="True"
+                data-export-types='["csv","txt","xlsx","pdf"]'
+                data-locale="es-NI">
+                <thead>
+                    <tr>
+                        <th data-sortable="true" data-field="id">No. Factura</th>
+                        <th data-sortable="true" data-field="cliente">Cliente</th>
+                        <th data-sortable="true" data-field="total">Total</th>
+                        <th data-sortable="true" data-field="fecha_anulacion">Fecha Anulación</th>
+                        <th data-sortable="true" data-field="usuario_anulacion">Anulado Por</th>
+                        <th data-sortable="true" data-field="motivo_anulacion">Motivo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for f in anuladas %}
+                    <tr>
+                        <td data-tableexport-cellformat=""><a href="{% url 'fac:factura_edit' f.id %}">{{ f.id }}</a></td>
+                        <td>{{ f.cliente }}</td>
+                        <td data-tableexport-cellformat="">Bs. {{ f.total_fmt }}</td>
+                        <td>{{ f.fecha_anulacion|date:"d/m/Y H:i" }}</td>
+                        <td>{{ f.usuario_anulacion|default:"—" }}</td>
+                        <td>{{ f.motivo_anulacion|default:"—" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center text-muted py-4">No hay facturas anuladas registradas 👍</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

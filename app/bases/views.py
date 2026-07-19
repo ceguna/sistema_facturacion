@@ -146,6 +146,142 @@ class ChartsView(LoginRequiredMixin, generic.TemplateView):
         return context
 
 
+IVA_TASA = 0.13  # Tasa de IVA vigente en Bolivia
+
+
+class LibroVentasView(LoginRequiredMixin, generic.TemplateView):
+    template_name = 'bases/libro_ventas.html'
+    login_url = 'bases:login'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fac.models import FacturaEnc
+
+        hoy = timezone.localtime(timezone.now()).date()
+        mes = int(self.request.GET.get('mes', hoy.month))
+        anio = int(self.request.GET.get('anio', hoy.year))
+
+        facturas = FacturaEnc.objects.filter(
+            anulado=False, fecha__year=anio, fecha__month=mes
+        ).select_related('cliente').order_by('fecha')
+
+        filas = []
+        total_importe = 0.0
+        total_base_cf = 0.0
+        total_iva = 0.0
+        for f in facturas:
+            base_cf = f.total / (1 + IVA_TASA)
+            iva = f.total - base_cf
+            filas.append({
+                'factura': f,
+                'base_cf': base_cf,
+                'iva': iva,
+                'base_cf_fmt': "{:,.2f}".format(base_cf),
+                'iva_fmt': "{:,.2f}".format(iva),
+                'total_fmt': "{:,.2f}".format(f.total),
+            })
+            total_importe += f.total
+            total_base_cf += base_cf
+            total_iva += iva
+
+        context.update({
+            'filas': filas,
+            'mes': mes,
+            'anio': anio,
+            'total_importe': total_importe,
+            'total_base_cf': total_base_cf,
+            'total_iva': total_iva,
+            'total_base_cf_fmt': "{:,.2f}".format(total_base_cf),
+            'total_iva_fmt': "{:,.2f}".format(total_iva),
+            'total_importe_fmt': "{:,.2f}".format(total_importe),
+            'meses': [
+                (1, 'Enero'), (2, 'Febrero'), (3, 'Marzo'), (4, 'Abril'),
+                (5, 'Mayo'), (6, 'Junio'), (7, 'Julio'), (8, 'Agosto'),
+                (9, 'Septiembre'), (10, 'Octubre'), (11, 'Noviembre'), (12, 'Diciembre'),
+            ],
+            'anios': range(hoy.year - 3, hoy.year + 1),
+        })
+        return context
+
+
+class LibroComprasView(LoginRequiredMixin, generic.TemplateView):
+    template_name = 'bases/libro_compras.html'
+    login_url = 'bases:login'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from cmp.models import ComprasEnc
+
+        hoy = timezone.localtime(timezone.now()).date()
+        mes = int(self.request.GET.get('mes', hoy.month))
+        anio = int(self.request.GET.get('anio', hoy.year))
+
+        compras = ComprasEnc.objects.filter(
+            fecha_compra__year=anio, fecha_compra__month=mes
+        ).select_related('proveedor').order_by('fecha_compra')
+
+        filas = []
+        total_importe = 0.0
+        total_base_cf = 0.0
+        total_iva = 0.0
+        for c in compras:
+            base_cf = c.total / (1 + IVA_TASA)
+            iva = c.total - base_cf
+            filas.append({
+                'compra': c,
+                'base_cf': base_cf,
+                'iva': iva,
+                'base_cf_fmt': "{:,.2f}".format(base_cf),
+                'iva_fmt': "{:,.2f}".format(iva),
+                'total_fmt': "{:,.2f}".format(c.total),
+            })
+            total_importe += c.total
+            total_base_cf += base_cf
+            total_iva += iva
+
+        context.update({
+            'filas': filas,
+            'mes': mes,
+            'anio': anio,
+            'total_importe': total_importe,
+            'total_base_cf': total_base_cf,
+            'total_iva': total_iva,
+            'total_base_cf_fmt': "{:,.2f}".format(total_base_cf),
+            'total_iva_fmt': "{:,.2f}".format(total_iva),
+            'total_importe_fmt': "{:,.2f}".format(total_importe),
+            'meses': [
+                (1, 'Enero'), (2, 'Febrero'), (3, 'Marzo'), (4, 'Abril'),
+                (5, 'Mayo'), (6, 'Junio'), (7, 'Julio'), (8, 'Agosto'),
+                (9, 'Septiembre'), (10, 'Octubre'), (11, 'Noviembre'), (12, 'Diciembre'),
+            ],
+            'anios': range(hoy.year - 3, hoy.year + 1),
+        })
+        return context
+
+
+class FacturasAnuladasView(LoginRequiredMixin, generic.TemplateView):
+    template_name = 'bases/facturas_anuladas.html'
+    login_url = 'bases:login'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fac.models import FacturaEnc
+
+        anuladas = FacturaEnc.objects.filter(anulado=True) \
+            .select_related('cliente', 'usuario_anulacion') \
+            .order_by('-fecha_anulacion')
+
+        for f in anuladas:
+            f.total_fmt = "{:,.2f}".format(f.total)
+
+        context.update({
+            'anuladas': anuladas,
+            'total_anulado': sum(f.total for f in anuladas),
+            'total_anulado_fmt': "{:,.2f}".format(sum(f.total for f in anuladas)),
+        })
+        return context
+
+
 class TablesView(LoginRequiredMixin, generic.TemplateView):
     template_name = 'bases/tables.html'
     login_url = 'bases:login'

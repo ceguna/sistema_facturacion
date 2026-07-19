@@ -146,6 +146,30 @@
                 </div>
             </li>
 
+            <li class="nav-item">
+                <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseReportes"
+                    aria-expanded="true" aria-controls="collapseReportes">
+                    <i class="fas fa-fw fa-file-invoice-dollar"></i>
+                    <span>Reportes</span>
+                </a>
+                <div id="collapseReportes" class="collapse" aria-labelledby="headingReportes" data-parent="#accordionSidebar">
+                    <div class="bg-white py-2 collapse-inner rounded">
+                        <h6 class="collapse-header">Libros IVA</h6>
+                        {% if perms.fac.view_facturaenc %}
+                        <a class="collapse-item" href="{% url 'bases:libro_ventas' %}">Libro de Ventas</a>
+                        {% endif %}
+                        {% if perms.inv.view_compras %}
+                        <a class="collapse-item" href="{% url 'bases:libro_compras' %}">Libro de Compras</a>
+                        {% endif %}
+
+                        <h6 class="collapse-header">Otros</h6>
+                        {% if perms.fac.view_facturaenc %}
+                        <a class="collapse-item" href="{% url 'bases:facturas_anuladas' %}">Facturas Anuladas</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </li>
+
             <!-- Nav Item - Utilities Collapse Menu 
             <li class="nav-item">
                 <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseUtilities"
@@ -172,6 +196,28 @@
             <div class="sidebar-heading">
                 Addons
             </div>
+
+            {% if user.is_superuser %}
+            <hr class="sidebar-divider">
+            <div class="sidebar-heading">
+                Administración
+            </div>
+            <li class="nav-item">
+                <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseAdmin"
+                    aria-expanded="true" aria-controls="collapseAdmin">
+                    <i class="fas fa-fw fa-user-shield"></i>
+                    <span>Usuarios y Roles</span>
+                </a>
+                <div id="collapseAdmin" class="collapse" aria-labelledby="headingAdmin" data-parent="#accordionSidebar">
+                    <div class="bg-white py-2 collapse-inner rounded">
+                        <h6 class="collapse-header">Acceso Rápido</h6>
+                        <a class="collapse-item" href="/admin/auth/user/">Usuarios</a>
+                        <a class="collapse-item" href="/admin/auth/group/">Grupos / Roles</a>
+                        <a class="collapse-item" href="/admin/">Panel Completo</a>
+                    </div>
+                </div>
+            </li>
+            {% endif %}
 
             <!-- Nav Item - Pages Collapse Menu 
             <li class="nav-item active">
