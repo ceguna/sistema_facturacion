@@ -8,13 +8,13 @@
         <div class="card-body">
             <div class="row no-gutters align-items-center">
                 <div class="col mr-2">
-                    <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
-                        Usuario: <mark>{{ user.username }} {{ user.get_full_name }}<mark> 
+                    <div class="text-base font-weight-bold text-warning text-uppercase mb-1">
+                        Usuario: <mark>{{ user.get_full_name|default:user.username }}</mark>
                     </div>
                     <div class="dropdown-divider"></div>
 
                     <div class="row">
-                        <mark>No tiene suficientes privilegios<mark> para cargar opción solicitada.
+                        <mark>No tiene suficientes privilegios</mark>&nbsp;para cargar opción solicitada.
                         <br>
                         <small>Para poder acceder, debes loguearte con un usuario con privilegios necesarios.</small>
                     </div>
@@ -22,7 +22,7 @@
 
                     <div class="row">
                         <div class="col">
-                            <a href="{% url 'bases:home' %}" class="btn btn-success"><span class="fa fa-home"></span> Ir a Inicio</a>
+                            <a href="{{ next_url }}" class="btn btn-success"><span class="fa fa-arrow-left"></span> Retornar</a>
                             <a href="{% url 'bases:login' %}" class="btn btn-success"><span class="fa fa-user"></span> Ingresar con otro usuario</a>
                         </div>
                     </div>

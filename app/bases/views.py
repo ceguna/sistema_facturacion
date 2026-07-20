@@ -27,8 +27,17 @@ class SinPrivilegios(LoginRequiredMixin, PermissionRequiredMixin, MixinFormInval
 
     def handle_no_permission(self):
         from django.contrib.auth.models import AnonymousUser
+        from django.urls import reverse
+        from urllib.parse import quote
+
         if not self.request.user==AnonymousUser():
             self.login_url='bases:sin_privilegios'
+            # Se arma la url con ?next=<ruta original> para que la pantalla
+            # de "sin privilegios" pueda ofrecer el boton "Retornar".
+            destino = reverse(self.login_url)
+            return HttpResponseRedirect(
+                "%s?next=%s" % (destino, quote(self.request.get_full_path()))
+            )
         return HttpResponseRedirect(reverse_lazy(self.login_url))
 
 class Home(LoginRequiredMixin, generic.TemplateView):
@@ -95,6 +104,17 @@ class Home(LoginRequiredMixin, generic.TemplateView):
 class HomeSinPrivilegios(LoginRequiredMixin, generic.TemplateView):
     login_url = "bases:login"
     template_name="bases/sin_privilegios.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # 'next' viene automaticamente cuando la redireccion la genera
+        # @permission_required (decorador). Si no viene (por ejemplo, cuando
+        # la redireccion viene del mixin SinPrivilegios), se cae a Home.
+        next_url = self.request.GET.get('next')
+        if not next_url or not next_url.startswith('/'):
+            next_url = reverse_lazy('bases:home')
+        context['next_url'] = next_url
+        return context
 
 
 class ChartsView(LoginRequiredMixin, generic.TemplateView):
