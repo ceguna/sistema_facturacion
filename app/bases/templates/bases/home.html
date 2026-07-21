@@ -102,7 +102,7 @@
                 <a href="{% url 'cmp:compras_new' %}" class="btn btn-success btn-block mb-2 text-left">
                     <i class="fas fa-truck-loading mr-2"></i> Nueva Compra
                 </a>
-                <a href="{% url 'fac:cliente_new' %}" class="btn btn-outline-primary btn-block mb-2 text-left">
+                <a href="#" onclick="return abrir_modal('{% url 'fac:cliente_new' %}')" class="btn btn-outline-primary btn-block mb-2 text-left">
                     <i class="fas fa-user-plus mr-2"></i> Nuevo Cliente
                 </a>
                 <a href="{% url 'inv:producto_list' %}" class="btn btn-outline-primary btn-block text-left">

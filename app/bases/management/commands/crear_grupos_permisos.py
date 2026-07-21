@@ -139,5 +139,5 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             "\nListo. Recuerda: 'Administrador' no es un grupo, se asigna "
             "marcando a un usuario como superusuario (is_superuser=True) "
-            "desde el panel /admin/."
+            "desde Usuarios y Roles > Usuarios, en el propio sistema."
         ))

@@ -1,0 +1,35 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<form method="POST" class="form-inline">
+    {% csrf_token %}
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card border-left-danger shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-base font-weight-bold text-warning text-uppercase mb-1">
+                            ¿Eliminar el rol "{{ obj.name }}"?
+                        </div>
+                        {% if obj.user_set.count %}
+                        <p class="text-danger">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            {{ obj.user_set.count }} usuario(s) tienen este rol asignado.
+                            Al eliminarlo, esos usuarios perderán los permisos que les daba este rol.
+                        </p>
+                        {% endif %}
+                        <button type="submit" class="btn btn-danger"><i class="far fa-question-circle"></i> Sí, Eliminar</button>
+                        <a href="{{ request.META.HTTP_REFERER|default:'/grupos/' }}" class="btn btn-success"><span class="fa fa-undo"></span> Cancelar</a>
+                    </div>
+                    <div class="col-auto">
+                        <i class="far fa-question-circle fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block js_page %}
+{% endblock %}

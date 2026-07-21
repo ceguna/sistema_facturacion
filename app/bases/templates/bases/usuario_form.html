@@ -1,0 +1,97 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<form method="POST">
+    {% csrf_token %}
+    <div class="col-xl-8 col-md-8 mb-6">
+        {% if obj %}
+        <div class="card border-left-warning shadow h-100 py-2">
+        {% else %}
+        <div class="card border-left-success shadow h-100 py-2">
+        {% endif %}
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="csg-form-title">
+                            {% if obj %} Editar {% else %} Nuevo {% endif %} Usuario
+                        </div>
+                        <div class="dropdown-divider"></div>
+
+                        {% if form.errors %}
+                        <div class="alert alert-danger">
+                            Revisa los datos ingresados, hay errores en el formulario.
+                        </div>
+                        {% endif %}
+
+                        {% if not obj %}
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            Al crear el usuario se genera una contraseña temporal aleatoria,
+                            que se mostrará una única vez al guardar. Luego puedes generar
+                            una nueva desde "Restablecer Contraseña" en cualquier momento.
+                        </div>
+                        {% endif %}
+
+                        <div class="row">
+                            <div class="col-md-6 form-group">
+                                <label for="id_username">{{ form.username.label }}</label>
+                                {{ form.username }}
+                            </div>
+                            <div class="col-md-6 form-group">
+                                <label for="id_email">{{ form.email.label }}</label>
+                                {{ form.email }}
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 form-group">
+                                <label for="id_first_name">{{ form.first_name.label }}</label>
+                                {{ form.first_name }}
+                            </div>
+                            <div class="col-md-6 form-group">
+                                <label for="id_last_name">{{ form.last_name.label }}</label>
+                                {{ form.last_name }}
+                            </div>
+                        </div>
+
+                        <div class="dropdown-divider"></div>
+                        <div class="row">
+                            <div class="col-md-8 form-group">
+                                <label>{{ form.groups.label }}</label>
+                                <div>
+                                    {% for checkbox in form.groups %}
+                                        <div class="form-check form-check-inline">
+                                            {{ checkbox.tag }}
+                                            <label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            <div class="col-md-4 form-group">
+                                <div class="form-check">
+                                    {{ form.is_active }}
+                                    <label class="form-check-label" for="id_is_active">{{ form.is_active.label }}</label>
+                                </div>
+                                <div class="form-check">
+                                    {{ form.is_superuser }}
+                                    <label class="form-check-label" for="id_is_superuser">{{ form.is_superuser.label }}</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dropdown-divider"></div>
+                        <div class="row">
+                            <div class="col">
+                                <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                                <a href="{% url 'bases:usuario_list' %}" class="btn btn-outline-secondary"><span class="fa fa-undo"></span> Cancelar</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block js_page %}
+{% endblock %}

@@ -1,15 +1,19 @@
-from django.shortcuts import render
+from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponseRedirect, JsonResponse
 from django.urls import reverse_lazy
 
 from django.contrib.auth.mixins import LoginRequiredMixin,\
     PermissionRequiredMixin
+from django.contrib.auth.views import PasswordChangeView
+from django.contrib.messages.views import SuccessMessageMixin
+from django.contrib import messages
 from django.views import generic
 
 import datetime
 from django.db.models import Sum, Count
 from django.db.models.functions import TruncDate
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 
 class MixinFormInvalid:
     def form_invalid(self, form):
@@ -27,17 +31,8 @@ class SinPrivilegios(LoginRequiredMixin, PermissionRequiredMixin, MixinFormInval
 
     def handle_no_permission(self):
         from django.contrib.auth.models import AnonymousUser
-        from django.urls import reverse
-        from urllib.parse import quote
-
         if not self.request.user==AnonymousUser():
             self.login_url='bases:sin_privilegios'
-            # Se arma la url con ?next=<ruta original> para que la pantalla
-            # de "sin privilegios" pueda ofrecer el boton "Retornar".
-            destino = reverse(self.login_url)
-            return HttpResponseRedirect(
-                "%s?next=%s" % (destino, quote(self.request.get_full_path()))
-            )
         return HttpResponseRedirect(reverse_lazy(self.login_url))
 
 class Home(LoginRequiredMixin, generic.TemplateView):
@@ -106,13 +101,23 @@ class HomeSinPrivilegios(LoginRequiredMixin, generic.TemplateView):
     template_name="bases/sin_privilegios.html"
 
     def get_context_data(self, **kwargs):
+        from urllib.parse import urlparse
+
         context = super().get_context_data(**kwargs)
-        # 'next' viene automaticamente cuando la redireccion la genera
-        # @permission_required (decorador). Si no viene (por ejemplo, cuando
-        # la redireccion viene del mixin SinPrivilegios), se cae a Home.
-        next_url = self.request.GET.get('next')
-        if not next_url or not next_url.startswith('/'):
-            next_url = reverse_lazy('bases:home')
+        # Usamos el Referer (la pantalla desde la que el usuario vino, ej.
+        # el listado) en vez del "next" que apunta a la accion bloqueada:
+        # redirigir a la accion bloqueada solo la vuelve a rechazar y genera
+        # un loop de vuelta a esta misma pantalla.
+        next_url = reverse_lazy('bases:home')
+        referer = self.request.META.get('HTTP_REFERER')
+        if referer:
+            partes = urlparse(referer)
+            # Solo se acepta si es del mismo sitio (evita open redirect).
+            if not partes.netloc or partes.netloc == self.request.get_host():
+                if partes.path:
+                    next_url = partes.path
+                    if partes.query:
+                        next_url = f"{next_url}?{partes.query}"
         context['next_url'] = next_url
         return context
 
@@ -402,3 +407,195 @@ class TablesView(LoginRequiredMixin, generic.TemplateView):
             'hoy': hoy,
         })
         return context
+
+
+# =====================================================================
+# Gestion de Usuarios y Roles, integrada al sistema (reemplaza los
+# accesos directos al admin de Django). Solo queda accesible a
+# superusuarios: ningun grupo estandar creado por
+# crear_grupos_permisos.py tiene permisos sobre auth.User / auth.Group,
+# y Django ya le concede automaticamente todos los permisos a
+# is_superuser=True.
+#
+# Nota importante: varios modelos del sistema (Categoria, Producto,
+# Compras, etc.) tienen FK a User con on_delete=CASCADE. Por eso no se
+# ofrece "eliminar usuario": borrar un usuario borraria en cascada todo
+# lo que ese usuario creo. En su lugar se ofrece activar/desactivar.
+# =====================================================================
+from django.contrib.auth.models import User, Group
+
+from .forms import UsuarioForm, GrupoForm, PerfilForm, CSGPasswordChangeForm
+
+
+class MiPerfilView(LoginRequiredMixin, SuccessMessageMixin, generic.UpdateView):
+    """Permite a cualquier usuario logueado editar sus propios datos
+    basicos (nombres, apellidos, correo). No toca username, roles,
+    ni el estado activo/superusuario: eso sigue siendo exclusivo de
+    Usuarios y Roles (superusuarios)."""
+    model = User
+    form_class = PerfilForm
+    template_name = "bases/mi_perfil.html"
+    context_object_name = "obj"
+    success_url = reverse_lazy("bases:mi_perfil")
+    success_message = "Tus datos se actualizaron satisfactoriamente"
+
+    def get_object(self, queryset=None):
+        return self.request.user
+
+
+class MiCambiarPasswordView(LoginRequiredMixin, SuccessMessageMixin, PasswordChangeView):
+    """Cambio de contraseña propia. A diferencia del restablecimiento
+    que hace un superusuario sobre otro usuario (que genera una clave
+    aleatoria), aca el propio usuario elige su nueva contraseña y debe
+    confirmar la actual (PasswordChangeForm de Django ya lo exige)."""
+    form_class = CSGPasswordChangeForm
+    template_name = "bases/cambiar_password.html"
+    success_url = reverse_lazy("bases:mi_perfil")
+    success_message = "Tu contraseña se actualizó satisfactoriamente"
+
+
+class UsuarioListView(SinPrivilegios, generic.ListView):
+    permission_required = "auth.view_user"
+    model = User
+    template_name = "bases/usuario_list.html"
+    context_object_name = "obj"
+    queryset = User.objects.all().order_by("username").prefetch_related("groups")
+
+
+class UsuarioNew(SuccessMessageMixin, SinPrivilegios, generic.CreateView):
+    permission_required = "auth.add_user"
+    model = User
+    form_class = UsuarioForm
+    template_name = "bases/usuario_form.html"
+    context_object_name = "obj"
+    success_url = reverse_lazy("bases:usuario_list")
+
+    def form_valid(self, form):
+        # Se genera una contraseña temporal aleatoria; el usuario no se
+        # puede crear sin contraseña. El admin debe comunicarsela o
+        # usar "Restablecer Contraseña" para generar una nueva despues.
+        clave_temporal = get_random_string(10)
+        form.instance.set_password(clave_temporal)
+        response = super().form_valid(form)
+        messages.success(
+            self.request,
+            f"Usuario '{self.object.username}' creado. Contraseña temporal: "
+            f"{clave_temporal} (anótala ahora, no se volverá a mostrar)."
+        )
+        return response
+
+
+class UsuarioEdit(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
+    permission_required = "auth.change_user"
+    model = User
+    form_class = UsuarioForm
+    template_name = "bases/usuario_form.html"
+    context_object_name = "obj"
+    success_url = reverse_lazy("bases:usuario_list")
+    success_message = "Usuario actualizado satisfactoriamente"
+
+
+class UsuarioResetPassword(SinPrivilegios, generic.DetailView):
+    """Pantalla de confirmacion para restablecer la contraseña de un
+    usuario. Genera una nueva contraseña aleatoria y la muestra una
+    unica vez; no queda guardada en texto plano en ningun lado."""
+    permission_required = "auth.change_user"
+    model = User
+    template_name = "bases/usuario_reset_password.html"
+    context_object_name = "obj"
+
+    def post(self, request, *args, **kwargs):
+        usuario = self.get_object()
+        clave_nueva = get_random_string(10)
+        usuario.set_password(clave_nueva)
+        usuario.save()
+        messages.success(
+            request,
+            f"Contraseña de '{usuario.username}' restablecida. Nueva "
+            f"contraseña temporal: {clave_nueva} (anótala ahora, no se "
+            f"volverá a mostrar)."
+        )
+        return redirect("bases:usuario_list")
+
+
+class UsuarioToggleActivo(SinPrivilegios, generic.View):
+    """Activa/desactiva un usuario. No se ofrece eliminar (ver nota de
+    on_delete=CASCADE mas arriba)."""
+    permission_required = "auth.change_user"
+
+    def post(self, request, *args, **kwargs):
+        usuario = get_object_or_404(User, pk=kwargs["pk"])
+        if usuario == request.user:
+            messages.error(request, "No puedes desactivar tu propio usuario.")
+        else:
+            usuario.is_active = not usuario.is_active
+            usuario.save()
+            estado = "activado" if usuario.is_active else "desactivado"
+            messages.success(request, f"Usuario '{usuario.username}' {estado}.")
+        return redirect("bases:usuario_list")
+
+
+class GrupoListView(SinPrivilegios, generic.ListView):
+    permission_required = "auth.view_group"
+    model = Group
+    template_name = "bases/grupo_list.html"
+    context_object_name = "obj"
+    queryset = Group.objects.all().order_by("name").prefetch_related(
+        "permissions", "user_set"
+    )
+
+
+class PermisosAgrupadosMixin:
+    """Agrupa los permisos por app.modelo para que el formulario de
+    roles se pueda mostrar organizado en secciones, en vez de una
+    lista plana de decenas de checkboxes."""
+
+    def get_context_data(self, **kwargs):
+        from .forms import APPS_GESTIONADAS
+        from django.contrib.auth.models import Permission
+
+        context = super().get_context_data(**kwargs)
+        form = context['form']
+        seleccionados = set(
+            str(v) for v in (form['permissions'].value() or [])
+        )
+        permisos = Permission.objects.filter(
+            content_type__app_label__in=APPS_GESTIONADAS
+        ).select_related('content_type').order_by(
+            'content_type__app_label', 'content_type__model', 'codename'
+        )
+        grupos = {}
+        for p in permisos:
+            clave = f"{p.content_type.app_label}.{p.content_type.model}"
+            grupos.setdefault(clave, []).append(p)
+        context['permisos_agrupados'] = grupos
+        context['permisos_seleccionados'] = seleccionados
+        return context
+
+
+class GrupoNew(PermisosAgrupadosMixin, SuccessMessageMixin, SinPrivilegios, generic.CreateView):
+    permission_required = "auth.add_group"
+    model = Group
+    form_class = GrupoForm
+    template_name = "bases/grupo_form.html"
+    context_object_name = "obj"
+    success_url = reverse_lazy("bases:grupo_list")
+    success_message = "Rol creado satisfactoriamente"
+
+
+class GrupoEdit(PermisosAgrupadosMixin, SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
+    permission_required = "auth.change_group"
+    model = Group
+    form_class = GrupoForm
+    template_name = "bases/grupo_form.html"
+    context_object_name = "obj"
+    success_url = reverse_lazy("bases:grupo_list")
+    success_message = "Rol actualizado satisfactoriamente"
+
+
+class GrupoDel(SinPrivilegios, generic.DeleteView):
+    permission_required = "auth.delete_group"
+    model = Group
+    template_name = "bases/grupo_del.html"
+    context_object_name = "obj"
+    success_url = reverse_lazy("bases:grupo_list")

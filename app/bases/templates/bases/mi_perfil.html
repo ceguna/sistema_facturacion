@@ -1,0 +1,65 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<form method="POST">
+    {% csrf_token %}
+    <div class="col-xl-6 col-md-8 mb-6">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="csg-form-title">Mi Perfil</div>
+                        <div class="text-muted small mb-2">
+                            Usuario: <b>{{ obj.username }}</b>
+                            {% if obj.groups.all %}
+                                &middot;
+                                {% for grupo in obj.groups.all %}
+                                    <span class="badge badge-info">{{ grupo.name }}</span>
+                                {% endfor %}
+                            {% elif obj.is_superuser %}
+                                &middot; <span class="badge badge-primary">Administrador</span>
+                            {% endif %}
+                        </div>
+                        <div class="dropdown-divider"></div>
+
+                        {% if form.errors %}
+                        <div class="alert alert-danger">
+                            Revisa los datos ingresados, hay errores en el formulario.
+                        </div>
+                        {% endif %}
+
+                        <div class="row">
+                            <div class="col-md-6 form-group">
+                                <label for="id_first_name">{{ form.first_name.label }}</label>
+                                {{ form.first_name }}
+                            </div>
+                            <div class="col-md-6 form-group">
+                                <label for="id_last_name">{{ form.last_name.label }}</label>
+                                {{ form.last_name }}
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-8 form-group">
+                                <label for="id_email">{{ form.email.label }}</label>
+                                {{ form.email }}
+                            </div>
+                        </div>
+
+                        <div class="dropdown-divider"></div>
+                        <div class="row">
+                            <div class="col">
+                                <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                                <a href="{% url 'bases:home' %}" class="btn btn-outline-secondary"><span class="fa fa-undo"></span> Cancelar</a>
+                                <a href="{% url 'bases:cambiar_password' %}" class="btn btn-outline-warning"><i class="fas fa-key"></i> Cambiar Contraseña</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block js_page %}
+{% endblock %}
