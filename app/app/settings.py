@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'cmp',
     'fac',
     'fe',
+    'catalogos',
     'django_userforeignkey',
     'rest_framework',
 ]
