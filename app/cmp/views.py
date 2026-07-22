@@ -6,6 +6,7 @@ import datetime
 from django.http import HttpResponse
 
 from django.contrib.messages.views import SuccessMessageMixin
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.http import HttpResponse
 import json
@@ -145,7 +146,10 @@ def compras(request,compra_id=None):
         total = 0
 
         if not compra_id:
-            prov=Proveedor.objects.get(pk=proveedor)
+            prov = Proveedor.objects.filter(pk=proveedor).first()
+            if not prov:
+                messages.error(request, 'El proveedor seleccionado no existe o no es válido')
+                return redirect("cmp:compras_list")
 
             enc = ComprasEnc(
                 fecha_compra=fecha_compra,
@@ -178,7 +182,10 @@ def compras(request,compra_id=None):
         descuento_detalle  = request.POST.get("id_descuento_detalle")
         total_detalle  = request.POST.get("id_total_detalle")
 
-        prod = Producto.objects.get(pk=producto)
+        prod = Producto.objects.filter(pk=producto).first()
+        if not prod:
+            messages.error(request, 'El producto seleccionado no existe o no es válido')
+            return redirect("cmp:compras_edit", compra_id=compra_id)
 
         det = ComprasDet(
             compra=enc,

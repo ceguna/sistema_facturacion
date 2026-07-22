@@ -1,0 +1,104 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="row">
+    <div class="col-xl-6 col-md-8 mb-4">
+        <form method="POST">
+            {% csrf_token %}
+            <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="csg-form-title">
+                        {% if obj %} Editar {% else %} Nueva {% endif %} Sucursal
+                    </div>
+                    <div class="dropdown-divider"></div>
+
+                    {% if form.errors %}
+                    <div class="alert alert-danger">
+                        Revisa los datos ingresados, hay errores en el formulario.
+                    </div>
+                    {% endif %}
+
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.codigo_sucursal.label }}</label>
+                            {{ form.codigo_sucursal }}
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.nombre.label }}</label>
+                            {{ form.nombre }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8 form-group">
+                            <label>{{ form.direccion.label }}</label>
+                            {{ form.direccion }}
+                        </div>
+                        <div class="col-md-4 form-group">
+                            <label>{{ form.departamento.label }}</label>
+                            {{ form.departamento }}
+                        </div>
+                    </div>
+
+                    {% if obj.codigo_cuis %}
+                    <div class="alert alert-secondary">
+                        <b>CUIS:</b> {{ obj.codigo_cuis }}
+                        (autorizado el {{ obj.fecha_autorizacion_cuis }})<br>
+                        <b>Vigente hasta:</b> {{ obj.fecha_vigencia_cuis|default:"—" }}
+                        {% if obj.fecha_vigencia_cuis %}
+                        <span class="text-muted">(renovable desde 5 días antes de esa fecha)</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                    <div class="dropdown-divider"></div>
+                    <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                    <a href="{% url 'fe:empresa_config' %}" class="btn btn-outline-secondary"><span class="fa fa-undo"></span> Cancelar</a>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    {% if obj %}
+    <div class="col-xl-6 col-md-8 mb-4">
+        <div class="card shadow h-100">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <span>Puntos de Venta</span>
+                <a href="{% url 'fe:puntoventa_new' obj.id %}" class="btn btn-sm btn-success">
+                    <i class="fas fa-plus"></i> Nuevo Punto de Venta
+                </a>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Código</th>
+                            <th>Nombre</th>
+                            <th>Tipo</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pv in puntos_venta %}
+                        <tr>
+                            <td>{{ pv.codigo_punto_venta }}</td>
+                            <td>{{ pv.nombre }}</td>
+                            <td>{{ pv.get_codigo_tipo_punto_venta_display }}</td>
+                            <td>
+                                <a href="{% url 'fe:puntoventa_edit' pv.id %}" class="btn btn-warning btn-circle" title="Editar"><i class="far fa-edit"></i></a>
+                                <a href="{% url 'fe:puntoventa_del' pv.id %}" class="btn btn-danger btn-circle" title="Eliminar"><i class="far fa-trash-alt"></i></a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" class="text-center text-muted py-4">Todavía no hay puntos de venta registrados</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block js_page %}
+{% endblock %}

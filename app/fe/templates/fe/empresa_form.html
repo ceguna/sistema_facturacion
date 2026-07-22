@@ -1,0 +1,114 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="row">
+    <div class="col-xl-6 col-md-8 mb-4">
+        <form method="POST">
+            {% csrf_token %}
+            <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="csg-form-title">Configuración de la Empresa (SIN)</div>
+                    <div class="text-muted small mb-2">
+                        Estos datos se usarán para la integración con el Servicio de
+                        Impuestos Nacionales (Facturación Electrónica en Línea).
+                    </div>
+                    <div class="dropdown-divider"></div>
+
+                    {% if not obj.nit %}
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle mr-1"></i>
+                        Todavía no se cargó el NIT. Es normal mientras se tramita el
+                        registro del negocio ante Impuestos Nacionales; el sistema
+                        seguirá funcionando con facturación normal (sin SIN) hasta
+                        que esto se complete.
+                    </div>
+                    {% endif %}
+
+                    {% if form.errors %}
+                    <div class="alert alert-danger">
+                        Revisa los datos ingresados, hay errores en el formulario.
+                    </div>
+                    {% endif %}
+
+                    <div class="row">
+                        <div class="col-md-8 form-group">
+                            <label>{{ form.razon_social.label }}</label>
+                            {{ form.razon_social }}
+                        </div>
+                        <div class="col-md-4 form-group">
+                            <label>{{ form.tipo_persona.label }}</label>
+                            {{ form.tipo_persona }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.nit.label }}</label>
+                            {{ form.nit }}
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.codigo_actividad_economica.label }}</label>
+                            {{ form.codigo_actividad_economica }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.ambiente.label }}</label>
+                            {{ form.ambiente }}
+                        </div>
+                    </div>
+
+                    <div class="dropdown-divider"></div>
+                    <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <div class="col-xl-6 col-md-8 mb-4">
+        <div class="card shadow h-100">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <span>Sucursales</span>
+                <a href="{% url 'fe:sucursal_new' %}" class="btn btn-sm btn-success">
+                    <i class="fas fa-plus"></i> Nueva Sucursal
+                </a>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Código</th>
+                            <th>Nombre</th>
+                            <th>CUIS</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for suc in sucursales %}
+                        <tr>
+                            <td>{{ suc.codigo_sucursal }}</td>
+                            <td>{{ suc.nombre }}</td>
+                            <td>
+                                {% if suc.codigo_cuis %}
+                                    <span class="badge badge-success">Autorizada</span>
+                                {% else %}
+                                    <span class="badge badge-secondary">Pendiente</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'fe:sucursal_edit' suc.id %}" class="btn btn-warning btn-circle" title="Editar"><i class="far fa-edit"></i></a>
+                                <a href="{% url 'fe:sucursal_del' suc.id %}" class="btn btn-danger btn-circle" title="Eliminar"><i class="far fa-trash-alt"></i></a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" class="text-center text-muted py-4">Todavía no hay sucursales registradas</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block js_page %}
+{% endblock %}

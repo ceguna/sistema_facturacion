@@ -1,4 +1,4 @@
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from django.utils.dateparse import parse_date
 from datetime import timedelta
 
@@ -7,7 +7,7 @@ from .models import FacturaEnc,FacturaDet
 def imprimir_factura_recibo(request,id):
     template_name="fac/factura_one.html"
 
-    enc = FacturaEnc.objects.get(id=id)
+    enc = get_object_or_404(FacturaEnc, id=id)
     det = FacturaDet.objects.filter(factura=id)
 
     context={

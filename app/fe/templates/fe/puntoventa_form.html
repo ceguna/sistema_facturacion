@@ -1,0 +1,50 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<form method="POST">
+    {% csrf_token %}
+    <div class="col-xl-5 col-md-6 mb-4">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="csg-form-title">
+                    {% if obj %} Editar {% else %} Nuevo {% endif %} Punto de Venta
+                </div>
+                <div class="text-muted small mb-2">
+                    Sucursal: <b>{{ sucursal|default:obj.sucursal }}</b>
+                </div>
+                <div class="dropdown-divider"></div>
+
+                {% if form.errors %}
+                <div class="alert alert-danger">
+                    Revisa los datos ingresados, hay errores en el formulario.
+                </div>
+                {% endif %}
+
+                <div class="row">
+                    <div class="col-md-6 form-group">
+                        <label>{{ form.codigo_punto_venta.label }}</label>
+                        {{ form.codigo_punto_venta }}
+                    </div>
+                    <div class="col-md-6 form-group">
+                        <label>{{ form.nombre.label }}</label>
+                        {{ form.nombre }}
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-8 form-group">
+                        <label>{{ form.codigo_tipo_punto_venta.label }}</label>
+                        {{ form.codigo_tipo_punto_venta }}
+                    </div>
+                </div>
+
+                <div class="dropdown-divider"></div>
+                <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                <a href="{% url 'fe:sucursal_edit' sucursal.id|default:obj.sucursal.id %}" class="btn btn-outline-secondary"><span class="fa fa-undo"></span> Cancelar</a>
+            </div>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block js_page %}
+{% endblock %}

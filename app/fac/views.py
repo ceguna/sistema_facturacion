@@ -1,5 +1,5 @@
 from django.http import JsonResponse
-from django.shortcuts import render,redirect
+from django.shortcuts import render,redirect, get_object_or_404
 from django.views import generic
 
 from django.contrib.messages.views import SuccessMessageMixin
@@ -128,7 +128,10 @@ def facturas(request,id=None):
     if request.method == "POST":
         cliente = request.POST.get("enc_cliente")
         fecha  = request.POST.get("fecha")
-        cli=Cliente.objects.get(pk=cliente)
+        cli = Cliente.objects.filter(pk=cliente).first()
+        if not cli:
+            messages.error(request, 'El cliente seleccionado no existe o no es válido')
+            return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_list")
 
         if not id:
             enc = FacturaEnc(
@@ -155,7 +158,10 @@ def facturas(request,id=None):
         descuento = request.POST.get("descuento_detalle")
         total = request.POST.get("total_detalle")
 
-        prod = Producto.objects.get(codigo=codigo)
+        prod = Producto.objects.filter(codigo=codigo).first()
+        if not prod:
+            messages.error(request, 'El producto ingresado no existe')
+            return redirect("fac:factura_edit", id=id)
 
         # Validacion de stock del lado del servidor (no depender solo de JavaScript)
         if int(cantidad) > prod.existencia:
@@ -185,7 +191,7 @@ class ProductoView(inv.ProductoView):
 def borrar_detalle_factura(request, id):
     template_name = "fac/factura_borrar_detalle.html"
 
-    det = FacturaDet.objects.get(pk=id)
+    det = get_object_or_404(FacturaDet, pk=id)
 
     if request.method=="GET":
         context={"det":det} #Aqui se carga el detalle en la variable det.

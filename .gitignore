@@ -10,3 +10,9 @@ db.sqlite3
 .vscode/
 .idea/
 files/
+
+# Prototipo SIN - archivos sensibles/generados
+prototipo/sin/__pycache__/
+prototipo/sin/certificado_prueba_key.pem
+prototipo/sin/certificado_prueba_cert.pem
+prototipo/sin/factura_firmada.xml

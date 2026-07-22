@@ -130,7 +130,7 @@ def detalle_fac_guardar(sender,instance,**kwargs):
     factura_id = instance.factura.id
     producto_id = instance.producto.id
 
-    enc = FacturaEnc.objects.get(pk=factura_id)
+    enc = FacturaEnc.objects.filter(pk=factura_id).first()
     if enc:
         sub_total = FacturaDet.objects.filter(factura=factura_id) \
             .aggregate(sub_total=Sum('sub_total')).get('sub_total',0.00)
