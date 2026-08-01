@@ -21,29 +21,28 @@ from django.db import transaction
 
 from .models import CatalogoSIN, SincronizacionLog
 
-
 # Nombre de la operación SOAP que corresponde a cada catálogo.
-# TODO (Paso 4): confirmar cada nombre contra el WSDL oficial del
-# ambiente Piloto -- no adivinar, se documentará junto con CUIS/CUFD.
+# Confirmado contra el WSDL real: v2/FacturacionSincronizacion
+# (https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionSincronizacion?wsdl)
 MAPEO_CATALOGOS = {
-    CatalogoSIN.TipoCatalogo.ACTIVIDADES: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.ACTIVIDADES_DOC_SECTOR: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.LEYENDAS: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.MENSAJES: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.EVENTOS_SIGNIFICATIVOS: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.MOTIVOS_ANULACION: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.PAIS_ORIGEN: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_DOC_IDENTIDAD: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_DOC_SECTOR: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_EMISION: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_HABITACION: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_METODO_PAGO: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_MONEDA: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_PUNTO_VENTA: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_FACTURA: "PENDIENTE_CONFIRMAR",
-    CatalogoSIN.TipoCatalogo.TIPO_UNIDAD_MEDIDA: "PENDIENTE_CONFIRMAR",
+    CatalogoSIN.TipoCatalogo.ACTIVIDADES: "sincronizarActividades",
+    CatalogoSIN.TipoCatalogo.ACTIVIDADES_DOC_SECTOR: "sincronizarListaActividadesDocumentoSector",
+    CatalogoSIN.TipoCatalogo.LEYENDAS: "sincronizarListaLeyendasFactura",
+    CatalogoSIN.TipoCatalogo.MENSAJES: "sincronizarListaMensajesServicios",
+    CatalogoSIN.TipoCatalogo.EVENTOS_SIGNIFICATIVOS: "sincronizarParametricaEventosSignificativos",
+    CatalogoSIN.TipoCatalogo.MOTIVOS_ANULACION: "sincronizarParametricaMotivoAnulacion",
+    CatalogoSIN.TipoCatalogo.PAIS_ORIGEN: "sincronizarParametricaPaisOrigen",
+    CatalogoSIN.TipoCatalogo.TIPO_DOC_IDENTIDAD: "sincronizarParametricaTipoDocumentoIdentidad",
+    CatalogoSIN.TipoCatalogo.TIPO_DOC_SECTOR: "sincronizarParametricaTipoDocumentoSector",
+    CatalogoSIN.TipoCatalogo.TIPO_EMISION: "sincronizarParametricaTipoEmision",
+    CatalogoSIN.TipoCatalogo.TIPO_HABITACION: "sincronizarParametricaTipoHabitacion",
+    CatalogoSIN.TipoCatalogo.TIPO_METODO_PAGO: "sincronizarParametricaTipoMetodoPago",
+    CatalogoSIN.TipoCatalogo.TIPO_MONEDA: "sincronizarParametricaTipoMoneda",
+    CatalogoSIN.TipoCatalogo.TIPO_PUNTO_VENTA: "sincronizarParametricaTipoPuntoVenta",
+    CatalogoSIN.TipoCatalogo.TIPO_FACTURA: "sincronizarParametricaTiposFactura",
+    CatalogoSIN.TipoCatalogo.TIPO_UNIDAD_MEDIDA: "sincronizarParametricaUnidadMedida",
+    CatalogoSIN.TipoCatalogo.PRODUCTOS_SERVICIOS: "sincronizarListaProductosServicios",
 }
-
 
 class CatalogoSyncError(Exception):
     """Error al sincronizar un catálogo específico con el SIN."""

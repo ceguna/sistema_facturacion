@@ -19,8 +19,8 @@ from factura_xml import construir_factura_xml
 from cuf import calcular_cuf
 from generar_certificado_prueba import generar_certificado_prueba
 
-ARCHIVO_LLAVE = "certificado_prueba_key.pem"
-ARCHIVO_CERT = "certificado_prueba_cert.pem"
+ARCHIVO_LLAVE = "certificado_real/clave_privada_real.pem"
+ARCHIVO_CERT = "certificado_real/certificado_real.pem"
 ARCHIVO_XSD = "facturaElectronicaCompraVenta.xsd"
 ARCHIVO_SALIDA = "factura_firmada.xml"
 
@@ -36,7 +36,7 @@ def main():
         print("\n[0] Generando certificado de prueba (autofirmado)...")
         generar_certificado_prueba(ARCHIVO_LLAVE, ARCHIVO_CERT)
     else:
-        print(f"\n[0] Usando certificado de prueba existente: {ARCHIVO_CERT}")
+        print(f"\n[0] Usando certificado existente: {ARCHIVO_CERT}")
 
     # 1. Datos de la factura (de prueba, con la libreria real como emisora)
     fecha_hora = datetime.datetime.now()
@@ -144,10 +144,9 @@ def main():
         f.write(etree.tostring(xml_firmado, pretty_print=True))
     print(f"\nListo. Factura de prueba guardada en: {ARCHIVO_SALIDA}")
     print("\nRECORDATORIOS:")
-    print(" - El CUF ya esta verificado contra el ejemplo oficial del SIN (ver cuf.py).")
-    print("   Solo falta el 'codigoControl' real, que en el Paso 4 vendra de la")
-    print("   respuesta del servicio solicitudCufd (aqui esta simulado).")
-    print(" - El certificado usado es de PRUEBA (autofirmado), no valido ante el SIN.")
+    print(" - El CUF sigue siendo PROVISIONAL: depende del 'codigoControl' real")
+    print("   que devuelve el servicio solicitudCufd (aqui esta simulado).")
+    print(f" - Certificado en uso: {ARCHIVO_CERT}")
     print(" - Todavia no se conecta a ningun servicio del SIN (eso es el Paso 4).")
 
 

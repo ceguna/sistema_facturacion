@@ -1,0 +1,51 @@
+
+======================================================================
+Codigos (CUIS/CUFD)
+https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionCodigos?wsdl
+======================================================================
+ - verificarNit
+ - verificarComunicacion
+ - cuisMasivo
+ - cufd
+ - notificaCertificadoRevocado
+ - cuis
+ - cufdMasivo
+
+======================================================================
+Sincronizacion Catalogos
+https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionSincronizacion?wsdl
+======================================================================
+ - sincronizarParametricaMotivoAnulacion
+ - sincronizarActividades
+ - sincronizarFechaHora
+ - sincronizarListaLeyendasFactura
+ - sincronizarParametricaTipoHabitacion
+ - sincronizarListaActividadesDocumentoSector
+ - sincronizarParametricaTipoDocumentoIdentidad
+ - sincronizarParametricaUnidadMedida
+ - sincronizarParametricaTipoDocumentoSector
+ - sincronizarParametricaTiposFactura
+ - verificarComunicacion
+ - sincronizarListaMensajesServicios
+ - sincronizarParametricaTipoMetodoPago
+ - sincronizarParametricaEventosSignificativos
+ - sincronizarParametricaTipoPuntoVenta
+ - sincronizarListaProductosServicios
+ - sincronizarParametricaTipoEmision
+ - sincronizarParametricaPaisOrigen
+ - sincronizarParametricaTipoMoneda
+
+======================================================================
+Facturacion Electronica
+https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionElectronica?wsdl
+======================================================================
+ - recepcionPaqueteFactura
+ - verificarComunicacion
+ - recepcionFactura
+ - reversionAnulacionFactura
+ - validacionRecepcionMasivaFactura
+ - recepcionMasivaFactura
+ - verificacionEstadoFactura
+ - validacionRecepcionPaqueteFactura
+ - anulacionFactura
+ - recepcionAnexosSuministroEnergia

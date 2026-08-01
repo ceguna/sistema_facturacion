@@ -28,6 +28,7 @@ class CatalogoSIN(models.Model):
         TIPO_PUNTO_VENTA = 'TIPO_PUNTO_VENTA', 'Tipo Punto de Venta'
         TIPO_FACTURA = 'TIPO_FACTURA', 'Tipo Factura'
         TIPO_UNIDAD_MEDIDA = 'TIPO_UNIDAD_MEDIDA', 'Tipo Unidad de Medida'
+        PRODUCTOS_SERVICIOS = 'PRODUCTOS_SERVICIOS', 'Productos y Servicios'
 
     tipo_catalogo = models.CharField(
         max_length=30,

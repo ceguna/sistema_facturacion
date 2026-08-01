@@ -16,3 +16,7 @@ prototipo/sin/__pycache__/
 prototipo/sin/certificado_prueba_key.pem
 prototipo/sin/certificado_prueba_cert.pem
 prototipo/sin/factura_firmada.xml
+
+# Certificado digital REAL (nunca subir - identidad legal real)
+prototipo/sin/certificado_real/
+*.p12
