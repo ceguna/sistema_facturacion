@@ -111,13 +111,76 @@ CUF resultante `1079F647BEC1A17B1709528B3FCB31B22CB3B9E06A3968EA18C971BF74`
 criptográficamente, y válido contra `facturaElectronicaCompraVenta.xsd`.
 Primera factura de punta a punta sin ningún dato simulado.
 
+## recepcionFactura — CONFIRMADO, primera factura validada (02/08/2026)
+
+### Objeto de solicitud
+Nombre real del tipo según WSDL: `solicitudRecepcionFactura`. El parámetro
+de la operación (el que espera `client.service.recepcionFactura(...)`) es
+`SolicitudServicioRecepcionFactura`.
+
+Campos (confirmados vía `client.get_type` contra el WSDL real, no adivinados):
+`codigoAmbiente`, `codigoDocumentoSector`, `codigoEmision`, `codigoModalidad`,
+`codigoPuntoVenta`, `codigoSistema`, `codigoSucursal`, `cufd`, `cuis`, `nit`,
+`tipoFacturaDocumento`, `archivo` (base64Binary), `fechaEnvio`, `hashArchivo`.
+
+### Flujo completo confirmado (documentación oficial + prueba real)
+
+1. Armar el XML de la factura
+2. Firmar (XMLDSig, RSA-SHA256, C14N con comentarios) — ya lo hacía el prototipo
+3. Validar contra el XSD — ya lo hacía el prototipo
+4. **Comprimir el XML firmado en gzip** → los bytes van en el campo `archivo`
+   (zeep codifica a base64 solo, no hace falta hacerlo a mano)
+5. **Calcular SHA-256 del archivo comprimido** (no del XML plano) → hex
+   en mayúsculas va en `hashArchivo`
+6. Enviar vía `recepcionFactura`
+
+Los pasos 4 y 5 NO estaban en el prototipo original (`main.py` paraba en
+el paso 3) — se agregaron en `enviar_factura.py`.
+
+### Errores encontrados y resueltos en el camino
+
+- **Error 1016/1017** ("actividad económica no asociada al contribuyente" /
+  "producto no asociado a la actividad"): el prototipo usaba
+  `actividadEconomica="476130"` y `codigoProductoSin="49111"`, ambos
+  valores de EJEMPLO de la documentación oficial, nunca verificados contra
+  los datos reales de la librería. Corrección:
+  - Actividad económica real (confirmada en SIAT en Línea → Registro
+    Nacional de Contribuyentes → Información del Contribuyente):
+    **`4761300`** — "Venta al por menor de material de oficina y artículos
+    de librería" (ojo: 7 dígitos, no 6 — el valor de ejemplo tenía un
+    dígito menos).
+  - Producto real (confirmado vía `sincronizarListaProductosServicios`,
+    filtrando por `codigoActividad=4761300`): **`1003646`** — artículos de
+    papelería (cuadernos, bolígrafos, etc. — coincide con el ítem de
+    prueba usado). Alternativa disponible: `1004879` (Activos Fijos).
+
+### Resultado final
+```
+codigoDescripcion: VALIDADA
+codigoEstado: 908
+codigoRecepcion: a3d0a836-8ec8-11f1-a745-adb8279ff5dd
+transaccion: True
+```
+
+### Script de referencia: `enviar_factura.py`
+Encadena: pedir CUFD fresco → calcular CUF → armar XML → firmar → validar
+XSD → gzip → SHA-256 → enviar. Pide un CUFD nuevo en cada corrida (no
+reutiliza uno guardado) porque la vigencia es corta — importante también
+para producción: cada emisión debería pedir su propio CUFD si el
+anterior venció.
+
 ## Estado actual (02/08/2026)
 - ✅ CUIS obtenido: `31477C6C`, vigente hasta 01/08/2027
-- ✅ CUFD real obtenido (ver arriba, vigencia corta — pedir uno nuevo por sesión de trabajo)
+- ✅ CUFD real obtenido (vigencia corta — pedir uno nuevo por sesión de trabajo)
 - ✅ CUF real calculado, factura firmada y validada contra XSD
 - ❌ `registroPuntoVenta` descartado — no aplica al caso (ver arriba)
-- ⏳ Próximo paso: `recepcionFactura` (envío real de la factura al SIN)
+- ✅ **`recepcionFactura` — PRIMERA FACTURA VALIDADA POR EL SIN** (`codigoRecepcion: a3d0a836-8ec8-11f1-a745-adb8279ff5dd`)
+- ⏳ Próximo paso: integrar este flujo al Django real (reemplazar el
+  prototipo aislado por la app de facturación), y/o seguir con las
+  siguientes etapas de certificación Piloto (Eventos Significativos,
+  Emisión de paquetes, Anulación, Reversión)
 - ⏳ Pendiente en paralelo: conectar la app `catalogos` con cliente `zeep`
   real (reemplazar `MockSOAPClient`) — ya se tienen confirmados en esta
-  sesión los catálogos de Tipo de Punto de Venta, Tipo de Emisión y Tipos
-  de Factura; faltaría repetir el patrón para el resto.
+  sesión los catálogos de Tipo de Punto de Venta, Tipo de Emisión, Tipos
+  de Factura, y Productos/Servicios por actividad; faltaría repetir el
+  patrón para el resto.
