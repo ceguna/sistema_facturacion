@@ -3,7 +3,7 @@
 {% block page_content %}
 <div class="row">
     <div class="col-xl-6 col-md-8 mb-4">
-        <form method="POST">
+        <form method="POST" enctype="multipart/form-data">
             {% csrf_token %}
             <div class="card border-left-primary shadow h-100 py-2">
                 <div class="card-body">
@@ -52,8 +52,64 @@
                     </div>
                     <div class="row">
                         <div class="col-md-6 form-group">
+                            <label>{{ form.telefono.label }}</label>
+                            {{ form.telefono }}
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.email.label }}</label>
+                            {{ form.email }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.logo.label }}</label>
+                            {{ form.logo }}
+                            {% if obj.logo %}
+                            <div class="mt-2">
+                                <img src="{{ obj.logo.url }}" alt="Logo actual" style="max-height: 80px;">
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6 form-group">
                             <label>{{ form.ambiente.label }}</label>
                             {{ form.ambiente }}
+                        </div>
+                    </div>
+
+                    <div class="dropdown-divider"></div>
+                    <div class="csg-form-title">Autorización de Sistemas (SIN)</div>
+                    <div class="text-muted small mb-2">
+                        Este trámite se realiza en el portal SIAT en Línea del SIN,
+                        no desde este sistema. Acá solo se guarda el resultado, para
+                        usarlo en las llamadas a los servicios web.
+                    </div>
+
+                    {% if not obj.codigo_sistema %}
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        Todavía no se completó la Autorización de Sistemas ante el SIN.
+                        El código de sistema se carga acá una vez aprobado el trámite.
+                    </div>
+                    {% endif %}
+
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.tipo_autorizacion.label }}</label>
+                            {{ form.tipo_autorizacion }}
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.codigo_sistema.label }}</label>
+                            {{ form.codigo_sistema }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8 form-group">
+                            <label>{{ form.nombre_sistema.label }}</label>
+                            {{ form.nombre_sistema }}
+                        </div>
+                        <div class="col-md-4 form-group">
+                            <label>{{ form.version_sistema.label }}</label>
+                            {{ form.version_sistema }}
                         </div>
                     </div>
 

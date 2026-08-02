@@ -36,16 +36,77 @@ https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionSincronizacion?wsdl
  - sincronizarParametricaTipoMoneda
 
 ======================================================================
-Facturacion Electronica
-https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionElectronica?wsdl
+Operaciones
+https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionOperaciones?wsdl
+======================================================================
+ - verificarComunicacion
+ - registroPuntoVenta
+ - registroPuntoVentaComisionista
+ - cierreOperacionesSistema
+ - consultaEventoSignificativo
+ - consultaPuntoVenta
+ - registroEventoSignificativo
+ - cierrePuntoVenta
+
+======================================================================
+Factura Compra-Venta
+https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionCompraVenta?wsdl
 ======================================================================
  - recepcionPaqueteFactura
  - verificarComunicacion
  - recepcionFactura
  - reversionAnulacionFactura
  - validacionRecepcionMasivaFactura
+ - recepcionAnexos
  - recepcionMasivaFactura
  - verificacionEstadoFactura
  - validacionRecepcionPaqueteFactura
  - anulacionFactura
- - recepcionAnexosSuministroEnergia
+
+======================================================================
+Nota Credito-Debito
+https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionDocumentoAjuste?wsdl
+======================================================================
+ - anulacionDocumentoAjuste
+ - reversionAnulacionDocumentoAjuste
+ - verificarComunicacion
+ - recepcionDocumentoAjuste
+ - verificacionEstadoDocumentoAjuste
+
+
+######################################################################
+# CANDIDATOS - Servicio de Autenticacion (sin confirmar)
+######################################################################
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioAutenticacionSoap?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v2/AutenticacionSoap?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionAutenticacionSoap?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v1/ServicioAutenticacionSoap?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionAutenticacion?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v2/Autenticacion?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioAutenticacion?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v2/GeneracionToken?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioGeneracionToken?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v1/FacturacionAutenticacion?wsdl
+  no responde (HTTPError)
+
+Probando: https://pilotosiatservicios.impuestos.gob.bo/v1/Autenticacion?wsdl
+  no responde (HTTPError)

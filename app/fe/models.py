@@ -27,6 +27,13 @@ class Empresa(ClaseModelo2):
         (PRODUCCION, 'Producción'),
     ]
 
+    PROPIETARIO = 'Propietario'
+    PROVEEDOR = 'Proveedor'
+    TIPO_AUTORIZACION = [
+        (PROPIETARIO, 'Propietario (uso exclusivo propio)'),
+        (PROVEEDOR, 'Proveedor (ofrece el sistema a terceros)'),
+    ]
+
     razon_social = models.CharField(max_length=150)
     nit = models.CharField(
         max_length=30, null=True, blank=True,
@@ -43,6 +50,35 @@ class Empresa(ClaseModelo2):
         max_length=10, choices=AMBIENTE, default=PILOTO,
         help_text="Mientras se este probando el sistema, debe quedar en Piloto."
     )
+
+    # --- Datos de contacto / branding, para encabezados de factura ---
+    telefono = models.CharField(max_length=30, null=True, blank=True)
+    email = models.EmailField(null=True, blank=True)
+    logo = models.ImageField(
+        upload_to='empresa/logos/', null=True, blank=True,
+        help_text="Se usa en el encabezado de las facturas impresas/PDF."
+    )
+
+    # --- Autorizacion de Sistemas ante el SIN (tramite externo, en el
+    # portal SIAT en Linea; aca solo se guarda el resultado) ---
+    tipo_autorizacion = models.CharField(
+        max_length=15, choices=TIPO_AUTORIZACION, default=PROPIETARIO,
+        help_text="Propietario: este NIT usa el sistema solo para si mismo. "
+                   "Proveedor: se ofrece el sistema a otros contribuyentes "
+                   "(estos se vinculan despues via 'Asociacion', un tramite "
+                   "mas simple que una autorizacion completa nueva)."
+    )
+    nombre_sistema = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="Nombre del sistema informatico tal como se declara ante el SIN."
+    )
+    version_sistema = models.CharField(max_length=20, null=True, blank=True)
+    codigo_sistema = models.CharField(
+        max_length=50, null=True, blank=True,
+        help_text="Codigo que asigna el SIN al aprobar la Autorizacion de "
+                   "Sistemas. Vacio hasta completar ese tramite."
+    )
+    fecha_autorizacion_sistema = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.razon_social or "Empresa (sin configurar)"

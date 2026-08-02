@@ -1,12 +1,9 @@
 """
-Prototipo aislado (Paso 3): arma una factura de prueba, calcula su CUF,
-la firma digitalmente, y valida el resultado contra el XSD oficial.
+Prototipo aislado (Paso 4): arma una factura de prueba, calcula su CUF con
+datos REALES del SIN (CUFD obtenido en esta sesion), la firma digitalmente,
+y valida el resultado contra el XSD oficial.
 
 Correr con: python main.py
-
-NADA de esto todavia se conecta al SIN (eso es el Paso 4). Este script solo
-prueba que el MECANISMO de armado + firma + validacion funciona de punta a
-punta, usando un certificado autofirmado de prueba.
 """
 import datetime
 import os
@@ -28,39 +25,48 @@ ARCHIVO_SALIDA = "factura_firmada.xml"
 def main():
     print("=" * 70)
     print("PROTOTIPO: generar + firmar + validar una factura de prueba")
+    print("(Paso 4 - con CUFD y codigoControl REALES del SIN)")
     print("=" * 70)
 
-    # 0. Certificado de prueba (autofirmado). Cuando llegue el real de ADSIB,
-    #    solo hay que cambiar ARCHIVO_LLAVE y ARCHIVO_CERT.
     if not os.path.exists(ARCHIVO_LLAVE):
         print("\n[0] Generando certificado de prueba (autofirmado)...")
         generar_certificado_prueba(ARCHIVO_LLAVE, ARCHIVO_CERT)
     else:
         print(f"\n[0] Usando certificado existente: {ARCHIVO_CERT}")
 
-    # 1. Datos de la factura (de prueba, con la libreria real como emisora)
     fecha_hora = datetime.datetime.now()
     numero_factura = 1
     codigo_sucursal = 0
     codigo_punto_venta = 0
     codigo_documento_sector = 1  # Compra y Venta
 
-    print("\n[1] Calculando el CUF (algoritmo verificado contra el ejemplo oficial del SIN)...")
-    # codigo_control: en la integracion real (Paso 4) viene de la respuesta
-    # del servicio solicitudCufd. Por ahora, mientras no tenemos conexion al
-    # SIN, se simula con un valor de ejemplo -- SOLO para probar el mecanismo.
-    codigo_control_simulado = "A19E23EF34124CD"
+    # --- Datos REALES obtenidos del servicio cufd (SIN, ambiente Piloto) ---
+    # Generados 01/08/2026. codigoControl y cufd son validos SOLO hasta la
+    # fechaVigencia devuelta por el SIN (24-48hs tipicamente). Si este script
+    # se corre despues de esa fecha, hay que pedir un CUFD nuevo -- no
+    # reusar estos valores indefinidamente.
+    CUFD_VIGENTE_HASTA = datetime.datetime(2026, 8, 3, 17, 50, 20)
+    codigo_control_real = "968EA18C971BF74"
+    cufd_real = "FBQUFCeGMuREE=E5MzFCNjI1ODY=Qj49VXlSRElhVUMzczQTBFQTBGQk"
+
+    if datetime.datetime.now() > CUFD_VIGENTE_HASTA:
+        print("\n[!] ADVERTENCIA: el CUFD hardcodeado ya vencio "
+              f"({CUFD_VIGENTE_HASTA}). Hay que pedir uno nuevo via "
+              "probar_cufd.py antes de seguir -- este resultado NO va a "
+              "ser valido para el SIN.")
+
+    print("\n[1] Calculando el CUF (con codigoControl real del SIN)...")
     cuf = calcular_cuf(
         nit=3852849010,
         fecha_hora=fecha_hora,
         codigo_sucursal=codigo_sucursal,
         codigo_modalidad=1,  # Electronica en Linea
-        codigo_tipo_emision=1,  # Online
-        codigo_tipo_factura=1,  # Con derecho a credito fiscal
+        codigo_tipo_emision=1,  # EN LINEA (confirmado contra catalogo real)
+        codigo_tipo_factura=1,  # CON DERECHO A CREDITO FISCAL (confirmar con Carlos)
         codigo_documento_sector=codigo_documento_sector,
         numero_factura=numero_factura,
         codigo_punto_venta=codigo_punto_venta,
-        codigo_control=codigo_control_simulado,
+        codigo_control=codigo_control_real,
     )
     print(f"    CUF calculado: {cuf}")
 
@@ -71,7 +77,7 @@ def main():
         "municipio": "Santa Cruz de la Sierra",
         "numeroFactura": numero_factura,
         "cuf": cuf,
-        "cufd": "CUFD-DE-PRUEBA-000000000",  # en el Paso 4 vendra del SIN real
+        "cufd": cufd_real,
         "codigoSucursal": codigo_sucursal,
         "direccion": "Calle San Nicolas Este Nro 30",
         "codigoPuntoVenta": codigo_punto_venta,
@@ -143,11 +149,10 @@ def main():
     with open(ARCHIVO_SALIDA, "wb") as f:
         f.write(etree.tostring(xml_firmado, pretty_print=True))
     print(f"\nListo. Factura de prueba guardada en: {ARCHIVO_SALIDA}")
-    print("\nRECORDATORIOS:")
-    print(" - El CUF sigue siendo PROVISIONAL: depende del 'codigoControl' real")
-    print("   que devuelve el servicio solicitudCufd (aqui esta simulado).")
+    print("\nESTADO:")
+    print(" - CUF calculado con codigoControl y CUFD REALES del SIN (ya no simulado).")
     print(f" - Certificado en uso: {ARCHIVO_CERT}")
-    print(" - Todavia no se conecta a ningun servicio del SIN (eso es el Paso 4).")
+    print(" - Todavia NO se envia al SIN (falta recepcionFactura -- proximo paso).")
 
 
 if __name__ == "__main__":

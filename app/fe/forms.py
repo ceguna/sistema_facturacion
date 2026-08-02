@@ -6,8 +6,11 @@ from .models import Empresa, Sucursal, PuntoVenta
 class EmpresaForm(forms.ModelForm):
     class Meta:
         model = Empresa
-        fields = ['razon_social', 'nit', 'tipo_persona',
-                   'codigo_actividad_economica', 'ambiente']
+        fields = [
+            'razon_social', 'nit', 'tipo_persona', 'codigo_actividad_economica',
+            'ambiente', 'telefono', 'email', 'logo',
+            'tipo_autorizacion', 'nombre_sistema', 'version_sistema', 'codigo_sistema',
+        ]
         widgets = {
             'razon_social': forms.TextInput(attrs={'class': 'form-control'}),
             'nit': forms.TextInput(attrs={
@@ -16,6 +19,15 @@ class EmpresaForm(forms.ModelForm):
             'tipo_persona': forms.Select(attrs={'class': 'form-control'}),
             'codigo_actividad_economica': forms.TextInput(attrs={'class': 'form-control'}),
             'ambiente': forms.Select(attrs={'class': 'form-control'}),
+            'telefono': forms.TextInput(attrs={'class': 'form-control'}),
+            'email': forms.EmailInput(attrs={'class': 'form-control'}),
+            'logo': forms.ClearableFileInput(attrs={'class': 'form-control-file'}),
+            'tipo_autorizacion': forms.Select(attrs={'class': 'form-control'}),
+            'nombre_sistema': forms.TextInput(attrs={'class': 'form-control'}),
+            'version_sistema': forms.TextInput(attrs={'class': 'form-control'}),
+            'codigo_sistema': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Lo asigna el SIN al aprobar la Autorización de Sistemas'}),
         }
         labels = {
             'razon_social': 'Razón Social',
@@ -23,6 +35,13 @@ class EmpresaForm(forms.ModelForm):
             'tipo_persona': 'Tipo de Persona',
             'codigo_actividad_economica': 'Código Actividad Económica (CIIU)',
             'ambiente': 'Ambiente',
+            'telefono': 'Teléfono',
+            'email': 'Correo Electrónico',
+            'logo': 'Logo (para facturas impresas/PDF)',
+            'tipo_autorizacion': 'Tipo de Autorización SIN',
+            'nombre_sistema': 'Nombre del Sistema (declarado ante el SIN)',
+            'version_sistema': 'Versión del Sistema',
+            'codigo_sistema': 'Código de Sistema (asignado por el SIN)',
         }
 
 
