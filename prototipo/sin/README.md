@@ -210,6 +210,175 @@ Revisar este modelo cuando se conecte la emisión de facturas real, para
 contemplar el caso estándar como opción válida y no forzar siempre uno
 de los tipos especiales.
 
+## Eventos Significativos (Etapa V) — CONFIRMADO (03/08/2026)
+
+Servicio `registroEventoSignificativo` (WSDL `FacturacionOperaciones`,
+mismo header `apikey: TokenApi`). Objeto de solicitud real:
+`solicitudEventoSignificativo`, parámetro de la operación
+`SolicitudEventoSignificativo`.
+
+Campos confirmados vía `client.get_type`: `codigoAmbiente`,
+`codigoMotivoEvento`, `codigoPuntoVenta`, `codigoSistema`,
+`codigoSucursal`, `cufd`, `cufdEvento`, `cuis`, `descripcion`,
+`fechaHoraFinEvento`, `fechaHoraInicioEvento`, `nit`.
+
+`codigoMotivoEvento` sale del catálogo `EVENTOS_SIGNIFICATIVOS`, ya
+sincronizado con datos reales en `app/catalogos` (7 códigos: corte de
+internet, inaccesibilidad al SIN, zona sin internet, venta sin internet,
+virus/falla de software, falla de hardware, corte de energía).
+
+### Punto clave — dos CUFD distintos, no uno solo
+
+Error 984 ("EL EVENTO SIGNIFICATIVO NO CORRESPONDE AL CUFD DEL EVENTO
+REGISTRADO") apareció al usar el mismo CUFD en `cufd` y `cufdEvento`.
+La documentación oficial (Contingencia y Eventos Significativos) aclara
+la secuencia real:
+
+1. **`cufdEvento`**: el CUFD que ya estaba vigente ANTES/DURANTE la
+   contingencia (el que se usaba al momento de emitir, en modo
+   contingencia u offline).
+2. **`cufd`**: un CUFD NUEVO, pedido específicamente al momento de
+   REPORTAR el evento — distinto del anterior.
+
+Confirmado empíricamente: pedir dos CUFD por separado (uno para marcar
+el inicio del evento, esperar unos segundos, pedir el segundo para el
+reporte) resolvió el error. Con un solo CUFD repetido, siempre falla.
+
+### Resultado
+```
+codigoRecepcionEventoSignificativo: 9828970
+transaccion: True
+```
+
+### Script de referencia: `probar_evento_significativo.py`
+
+## Emisión de paquetes (Etapa VI) — EN CURSO, bloqueado en un punto puntual (03/08/2026)
+
+Servicio `recepcionPaqueteFactura` (WSDL `ServicioFacturacionCompraVenta`).
+Objeto real: `solicitudRecepcionPaquete`, parámetro de la operación
+`SolicitudServicioRecepcionPaquete`. Campos: los mismos de
+`solicitudRecepcionFactura` (Etapa IV) más `cafc`, `cantidadFacturas`,
+`codigoEvento`.
+
+**Formato del archivo confirmado** (documentación oficial): cada factura
+se firma/valida individualmente como siempre, pero varias facturas juntas
+van dentro de un **contenedor TAR**, y recién ese TAR se comprime en gzip
+(no gzip directo de un XML único). `hashArchivo` es el SHA-256 del
+`.tar.gz`, no del TAR sin comprimir.
+
+**`cafc`** (Código de Autorización de Facturas de Contingencia): solo
+aplica a facturas MANUALES impresas por una imprenta autorizada. Para la
+modalidad Electrónica en Línea pasando a "fuera de línea" (nuestro caso),
+no aplica — queda vacío (`""`).
+
+**`codigoEvento`**: es el `codigoRecepcionEventoSignificativo` que
+devuelve `registroEventoSignificativo` (Etapa V) — conecta el paquete
+con el evento de contingencia que lo justifica.
+
+### Envío del paquete: funciona
+`recepcionPaqueteFactura` responde `codigoEstado: 901 (PENDIENTE)` con
+`codigoRecepcion` — confirmado, el envío en sí no tiene problema.
+
+### Bloqueo puntual: registrar el evento vinculado a un paquete
+Mismo patrón de dos CUFD que funcionó en la Etapa V aislada (CUFD previo
+para `cufdEvento`, CUFD nuevo para `cufd`, ventana real de ~10 segundos)
+da error **984** ("EL EVENTO SIGNIFICATIVO NO CORRESPONDE AL CUFD DEL
+EVENTO REGISTRADO") cuando el evento acompaña un paquete de facturas.
+Invertir los campos da error distinto (**914**, "CUFD INVALIDO"),
+confirmando que la asignación original (cufd=nuevo, cufdEvento=previo)
+es la estructuralmente correcta — el problema es otra cosa, no el orden
+de los campos.
+
+**Pendiente: consultar con soporte SIN** (`siat.facturacion@impuestos.gob.bo`
+o `800-10-3444`) por qué el mismo patrón que funciona aislado falla al
+acompañar un paquete — posible relación con frecuencia de solicitudes de
+CUFD (existe un mensaje de catálogo "CUFD FUERA DE TOLERANCIA", código
+123, sin confirmar si aplica acá) u otra validación no documentada.
+
+### Scripts de referencia
+`probar_paquete_factura.py` (envío aislado, confirmó 901/PENDIENTE),
+`validar_paquete_factura.py` (consulta de estado), `probar_paquete_completo.py`
+(flujo integrado evento+paquete, bloqueado en el paso del evento).
+
+## Anulación (Etapa VII) — CONFIRMADO (03/08/2026)
+
+Servicio `anulacionFactura` (mismo WSDL que `recepcionFactura`,
+`ServicioFacturacionCompraVenta`). Objeto real: `solicitudAnulacion`,
+parámetro de la operación `SolicitudServicioAnulacionFactura` (no
+`SolicitudAnulacion` — mismo patrón de siempre, confirmado por el
+mensaje de error de zeep).
+
+Campos: los mismos de `solicitudRecepcionFactura` (sin `archivo` ni
+`hashArchivo`) más `codigoMotivo` (del catálogo `MOTIVOS_ANULACION`,
+ya sincronizado en `app/catalogos`: 1=Factura mal emitida, 2=Nota de
+Crédito-Débito mal emitida, 3=Datos de emisión incorrectos, 4=Factura o
+Nota devuelta) y `cuf` (el CUF de la factura a anular).
+
+### Dato importante de infraestructura del ambiente Piloto
+Intentar anular una factura del día anterior (02/08) dio error 924
+("LA FACTURA O NOTA, NO EXISTE EN LA BASE DE DATOS DEL SIN") —
+probablemente el ambiente Piloto purga datos de prueba periódicamente
+(a diferencia de Producción). Confirmado al emitir una factura nueva y
+anularla de inmediato en la misma corrida: funcionó sin problema. **Para
+pruebas futuras de anulación/reversión, usar siempre una factura recién
+emitida en la misma sesión, no una de días anteriores.**
+
+### Resultado
+```
+codigoDescripcion: ANULACION CONFIRMADA
+codigoEstado: 905
+transaccion: True
+```
+
+### Script de referencia: `probar_anulacion_v2.py` (emite + anula en una sola corrida)
+
+## Reversión (Etapa VIII) — CONFIRMADO (03/08/2026)
+
+Servicio `reversionAnulacionFactura` (mismo WSDL,
+`ServicioFacturacionCompraVenta`). Objeto real:
+`solicitudReversionAnulacion`, parámetro de la operación
+`SolicitudServicioReversionAnulacionFactura`.
+
+Campos: los mismos de `solicitudAnulacion` pero SIN `codigoMotivo` — la
+reversión no pide motivo, solo el `cuf` de la factura anulada a revertir.
+
+### Reglas de negocio (confirmadas por normativa, no solo por el código)
+- Solo se puede revertir **una vez** por factura.
+- Plazo: hasta el día 9 del mes siguiente a la emisión original.
+- No aplica a facturas emitidas en modo offline/contingencia.
+- Estados de respuesta posibles: 907 (Conforme), 981 (no disponible —
+  ya se revirtió antes), 924 (no existe en la base), 3011, 3012
+  (fuera de plazo).
+- Debe notificarse al comprador por correo u otro medio electrónico,
+  informando Código de Autorización, número de factura y motivo —
+  pendiente de implementar cuando se conecte al flujo real (hoy es
+  solo la llamada SOAP, sin la notificación).
+
+### Resultado
+Probado sobre la factura Nº400 (emitida y anulada en la Etapa VII, misma
+sesión):
+```
+codigoDescripcion: REVERSION DE ANULACION CONFIRMADA
+codigoEstado: 907
+transaccion: True
+```
+
+### Script de referencia: `probar_reversion.py`
+
+## Estado de las 8 etapas de certificación Piloto (03/08/2026)
+- ✅ I. Obtención de CUIS
+- ✅ II. Sincronización de Catálogos (16/17)
+- ✅ III. Obtención CUFD
+- ✅ IV. Emisión individual (primera factura VALIDADA)
+- ✅ V. Eventos Significativos (aislado)
+- 🟡 VI. Emisión de paquetes — envío OK, evento vinculado a paquete bloqueado, pendiente consulta con SIN
+- ✅ VII. Anulación
+- ✅ VIII. Reversión
+
+**7 de 8 etapas completadas.** Solo queda resolver el punto puntual de
+la Etapa VI (evento vinculado a paquete) para cerrar la certificación
+Piloto por completo.
+
 ## Pendiente — Roadmap SaaS / multi-cliente (no urgente, anotado 02/08/2026)
 
 Pregunta que surgió al cierre de esta sesión: ¿hay que repetir todo este
@@ -252,4 +421,3 @@ real, no antes):
   sesión los catálogos de Tipo de Punto de Venta, Tipo de Emisión, Tipos
   de Factura, y Productos/Servicios por actividad; faltaría repetir el
   patrón para el resto.
-
