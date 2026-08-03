@@ -1,29 +1,23 @@
 """
 Servicio de sincronización de catálogos con el SIN (Bolivia).
 
-Estado actual: los NOMBRES EXACTOS de las 16 operaciones SOAP de
-sincronización individuales (una por catálogo) todavía no están
-confirmados contra el WSDL oficial -- eso requiere el certificado de
-pruebas y acceso al ambiente Piloto (ver traspaso, Paso 4). Por eso:
-
-  - MAPEO_CATALOGOS marca cada nombre de operación como
-    'PENDIENTE_CONFIRMAR' hasta que se verifique contra el WSDL real.
-  - MockSOAPClient permite probar toda la lógica de guardado en base
-    de datos (altas, bajas lógicas de vigente=False, logging) SIN
-    depender todavía de la conexión real ni del certificado.
-  - Cuando se resuelva el certificado (Paso 4), solo hay que:
-      1) completar MAPEO_CATALOGOS con los nombres reales de operación
-      2) reemplazar MockSOAPClient por un zeep.Client real
-    El resto del código (guardado, logging, comando) no cambia.
+Cliente real (zeep) reemplazando al MockSOAPClient de pruebas.
+Confirmado 02/08/2026: header de autenticación "apikey: TokenApi <token>",
+WSDL v2/FacturacionSincronizacion.
 """
 
 from django.db import transaction
+from zeep import Client
+from zeep.transports import Transport
+from zeep.helpers import serialize_object
+from requests import Session
 
 from .models import CatalogoSIN, SincronizacionLog
 
+WSDL_SINCRONIZACION = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionSincronizacion?wsdl"
+
 # Nombre de la operación SOAP que corresponde a cada catálogo.
 # Confirmado contra el WSDL real: v2/FacturacionSincronizacion
-# (https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionSincronizacion?wsdl)
 MAPEO_CATALOGOS = {
     CatalogoSIN.TipoCatalogo.ACTIVIDADES: "sincronizarActividades",
     CatalogoSIN.TipoCatalogo.ACTIVIDADES_DOC_SECTOR: "sincronizarListaActividadesDocumentoSector",
@@ -44,41 +38,135 @@ MAPEO_CATALOGOS = {
     CatalogoSIN.TipoCatalogo.PRODUCTOS_SERVICIOS: "sincronizarListaProductosServicios",
 }
 
+# Catálogos cuya operación comparte el tipo de respuesta XSD
+# "respuestaListaParametricas" / mismos nombres de campo
+# (codigoClasificador + descripcion, dentro de listaCodigos).
+# Confirmado en vivo 02/08/2026: TIPO_PUNTO_VENTA, TIPO_EMISION,
+# TIPO_FACTURA, MENSAJES.
+CATALOGOS_FAMILIA_PARAMETRICA = {
+    CatalogoSIN.TipoCatalogo.EVENTOS_SIGNIFICATIVOS,
+    CatalogoSIN.TipoCatalogo.MOTIVOS_ANULACION,
+    CatalogoSIN.TipoCatalogo.PAIS_ORIGEN,
+    CatalogoSIN.TipoCatalogo.TIPO_DOC_IDENTIDAD,
+    CatalogoSIN.TipoCatalogo.TIPO_DOC_SECTOR,
+    CatalogoSIN.TipoCatalogo.TIPO_EMISION,
+    CatalogoSIN.TipoCatalogo.TIPO_HABITACION,
+    CatalogoSIN.TipoCatalogo.TIPO_METODO_PAGO,
+    CatalogoSIN.TipoCatalogo.TIPO_MONEDA,
+    CatalogoSIN.TipoCatalogo.TIPO_PUNTO_VENTA,
+    CatalogoSIN.TipoCatalogo.TIPO_FACTURA,
+    CatalogoSIN.TipoCatalogo.TIPO_UNIDAD_MEDIDA,
+    CatalogoSIN.TipoCatalogo.MENSAJES,
+}
+
+# ACTIVIDADES_DOC_SECTOR: confirmado en vivo (02/08/2026), pero es una
+# tabla de relacion actividad<->tipo de documento (codigoActividad +
+# codigoDocumentoSector + tipoDocumentoSector), sin campo de
+# descripcion real -- no encaja en el modelo generico codigo/descripcion
+# de CatalogoSIN. Se deja fuera de la sincronizacion por ahora; si mas
+# adelante hace falta, requiere un modelo propio, no forzarlo aca.
+CATALOGOS_SIN_MODELO_GENERICO = {
+    CatalogoSIN.TipoCatalogo.ACTIVIDADES_DOC_SECTOR,
+}
+
+
 class CatalogoSyncError(Exception):
     """Error al sincronizar un catálogo específico con el SIN."""
     pass
 
 
-class MockSOAPClient:
+class SOAPClienteSIN:
     """
-    Cliente de PRUEBA que simula la respuesta del servicio de
-    sincronización del SIN, para poder probar toda la lógica de
-    guardado sin depender todavía del certificado ni de la conexión
-    real al ambiente Piloto.
+    Cliente REAL contra el servicio de sincronización del SIN
+    (ambiente Piloto por defecto -- ver codigo_ambiente).
 
-    IMPORTANTE: los códigos/descripciones de abajo son solo de
-    ejemplo para validar el flujo -- NO son los códigos oficiales
-    reales del SIN. Reemplazar este cliente por uno zeep real
-    conectado al WSDL del ambiente Piloto en el Paso 4.
+    Requiere las credenciales/identificadores de la empresa que
+    sincroniza: token delegado, NIT, código de sistema, y CUIS.
     """
 
-    DATOS_MOCK = {
-        CatalogoSIN.TipoCatalogo.TIPO_MONEDA: [
-            {"codigo": "1", "descripcion": "BOLIVIANOS"},
-            {"codigo": "2", "descripcion": "DOLARES AMERICANOS"},
-        ],
-        CatalogoSIN.TipoCatalogo.TIPO_UNIDAD_MEDIDA: [
-            {"codigo": "58", "descripcion": "SERVICIO"},
-            {"codigo": "1", "descripcion": "UNIDAD"},
-        ],
-        CatalogoSIN.TipoCatalogo.MOTIVOS_ANULACION: [
-            {"codigo": "1", "descripcion": "ERROR EN LA FACTURA"},
-            {"codigo": "2", "descripcion": "FACTURA POR CONTINGENCIA"},
-        ],
-    }
+    def __init__(self, token, nit, codigo_sistema, cuis,
+                 codigo_sucursal=0, codigo_punto_venta=0, codigo_ambiente=2):
+        self.nit = nit
+        self.codigo_sistema = codigo_sistema
+        self.cuis = cuis
+        self.codigo_sucursal = codigo_sucursal
+        self.codigo_punto_venta = codigo_punto_venta
+        self.codigo_ambiente = codigo_ambiente
+
+        session = Session()
+        session.headers.update({"apikey": f"TokenApi {token}"})
+        self.client = Client(wsdl=WSDL_SINCRONIZACION, transport=Transport(session=session))
+
+    def _solicitud(self):
+        return {
+            "codigoAmbiente": self.codigo_ambiente,
+            "codigoPuntoVenta": self.codigo_punto_venta,
+            "codigoSistema": self.codigo_sistema,
+            "codigoSucursal": self.codigo_sucursal,
+            "cuis": self.cuis,
+            "nit": self.nit,
+        }
 
     def obtener_catalogo(self, tipo_catalogo, nombre_operacion):
-        return self.DATOS_MOCK.get(tipo_catalogo, [])
+        if tipo_catalogo in CATALOGOS_SIN_MODELO_GENERICO:
+            raise CatalogoSyncError(
+                f"'{tipo_catalogo}' no encaja en el modelo genérico "
+                f"código/descripción de CatalogoSIN (es una tabla de "
+                f"relación actividad↔documento sector). No se sincroniza "
+                f"por acá -- requiere modelo propio si hace falta más adelante."
+            )
+
+        operacion = getattr(self.client.service, nombre_operacion)
+        respuesta = operacion(SolicitudSincronizacion=self._solicitud())
+        respuesta = serialize_object(respuesta)
+
+        if not respuesta.get("transaccion"):
+            mensajes = respuesta.get("mensajesList") or []
+            raise CatalogoSyncError(f"{nombre_operacion} falló: {mensajes}")
+
+        if tipo_catalogo == CatalogoSIN.TipoCatalogo.PRODUCTOS_SERVICIOS:
+            # DTO propio (productosDto), confirmado en vivo 02/08/2026:
+            # codigoProducto + descripcionProducto (+ codigoActividad, nandina)
+            items = respuesta.get("listaCodigos", [])
+            return [
+                {"codigo": str(item["codigoProducto"]), "descripcion": item["descripcionProducto"]}
+                for item in items
+            ]
+
+        if tipo_catalogo == CatalogoSIN.TipoCatalogo.ACTIVIDADES:
+            # DTO propio (actividadesDto), confirmado en vivo 02/08/2026:
+            # codigoCaeb + descripcion (+ tipoActividad, no se guarda)
+            items = respuesta.get("listaActividades", [])
+            return [
+                {"codigo": str(item["codigoCaeb"]), "descripcion": item["descripcion"]}
+                for item in items
+            ]
+
+        if tipo_catalogo == CatalogoSIN.TipoCatalogo.LEYENDAS:
+            # DTO propio (parametricaLeyendasDto), confirmado en vivo 02/08/2026:
+            # codigoActividad + descripcionLeyenda (el "codigo" es el
+            # codigo de actividad -- se repite por cada leyenda de esa
+            # actividad, no es un identificador unico de la leyenda en si)
+            items = respuesta.get("listaLeyendas", [])
+            return [
+                {"codigo": str(item["codigoActividad"]), "descripcion": item["descripcionLeyenda"]}
+                for item in items
+            ]
+
+        if tipo_catalogo in CATALOGOS_FAMILIA_PARAMETRICA:
+            items = respuesta.get("listaCodigos", [])
+            return [
+                {"codigo": str(item["codigoClasificador"]), "descripcion": item["descripcion"]}
+                for item in items
+            ]
+
+        # No debería llegar acá -- cualquier tipo nuevo agregado a
+        # MAPEO_CATALOGOS sin clasificar en una de las categorías de
+        # arriba, cae acá como salvaguarda explícita.
+        raise CatalogoSyncError(
+            f"'{tipo_catalogo}' no está clasificado en ninguna familia conocida "
+            f"de respuesta -- agregar su mapeo de campos explícitamente."
+        )
 
 
 @transaction.atomic
@@ -120,18 +208,19 @@ def sincronizar_catalogo(tipo_catalogo, cliente_soap):
     return actualizados
 
 
-def sincronizar_todos_los_catalogos(cliente_soap=None):
+def sincronizar_todos_los_catalogos(cliente_soap):
     """
-    Corre la sincronización diaria completa (los 16 catálogos).
-    Registra el resultado en SincronizacionLog -- éxito total, parcial
-    o falla completa -- para poder auditar más adelante (incluso
-    útil de mostrar si el SIN pide evidencia en una certificación).
+    Corre la sincronización diaria completa. Registra el resultado en
+    SincronizacionLog -- éxito total, parcial o falla completa -- para
+    poder auditar más adelante (incluso útil de mostrar si el SIN pide
+    evidencia en una certificación).
 
-    cliente_soap=None usa el MockSOAPClient de prueba. Cuando exista
-    el cliente zeep real (Paso 4), se pasa como parámetro acá.
+    ACTIVIDADES_DOC_SECTOR se salta intencionalmente (ver
+    CATALOGOS_SIN_MODELO_GENERICO) -- queda registrado como error en
+    el log, no oculto.
+
+    cliente_soap es OBLIGATORIO -- ya no hay fallback mock en el flujo real.
     """
-    cliente_soap = cliente_soap or MockSOAPClient()
-
     catalogos_ok = 0
     total_codigos = 0
     errores = []
@@ -150,7 +239,7 @@ def sincronizar_todos_los_catalogos(cliente_soap=None):
         f"OK: {catalogos_ok}/{total_catalogos} catálogos, "
         f"{total_codigos} códigos actualizados."
         if exitosa
-        else "Errores: " + " | ".join(errores)
+        else f"OK: {catalogos_ok}/{total_catalogos} catálogos. Errores: " + " | ".join(errores)
     )
 
     SincronizacionLog.objects.create(

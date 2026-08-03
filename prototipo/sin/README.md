@@ -169,6 +169,74 @@ reutiliza uno guardado) porque la vigencia es corta — importante también
 para producción: cada emisión debería pedir su propio CUFD si el
 anterior venció.
 
+## catalogos — MockSOAPClient reemplazado por cliente real (02/08/2026)
+
+`app/catalogos/services.py` ahora usa `SOAPClienteSIN` (zeep real, mismo
+header `apikey: TokenApi`) en vez de `MockSOAPClient`. El comando
+`sincronizar_catalogos` valida que `Empresa` tenga NIT y `codigo_sistema`,
+que exista una `Sucursal` casa matriz (`codigo_sucursal=0`) con
+`codigo_cuis` cargado, y que `SIN_TOKEN_DELEGADO` esté en `.env` — falla
+rápido y claro si falta alguno, en vez de generar datos corruptos.
+
+**Resultado: 16/17 catálogos sincronizados con datos reales del SIN.**
+
+Cada catálogo cae en una de tres categorías, todas confirmadas contra
+respuestas reales en vivo (no adivinadas):
+
+- **Familia "parametrica"** (mismo formato `codigoClasificador` +
+  `descripcion` dentro de `listaCodigos`): EVENTOS_SIGNIFICATIVOS,
+  MOTIVOS_ANULACION, PAIS_ORIGEN, TIPO_DOC_IDENTIDAD, TIPO_DOC_SECTOR,
+  TIPO_EMISION, TIPO_HABITACION, TIPO_METODO_PAGO, TIPO_MONEDA,
+  TIPO_PUNTO_VENTA, TIPO_FACTURA, TIPO_UNIDAD_MEDIDA, MENSAJES (13 en
+  total — MENSAJES comparte el formato aunque su DTO se llame distinto).
+- **DTO propio, mapeado individualmente**: ACTIVIDADES (`listaActividades`,
+  campos `codigoCaeb`+`descripcion`), LEYENDAS (`listaLeyendas`, campos
+  `codigoActividad`+`descripcionLeyenda`), PRODUCTOS_SERVICIOS
+  (`listaCodigos`, campos `codigoProducto`+`descripcionProducto`).
+- **Fuera del modelo genérico, no sincronizado**: ACTIVIDADES_DOC_SECTOR
+  — es una tabla de relación actividad↔documento sector
+  (`codigoActividad`+`codigoDocumentoSector`+`tipoDocumentoSector`), sin
+  campo de descripción real. No encaja en `CatalogoSIN` (código/
+  descripción genérico). Aparece como "error" intencional en el log del
+  comando — si hace falta más adelante, requiere un modelo propio.
+
+### Nota de arquitectura pendiente — modelo PuntoVenta
+`app/fe/models.py::PuntoVenta` asume que todo punto de venta pasa por
+`registroPuntoVenta` y exige elegir uno de los 6 tipos especiales
+(Comisionista, Ventanilla, Móviles, YPFB, Cajeros, Conjunta). Pero lo
+confirmado el 02/08/2026 es que un punto de venta estándar (como el de
+la librería) NO pasa por ese registro — usa `codigoPuntoVenta=0` directo.
+Revisar este modelo cuando se conecte la emisión de facturas real, para
+contemplar el caso estándar como opción válida y no forzar siempre uno
+de los tipos especiales.
+
+## Pendiente — Roadmap SaaS / multi-cliente (no urgente, anotado 02/08/2026)
+
+Pregunta que surgió al cierre de esta sesión: ¿hay que repetir todo este
+proceso de descubrimiento por cada cliente nuevo que compre el sistema
+bajo modalidad SaaS? Respuesta corta: el código (autenticación, CUF,
+firma, XML, gzip, hash, envío) es genérico y no se repite — pero cada
+cliente sí necesita su propia identidad fiscal (NIT, certificado AGETIC,
+Token Delegado, actividad económica registrada, catálogo de productos
+asociado a su actividad). Eso es exigencia del SIN, no algo evitable con
+mejor código.
+
+Dos cosas a desarrollar más adelante (cuando haya un segundo cliente
+real, no antes):
+
+1. **Registrar CSG Sistemas como Proveedor** (no Propietario) ante el SIN,
+   con NIT propio — habilita el trámite liviano de "Asociación de
+   Sistemas" para cada cliente nuevo, en vez de una Solicitud de
+   Autorización completa desde cero como la que se hizo para la librería
+   (Solicitud 9454).
+2. **Automatizar el onboarding de cada cliente nuevo** dentro de la app
+   Django: cargar NIT + certificado + credenciales de SIAT en Línea →
+   consultar automáticamente su actividad económica real (como se hizo
+   hoy a mano vía "Información del Contribuyente") → sincronizar el
+   catálogo de productos asociado a esa actividad → guardar todo en el
+   modelo `Empresa`. Así el proceso manual de hoy se convierte en una
+   función reutilizable, no en trabajo repetido por cliente.
+
 ## Estado actual (02/08/2026)
 - ✅ CUIS obtenido: `31477C6C`, vigente hasta 01/08/2027
 - ✅ CUFD real obtenido (vigencia corta — pedir uno nuevo por sesión de trabajo)
@@ -184,3 +252,4 @@ anterior venció.
   sesión los catálogos de Tipo de Punto de Venta, Tipo de Emisión, Tipos
   de Factura, y Productos/Servicios por actividad; faltaría repetir el
   patrón para el resto.
+
