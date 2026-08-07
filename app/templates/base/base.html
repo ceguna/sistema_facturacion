@@ -142,6 +142,9 @@
                         {% if perms.fac.view_facturaenc %}
                         <a class="collapse-item" href="{% url 'fac:factura_list' %}">Facturas</a>
                         {% endif %}
+                        {% if perms.fac.gestionar_cierre_dia or user.is_superuser %}
+                        <a class="collapse-item" href="{% url 'fac:cierre_dia_pendientes' %}">Cierre de Día</a>
+                        {% endif %}
                     </div>
                 </div>
             </li>
@@ -165,6 +168,9 @@
                         <h6 class="collapse-header">Otros</h6>
                         {% if perms.fac.view_facturaenc %}
                         <a class="collapse-item" href="{% url 'bases:facturas_anuladas' %}">Facturas Anuladas</a>
+                        {% endif %}
+                        {% if perms.fac.view_facturaenc %}
+                        <a class="collapse-item" href="{% url 'fac:cierre_ventas_selector' %}">Cierre de Ventas</a>
                         {% endif %}
                     </div>
                 </div>

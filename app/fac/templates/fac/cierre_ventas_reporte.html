@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>Reporte de Facturas</title>
+    <title>Reporte de Cierre de Ventas</title>
 
     <style type="text/css">
     @page {
@@ -28,29 +28,18 @@
         vertical-align: bottom;
         border-bottom: 2px solid #000;
     }
-    .table tbody + tbody {
+    .table tfoot td {
         border-top: 2px solid #000;
+        font-weight: bold;
     }
-    .table .table {
-        background-color: #fff;
+    .cabecera-reporte {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 10px;
     }
-    .list-group {
-        display: block;
-        width: 100%;
-        list-style: none;
-        margin-top: 15px;
-        margin-bottom: 15px;
-    }
-    .list-group p {
-        width: 100%;
-        height: 20px;
-        line-height: 20px;
-        list-style: none;
-        font-size: 1.1em;
-    }
-    /* Encabezado armado con tablas a proposito -- no usar flexbox ni
-       position:absolute aca, xhtml2pdf (motor de PDF) no los soporta.
-       Este mismo template se usa tanto en pantalla como para el PDF. */
+    /* Nota: se usa tabla, no flex/position:absolute, porque xhtml2pdf
+       (motor de PDF) no soporta esas propiedades de CSS moderno. */
     .tabla-cabecera {
         width: 100%;
         border: none;
@@ -86,12 +75,13 @@
         font-weight: bold;
         color: #fff;
     }
-    .badge-dark { background-color: #343a40; }
-    .badge-primary { background-color: #007bff; }
     .badge-success { background-color: #28a745; }
-    .badge-info { background-color: #17a2b8; }
     .badge-warning { background-color: #ffc107; color: #212529; }
-    .badge-secondary { background-color: #6c757d; }
+    .badge-light { background-color: #e2e6ea; color: #212529; }
+    .observaciones {
+        margin-top: 20px;
+        font-size: 0.9em;
+    }
     </style>
 </head>
 <body>
@@ -108,7 +98,7 @@
                     <tr>
                         <td style="width:22%;"></td>
                         <td style="width:56%; text-align:center;">
-                            <h3>Reporte de Facturas<br><small>Período: {{f1 | date:"d/m/Y"}} - {{f2 | date:"d/m/Y"}}</small></h3>
+                            <h3>Reporte de Cierre de Ventas<br><small>Período: {{f1 | date:"d/m/Y"}} - {{f2 | date:"d/m/Y"}}</small></h3>
                         </td>
                         <td class="col-fecha-emision">
                             Fecha de emisión:<br>{{ fecha_emision|date:"d/m/Y H:i" }}
@@ -120,39 +110,65 @@
             <table class="table">
                 <thead>
                     <tr>
-                        <th>No. Factura</th>
                         <th>Fecha</th>
-                        <th>Cliente</th>
-                        <th>Total</th>
-                        <th>Estado</th>
+                        <th>Cierre de Día</th>
+                        <th>Cant. Facturas</th>
+                        <th>Anuladas</th>
+                        <th>Ventas Netas</th>
+                        <th>Monto Anulado</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for item in enc %}
+                    {% for dia in dias %}
                     <tr>
-                        <td>{{ item.id }}</td>
-                        <td>{{ item.fecha | date:"d/m/Y"  }}</td>
-                        <td>{{ item.cliente }}</td>
-                        <td>{{ item.total }}</td>
+                        <td>{{ dia.fecha|date:"d/m/Y" }}</td>
                         <td>
-                            {% if item.anulado %}
-                                <span class="badge badge-dark">Anulada</span>
-                            {% elif item.estado_sin == 'revertida' %}
-                                <span class="badge badge-primary">Anulación Revertida SIN</span>
-                            {% elif item.estado_sin == 'validada' %}
-                                <span class="badge badge-success">Emitida al SIN</span>
-                            {% elif item.estado_sin == 'pendiente' %}
-                                <span class="badge badge-info">Pendiente SIN</span>
-                            {% elif item.estado_sin == 'observada' %}
-                                <span class="badge badge-warning">Observada SIN</span>
+                            {% if dia.cierre.estado == 'cerrado' %}
+                                <span class="badge badge-success">Cerrado</span>
+                            {% elif dia.cierre.estado == 'cerrado_con_pendientes' %}
+                                <span class="badge badge-warning">Cerrado c/ Pendientes</span>
                             {% else %}
-                                <span class="badge badge-secondary">Sin Emitir al SIN</span>
+                                <span class="badge badge-light">No Cerrado</span>
                             {% endif %}
                         </td>
+                        <td>{{ dia.cantidad }}</td>
+                        <td>{{ dia.cantidad_anuladas }}</td>
+                        <td>{{ dia.monto_activo }}</td>
+                        <td>{{ dia.monto_anulado }}</td>
                     </tr>
+                    {% empty %}
+                    <tr><td colspan="6">No hay facturas en el período seleccionado.</td></tr>
                     {% endfor %}
                 </tbody>
+                {% if dias %}
+                <tfoot>
+                    <tr>
+                        <td colspan="2">TOTALES</td>
+                        <td>{{ total_facturas }}</td>
+                        <td></td>
+                        <td>{{ total_neto }}</td>
+                        <td>{{ total_anulado }}</td>
+                    </tr>
+                </tfoot>
+                {% endif %}
             </table>
+
+            {% if cierres_con_observacion %}
+            <div class="observaciones">
+                <b>Observaciones de cierres forzados con pendientes:</b>
+                <ul>
+                    {% for c in cierres_con_observacion %}
+                    <li>
+                        <b>{{ c.fecha|date:"d/m/Y" }}</b>
+                        ({{ c.facturas_pendientes_sin }} factura(s) pendiente(s)):
+                        {{ c.observaciones }}
+                        — cerrado por {{ c.usuario_cierre.username|default:"—" }}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
             {% if not es_pdf %}
             <p style="margin-top: 20px; text-align: center;">
                 <a href="{{ url_descargar_pdf }}">Descargar esta versión como PDF</a>

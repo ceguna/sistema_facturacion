@@ -1,0 +1,62 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+    <h4 class="m-0 font-weight-bold text-primary">Cierre de Día — Días Pendientes</h4>
+    <a href="{% url 'bases:home' %}" class="btn btn-secondary btn-sm">
+      <i class="fas fa-arrow-left mr-1"></i>Volver
+    </a>
+  </div>
+  <div class="card-body">
+    {% if not dias %}
+    <div class="alert alert-success">
+      <i class="fas fa-check-circle mr-2"></i>No hay días pendientes de cierre. Puede seguir facturando con normalidad.
+    </div>
+    <a href="{% url 'fac:factura_list' %}" class="btn btn-primary">Volver a Facturas</a>
+    {% else %}
+    <div class="alert alert-warning">
+      <i class="fas fa-exclamation-triangle mr-2"></i>
+      No se pueden registrar facturas nuevas hasta cerrar todos los días pendientes, en orden cronológico
+      (empezando por el más antiguo).
+    </div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Cantidad de Facturas</th>
+          <th>Total Facturado</th>
+          <th>Pendientes ante el SIN</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dia in dias %}
+        <tr {% if not forloop.first %}class="text-muted"{% endif %}>
+          <td>{{ dia.fecha|date:"d/m/Y" }}</td>
+          <td>{{ dia.cantidad_facturas }}</td>
+          <td>{{ dia.total_facturado }}</td>
+          <td>
+            {% if dia.pendientes_sin > 0 %}
+              <span class="badge badge-warning">{{ dia.pendientes_sin }}</span>
+            {% else %}
+              <span class="badge badge-success">0</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if forloop.first %}
+              <a href="{% url 'fac:cierre_dia_detalle' dia.fecha|date:'Y-m-d' %}" class="btn btn-primary btn-sm">
+                Gestionar Cierre
+              </a>
+            {% else %}
+              <span class="small text-muted">Debe cerrar primero {{ dias.0.fecha|date:"d/m/Y" }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

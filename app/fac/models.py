@@ -1,10 +1,12 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 #Para los signals
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Sum
+from django.db.models.functions import TruncDate
 
 from bases.models import ClaseModelo,ClaseModelo2
 from inv.models import Producto
@@ -66,13 +68,31 @@ class Cliente(ClaseModelo):
         verbose_name_plural = "Clientes"
 
 class FacturaEnc(ClaseModelo2):
+    # --- Estados posibles ante el SIN (no confundir con "anulado", que
+    # es una intencion/estado LOCAL; estado_sin refleja lo que el SIN
+    # realmente confirmo) ---
+    SIN_NO_ENVIADA = 'no_enviada'
+    SIN_PENDIENTE = 'pendiente'
+    SIN_VALIDADA = 'validada'
+    SIN_OBSERVADA = 'observada'
+    SIN_ANULADA = 'anulada'
+    SIN_REVERTIDA = 'revertida'
+    ESTADO_SIN_CHOICES = [
+        (SIN_NO_ENVIADA, 'No enviada al SIN'),
+        (SIN_PENDIENTE, 'Pendiente (paquete en revision)'),
+        (SIN_VALIDADA, 'Validada por el SIN'),
+        (SIN_OBSERVADA, 'Observada por el SIN'),
+        (SIN_ANULADA, 'Anulada ante el SIN'),
+        (SIN_REVERTIDA, 'Anulacion revertida ante el SIN'),
+    ]
+
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
     fecha = models.DateTimeField(auto_now_add=True)
     sub_total=models.FloatField(default=0)
     descuento=models.FloatField(default=0)
     total=models.FloatField(default=0)
 
-    # Campos para anulacion (no se borra el registro, solo se marca)
+    # Campos para anulacion LOCAL (no se borra el registro, solo se marca)
     anulado = models.BooleanField(default=False)
     fecha_anulacion = models.DateTimeField(null=True, blank=True)
     motivo_anulacion = models.CharField(max_length=250, null=True, blank=True)
@@ -80,9 +100,37 @@ class FacturaEnc(ClaseModelo2):
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
 
-    # Placeholder para Fase 3 (integracion SIN). Mientras sea null, la
-    # factura no ha sido reportada al SIN y puede eliminarse fisicamente.
+    # --- Integracion SIN (Fase 3) ---
+    # Mientras cuf sea null, la factura no ha sido reportada al SIN y
+    # puede eliminarse fisicamente.
     cuf = models.CharField(max_length=100, null=True, blank=True)
+    cufd = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="CUFD vigente usado al momento de la emision. Se guarda para auditoria."
+    )
+    estado_sin = models.CharField(
+        max_length=15, choices=ESTADO_SIN_CHOICES, default=SIN_NO_ENVIADA,
+        help_text="Estado real confirmado por el SIN (distinto de 'anulado', que es la intencion local)."
+    )
+    codigo_recepcion_sin = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="codigoRecepcion devuelto por el SIN al recibir la factura o el paquete."
+    )
+    fecha_hora_envio_sin = models.DateTimeField(null=True, blank=True)
+    mensaje_sin = models.TextField(
+        null=True, blank=True,
+        help_text="mensajesList devuelto por el SIN (errores/advertencias), si los hubo."
+    )
+
+    # --- Anulacion ante el SIN (motivo va por codigo de catalogo, NO texto libre) ---
+    codigo_motivo_anulacion_sin = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text="Codigo del catalogo MOTIVOS_ANULACION (app catalogos) enviado al SIN."
+    )
+    fecha_anulacion_sin = models.DateTimeField(null=True, blank=True)
+
+    # --- Reversion de la anulacion (Etapa VIII) ---
+    fecha_reversion_sin = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return '{}'.format(self.id)
@@ -90,6 +138,31 @@ class FacturaEnc(ClaseModelo2):
     def save(self, *args, **kwargs):
         self.total = self.sub_total - self.descuento
         super(FacturaEnc, self).save(*args, **kwargs)
+
+    @property
+    def reportada_ante_sin(self):
+        """
+        True si el SIN ALGUNA VEZ acepto formalmente esta factura -- ya
+        sea que siga vigente (validada/pendiente) o que haya sido
+        anulada/revertida despues. En CUALQUIERA de estos casos el
+        registro tiene existencia formal ante el SIN y no se puede
+        editar ni eliminar fisicamente nunca mas -- solo Anular o
+        Revertir una anulacion, segun corresponda.
+        """
+        return self.estado_sin in (
+            self.SIN_VALIDADA, self.SIN_PENDIENTE,
+            self.SIN_ANULADA, self.SIN_REVERTIDA,
+        )
+
+    @property
+    def puede_editarse(self):
+        """
+        True si todavia se pueden agregar/quitar productos del detalle:
+        no esta anulada, y el SIN todavia no la acepto formalmente en
+        ningun momento de su historia (nunca se envio, o se envio y
+        fue observada -- en ese caso se corrige y reintenta).
+        """
+        return not self.anulado and not self.reportada_ante_sin
 
     class Meta:
         verbose_name_plural = "Encabezado Facturas"
@@ -123,6 +196,69 @@ class FacturaDet(ClaseModelo2):
         permissions = [
             ('sup_caja_facturadet','Permisos de Supervisor de Caja Detalle')
         ]
+
+
+class CierreDia(ClaseModelo2):
+    """
+    Registra el cierre formal de un dia de operaciones. Mientras exista
+    un dia ANTERIOR a hoy con facturas y sin un CierreDia asociado, el
+    sistema bloquea la creacion de facturas nuevas (ver
+    dias_pendientes_de_cierre() mas abajo) -- es la red de seguridad
+    para que ninguna factura "no_enviada" u "observada" quede olvidada
+    sin que alguien la resuelva.
+    """
+    ESTADO_CERRADO = 'cerrado'
+    ESTADO_CERRADO_CON_PENDIENTES = 'cerrado_con_pendientes'
+    ESTADO_CHOICES = [
+        (ESTADO_CERRADO, 'Cerrado'),
+        (ESTADO_CERRADO_CON_PENDIENTES, 'Cerrado con pendientes (forzado por supervisor)'),
+    ]
+
+    fecha = models.DateField(unique=True)
+    estado = models.CharField(max_length=25, choices=ESTADO_CHOICES, default=ESTADO_CERRADO)
+    fecha_hora_cierre = models.DateTimeField(auto_now_add=True)
+    usuario_cierre = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    total_facturado = models.FloatField(default=0)
+    cantidad_facturas = models.IntegerField(default=0)
+    facturas_pendientes_sin = models.IntegerField(
+        default=0,
+        help_text="Cantidad de facturas que quedaron sin resolver ante el SIN al momento del cierre "
+                   "(solo > 0 si se forzo el cierre con pendientes)."
+    )
+    observaciones = models.TextField(
+        null=True, blank=True,
+        help_text="Obligatorio si el cierre se forzo con facturas pendientes."
+    )
+
+    def __str__(self):
+        return f"Cierre {self.fecha}"
+
+    class Meta:
+        verbose_name = "Cierre de Día"
+        verbose_name_plural = "Cierres de Día"
+        permissions = [
+            ('gestionar_cierre_dia', 'Permiso para gestionar el Cierre de Día'),
+        ]
+
+
+def dias_pendientes_de_cierre():
+    """
+    Devuelve, en orden cronologico, las fechas ANTERIORES a hoy que
+    tienen al menos una factura pero todavia no tienen un CierreDia
+    registrado. Mientras esta lista no este vacia, el sistema bloquea
+    la creacion de facturas nuevas.
+    """
+    hoy = timezone.localdate()
+    fechas_con_facturas = (
+        FacturaEnc.objects.filter(fecha__date__lt=hoy)
+        .annotate(dia=TruncDate('fecha'))
+        .values_list('dia', flat=True)
+        .distinct()
+    )
+    fechas_cerradas = set(CierreDia.objects.values_list('fecha', flat=True))
+    return sorted(d for d in fechas_con_facturas if d not in fechas_cerradas)
 
 
 @receiver(post_save, sender=FacturaDet) #Este es el modelo que se va estar vigilando.

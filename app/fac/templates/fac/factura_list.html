@@ -4,28 +4,22 @@
 <div class="card shadow mb-4">
   <!-- Card Header - Dropdown -->
   <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
-    <h6 class="m-0 font-weight-bold text-primary">Listado de Facturas</h6>
-    <!-- <div class="dropdown no-arrow">
-      <a class="dropdown-toggle" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-        <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
-      </a>
-      <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in" aria-labelledby="dropdownMenuLink">
-        <div class="dropdown-header">Acciones:</div>
-        <a class="dropdown-item" onclick="return abrir_modal('{% url 'fac:cliente_new' %}')" href="#"><i class="far fa-calendar-plus"></i> Nuevo</a>
-      </div>
-    </div> -->
+    <h4 class="m-0 font-weight-bold text-primary">Listado de Facturas</h4>
   </div>
   <!-- Card Body -->
   <div class="card-body">
     <div class="row">
       <div class="col-md-4">
+        <label for="f1">Fecha Inicio:</label>
         <input type="text" class="form-class" name="f1" id="f1" readonly>
       </div>
       <div class="col-md-4">
+        <label for="f2">Fecha Fin:</label>
         <input type="text" class="form-class" name="f2" id="f2" readonly>
       </div>
-      <div class="col-md-4">
-        <button class="btn btn-warning" type="button" id="btnPrint">Imprimir</button>
+      <div class="col-md-4 d-flex align-items-end">
+        <button class="btn btn-warning" type="button" id="btnPrint">Ver en Pantalla</button>
+        <button class="btn btn-danger ml-2" type="button" id="btnPrintPdf">Descargar PDF</button>
       </div>
     </div>
     <hr>
@@ -51,36 +45,60 @@
       data-locale="es-NI"
     >
     <thead>
-      <th data-sortable="true" data-field="id">No.</th>        
+      <th data-sortable="true" data-field="id">No.</th>
+      <th data-sortable="true" data-field="fecha">Fecha</th>
       <th data-sortable="true" data-field="nombres">Cliente</th>
       <th data-sortable="true" data-field="apellidos">Total</th>
       <th data-field="estado">Estado</th>
+      <th data-field="dia_cerrado" title="Indica si el día de esta factura ya tiene Cierre de Día registrado">Día Cerrado</th>
       <th class="all">Acciones</th>
     </thead>
     <tbody>
       {% for item in obj%}
       <tr>
         <td>{{ item.id }}</td>
+        <td>{{ item.fecha|date:"d/m/Y" }}</td>
         <td>{{ item.cliente }}</td>
         <td>{{ item.total }}</td>
         <td>
           {% if item.anulado %}
-            <span class="badge badge-danger">Anulada</span>
+            <span class="badge badge-dark">Anulada</span>
+          {% elif item.estado_sin == 'revertida' %}
+            <span class="badge badge-primary">Anulación Revertida SIN</span>
+          {% elif item.estado_sin == 'validada' %}
+            <span class="badge badge-success">Emitida al SIN</span>
+          {% elif item.estado_sin == 'pendiente' %}
+            <span class="badge badge-info">Pendiente SIN</span>
+          {% elif item.estado_sin == 'observada' %}
+            <span class="badge badge-warning">Observada SIN</span>
           {% else %}
-            <span class="badge badge-success">Activo</span>
+            <span class="badge badge-secondary">Sin Emitir al SIN</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if item.dia_cerrado %}
+            <span class="badge badge-success">Sí</span>
+          {% else %}
+            <span class="badge badge-light">No</span>
           {% endif %}
         </td>
         <td>
           <a href="{% url 'fac:factura_edit' item.id %}" class="href btn btn-warning btn-circle">
               <i class="far fa-edit"></i>
           </a>
-          {% if not item.anulado %}
+          {% if item.reportada_ante_sin and not item.anulado %}
           <a href="#" class="href btn btn-secondary btn-circle" title="Anular factura"
              onclick="return abrir_modal('{% url 'fac:factura_anular' item.id %}')">
               <i class="fas fa-ban"></i>
           </a>
           {% endif %}
-          {% if user.is_superuser %}
+          {% if item.anulado and item.estado_sin == 'anulada' %}
+          <a href="#" class="href btn btn-primary btn-circle" title="Revertir anulación (supervisor)"
+             onclick="return abrir_modal('{% url 'fac:factura_revertir_anulacion' item.id %}')">
+              <i class="fas fa-undo"></i>
+          </a>
+          {% endif %}
+          {% if user.is_superuser and not item.reportada_ante_sin %}
           <a href="#" class="href btn btn-danger btn-circle" title="Eliminar factura (superusuario)"
              onclick="return abrir_modal('{% url 'fac:factura_eliminar' item.id %}')">
               <i class="far fa-trash-alt"></i>
@@ -103,23 +121,43 @@ $(function(){
       timepicker:false
   });
 
-  $("#btnPrint").click(function(e){
-    e.preventDefault();
-    var f1,f2;
-    f1 = $("#f1").val();
-    f2 = $("#f2").val();
+  // Fechas por defecto: primer dia del mes actual hasta hoy.
+  function _formatearFecha(d){
+    var mes = ("0" + (d.getMonth() + 1)).slice(-2);
+    var dia = ("0" + d.getDate()).slice(-2);
+    return d.getFullYear() + "-" + mes + "-" + dia;
+  }
+
+  var hoy = new Date();
+  var primerDiaDelMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+
+  $("#f1").val(_formatearFecha(primerDiaDelMes));
+  $("#f2").val(_formatearFecha(hoy));
+
+  function _rangoFechas() {
+    var f1 = $("#f1").val();
+    var f2 = $("#f2").val();
     if(f1=="" || f1==null){
-      f1="2019-06-01";
+      f1 = _formatearFecha(primerDiaDelMes);
     }
     if(f2=="" || f2==null){
-      var d = new Date();
-      var f2 = d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate();
+      f2 = _formatearFecha(hoy);
     }
-    
-    var url = "imprimir-todas/" + f1 + "/" + f2;
+    return {f1: f1, f2: f2};
+  }
 
-    window.open(url,'facturas');
-    
+  $("#btnPrint").click(function(e){
+    e.preventDefault();
+    var r = _rangoFechas();
+    var url = "imprimir-todas/" + r.f1 + "/" + r.f2;
+    window.open(url, '_blank');
+  });
+
+  $("#btnPrintPdf").click(function(e){
+    e.preventDefault();
+    var r = _rangoFechas();
+    var url = "imprimir-todas-pdf/" + r.f1 + "/" + r.f2;
+    window.location.href = url;
   });
 });
 </script>

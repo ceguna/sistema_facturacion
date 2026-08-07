@@ -1,0 +1,118 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+    <h4 class="m-0 font-weight-bold text-primary">Homologar Producto ante el SIN</h4>
+    <a href="{% url 'inv:producto_list' %}" class="btn btn-secondary btn-sm">
+      <i class="fas fa-arrow-left mr-1"></i>Volver
+    </a>
+  </div>
+  <div class="card-body">
+
+    <div class="row mb-3">
+      <div class="col-md-6"><b>Código:</b> {{ producto.codigo }}</div>
+      <div class="col-md-6"><b>Descripción:</b> {{ producto.descripcion }}</div>
+    </div>
+
+    {% if producto.actividad_economica_sin and producto.codigo_producto_sin %}
+    <div class="alert alert-info">
+      Este producto ya está homologado — actividad <b>{{ producto.actividad_economica_sin }}</b>,
+      código SIN <b>{{ producto.codigo_producto_sin }}</b>. Puede volver a asignarlo si necesita corregirlo.
+    </div>
+    {% endif %}
+
+    {% if actividades_faltantes %}
+    <div class="alert alert-warning small">
+      Nota: los siguientes códigos de actividad aparecen en el catálogo de Productos/Servicios
+      pero no en el catálogo de Actividades sincronizado — aparecen igual en el selector, con su código crudo:
+      {{ actividades_faltantes|join:", " }}
+    </div>
+    {% endif %}
+
+    {{ productos_sin_data|json_script:"productos-sin-data" }}
+
+    <form method="post">
+      {% csrf_token %}
+
+      <div class="form-group">
+        <label for="actividad_economica_sin">Actividad Económica (SIN):</label>
+        <select class="form-control" name="actividad_economica_sin" id="actividad_economica_sin" required>
+          <option value="">Seleccione una actividad...</option>
+          {% for a in actividades %}
+            <option value="{{ a.codigo }}" {% if producto.actividad_economica_sin == a.codigo %}selected{% endif %}>
+              {{ a.codigo }} - {{ a.descripcion }}
+            </option>
+          {% endfor %}
+          {% for codigo_faltante in actividades_faltantes %}
+            <option value="{{ codigo_faltante }}" {% if producto.actividad_economica_sin == codigo_faltante %}selected{% endif %}>
+              {{ codigo_faltante }} (sin descripción en catálogo)
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="codigo_producto_sin">Producto / Servicio SIN:</label>
+        <select class="form-control" name="codigo_producto_sin" id="codigo_producto_sin" required>
+          <option value="">Seleccione primero una actividad...</option>
+        </select>
+      </div>
+
+      <button type="submit" class="btn btn-primary">
+        <i class="fas fa-check mr-1"></i>Guardar Homologación
+      </button>
+      <a href="{% url 'inv:producto_list' %}" class="btn btn-secondary ml-2">Cancelar</a>
+    </form>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block js_page %}
+<script>
+$(function(){
+    // Filtrado del segundo select con JavaScript propio -- no se usa
+    // el plugin jquery.chained (tiene incompatibilidades conocidas con
+    // versiones modernas de jQuery). Los datos vienen embebidos de
+    // forma segura via el filtro json_script de Django.
+    var productosSin = JSON.parse(document.getElementById('productos-sin-data').textContent);
+    var productoSeleccionadoInicial = "{{ producto.codigo_producto_sin|default:'' }}";
+
+    function actualizarProductosSin() {
+        var actividad = $('#actividad_economica_sin').val();
+        var $select = $('#codigo_producto_sin');
+        $select.empty();
+
+        if (!actividad) {
+            $select.append($('<option>', {value: '', text: 'Seleccione primero una actividad...'}));
+            return;
+        }
+
+        $select.append($('<option>', {value: '', text: 'Seleccione un producto...'}));
+
+        var filtrados = productosSin.filter(function(p){ return p.actividad === actividad; });
+        filtrados.forEach(function(p){
+            var texto = p.codigo + ' - ' + p.descripcion;
+            var $opt = $('<option>', {value: p.codigo, text: texto});
+            if (p.codigo === productoSeleccionadoInicial) {
+                $opt.prop('selected', true);
+            }
+            $select.append($opt);
+        });
+
+        if (filtrados.length === 0) {
+            $select.append($('<option>', {value: '', text: 'No hay productos SIN para esta actividad', disabled: true}));
+        }
+    }
+
+    $('#actividad_economica_sin').on('change', actualizarProductosSin);
+
+    // Si la actividad ya viene preseleccionada (producto en re-edicion),
+    // se filtra de una al cargar la pagina.
+    if ($('#actividad_economica_sin').val()) {
+        actualizarProductosSin();
+    }
+});
+</script>
+{% endblock %}

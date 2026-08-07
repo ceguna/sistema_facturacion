@@ -103,6 +103,12 @@ class Sucursal(ClaseModelo2):
     nombre = models.CharField(max_length=100)
     direccion = models.CharField(max_length=250, null=True, blank=True)
     departamento = models.CharField(max_length=50, null=True, blank=True)
+    municipio = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="Municipio (distinto del departamento) — obligatorio para el XML "
+                   "de factura electrónica. Ej: depto 'Santa Cruz', municipio "
+                   "'Santa Cruz de la Sierra'."
+    )
 
     # Se completan cuando se apruebe la Autorizacion de Sistemas (Paso 4-5)
     codigo_cuis = models.CharField(max_length=50, null=True, blank=True)

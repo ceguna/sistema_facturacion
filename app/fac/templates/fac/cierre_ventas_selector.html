@@ -1,0 +1,75 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+    <h4 class="m-0 font-weight-bold text-primary">Reporte de Cierre de Ventas</h4>
+    <a href="{% url 'bases:home' %}" class="btn btn-secondary btn-sm">
+      <i class="fas fa-arrow-left mr-1"></i>Volver
+    </a>
+  </div>
+  <div class="card-body">
+    <p class="text-muted">
+      Resumen diario de ventas netas y montos anulados, con el estado de Cierre de Día
+      de cada jornada — pensado para uso contable.
+    </p>
+    <div class="row">
+      <div class="col-md-4">
+        <label for="f1">Fecha Inicio:</label>
+        <input type="text" class="form-class" name="f1" id="f1" readonly>
+      </div>
+      <div class="col-md-4">
+        <label for="f2">Fecha Fin:</label>
+        <input type="text" class="form-class" name="f2" id="f2" readonly>
+      </div>
+      <div class="col-md-4 d-flex align-items-end">
+        <button class="btn btn-warning" type="button" id="btnPrint">Ver en Pantalla</button>
+        <button class="btn btn-danger ml-2" type="button" id="btnPrintPdf">Descargar PDF</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js_page %}
+<script>
+$(function(){
+  $("#f1, #f2").datetimepicker({
+      format: 'Y-m-d',
+      timepicker:false
+  });
+
+  function _formatearFecha(d){
+    var mes = ("0" + (d.getMonth() + 1)).slice(-2);
+    var dia = ("0" + d.getDate()).slice(-2);
+    return d.getFullYear() + "-" + mes + "-" + dia;
+  }
+
+  var hoy = new Date();
+  var primerDiaDelMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+
+  $("#f1").val(_formatearFecha(primerDiaDelMes));
+  $("#f2").val(_formatearFecha(hoy));
+
+  function _rangoFechas() {
+    var f1 = $("#f1").val();
+    var f2 = $("#f2").val();
+    if(f1=="" || f1==null){ f1 = _formatearFecha(primerDiaDelMes); }
+    if(f2=="" || f2==null){ f2 = _formatearFecha(hoy); }
+    return {f1: f1, f2: f2};
+  }
+
+  $("#btnPrint").click(function(e){
+    e.preventDefault();
+    var r = _rangoFechas();
+    window.open("/fac/reportes/cierre-ventas/ver/" + r.f1 + "/" + r.f2 + "/", '_blank');
+  });
+
+  $("#btnPrintPdf").click(function(e){
+    e.preventDefault();
+    var r = _rangoFechas();
+    window.location.href = "/fac/reportes/cierre-ventas/pdf/" + r.f1 + "/" + r.f2 + "/";
+  });
+});
+</script>
+{% endblock %}

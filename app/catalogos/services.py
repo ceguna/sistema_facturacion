@@ -126,10 +126,16 @@ class SOAPClienteSIN:
 
         if tipo_catalogo == CatalogoSIN.TipoCatalogo.PRODUCTOS_SERVICIOS:
             # DTO propio (productosDto), confirmado en vivo 02/08/2026:
-            # codigoProducto + descripcionProducto (+ codigoActividad, nandina)
+            # codigoProducto + descripcionProducto + codigoActividad (+ nandina).
+            # codigo_actividad se guarda para poder filtrar el catalogo por
+            # actividad economica en la pantalla de Homologacion de Productos.
             items = respuesta.get("listaCodigos", [])
             return [
-                {"codigo": str(item["codigoProducto"]), "descripcion": item["descripcionProducto"]}
+                {
+                    "codigo": str(item["codigoProducto"]),
+                    "descripcion": item["descripcionProducto"],
+                    "codigo_actividad": str(item["codigoActividad"]),
+                }
                 for item in items
             ]
 
@@ -190,13 +196,19 @@ def sincronizar_catalogo(tipo_catalogo, cliente_soap):
     actualizados = 0
 
     for item in codigos_sin:
+        defaults = {
+            "descripcion": item["descripcion"],
+            "vigente": True,
+        }
+        # codigo_actividad solo viene poblado para PRODUCTOS_SERVICIOS;
+        # para el resto de catalogos, item.get(...) devuelve None y el
+        # campo queda vacio, tal como corresponde.
+        defaults["codigo_actividad"] = item.get("codigo_actividad")
+
         CatalogoSIN.objects.update_or_create(
             tipo_catalogo=tipo_catalogo,
             codigo=str(item["codigo"]),
-            defaults={
-                "descripcion": item["descripcion"],
-                "vigente": True,
-            },
+            defaults=defaults,
         )
         actualizados += 1
 

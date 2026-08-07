@@ -69,19 +69,31 @@ class Home(LoginRequiredMixin, generic.TemplateView):
         ultimas_facturas = FacturaEnc.objects.select_related('cliente') \
             .order_by('-fecha')[:6]
 
-        # Ventas de los ultimos 7 dias, para el grafico
+        # Ventas de los ultimos 7 dias, para el grafico (ventas netas
+        # activas, como ya estaba) mas el monto anulado por dia -- para
+        # detectar de un vistazo si algun dia tuvo demasiadas anulaciones.
         hace_7_dias = hoy - datetime.timedelta(days=6)
+
         ventas_por_dia = facturas_activas.filter(fecha__date__gte=hace_7_dias) \
             .annotate(dia=TruncDate('fecha')) \
             .values('dia').annotate(total=Sum('total')).order_by('dia')
 
+        anulado_por_dia = FacturaEnc.objects.filter(
+            anulado=True, fecha__date__gte=hace_7_dias
+        ).annotate(dia=TruncDate('fecha')) \
+         .values('dia').annotate(total=Sum('total')).order_by('dia')
+
         ventas_dict = {v['dia']: float(v['total']) for v in ventas_por_dia}
+        anulado_dict = {a['dia']: float(a['total']) for a in anulado_por_dia}
+
         chart_labels = []
         chart_data = []
+        chart_anulado_data = []
         for i in range(7):
             dia = hace_7_dias + datetime.timedelta(days=i)
             chart_labels.append(dia.strftime('%d/%m'))
             chart_data.append(ventas_dict.get(dia, 0))
+            chart_anulado_data.append(anulado_dict.get(dia, 0))
 
         context.update({
             'ventas_hoy': ventas_hoy,
@@ -93,6 +105,7 @@ class Home(LoginRequiredMixin, generic.TemplateView):
             'ultimas_facturas': ultimas_facturas,
             'chart_labels': chart_labels,
             'chart_data': chart_data,
+            'chart_anulado_data': chart_anulado_data,
         })
         return context
 

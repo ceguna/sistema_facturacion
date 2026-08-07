@@ -41,6 +41,13 @@ class CatalogoSIN(models.Model):
         help_text="Código tal como lo entrega el SIN (se guarda como texto aunque sea numérico, por seguridad ante ceros a la izquierda u otros formatos)."
     )
     descripcion = models.CharField(max_length=255)
+    codigo_actividad = models.CharField(
+        max_length=20, null=True, blank=True, db_index=True,
+        help_text="Solo aplica al catálogo PRODUCTOS_SERVICIOS: código de "
+                   "actividad económica (CAEB) a la que el SIN asocia este "
+                   "producto/servicio. Necesario para filtrar el catálogo "
+                   "en la pantalla de Homologación de Productos."
+    )
     vigente = models.BooleanField(
         default=True,
         help_text="Se marca False si una sincronización posterior ya no trae este código (baja lógica, nunca se borra el histórico)."

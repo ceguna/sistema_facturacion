@@ -9,7 +9,6 @@ class Categoria(ClaseModelo):
         unique=True
     )
 
-    # Para evitar que django ponga como referencia un nombre hexadecimal y para ello se hace referencia a un campo.
     def __str__(self):
         return '{}'.format(self.descripcion)
     
@@ -61,6 +60,11 @@ class UnidadMedida(ClaseModelo):
         help_text='Descripción de la Unidad Medida',
         unique=True
     )
+    codigo_sin = models.CharField(
+        max_length=10, null=True, blank=True,
+        help_text="Código del catálogo SIN 'TIPO_UNIDAD_MEDIDA' (ver app catalogos). "
+                   "Necesario para facturación electrónica."
+    )
 
     def __str__(self):
         return '{}'.format(self.descripcion)
@@ -89,12 +93,42 @@ class Producto(ClaseModelo):
     subcategoria = models.ForeignKey(SubCategoria, on_delete=models.CASCADE)
     foto = models.ImageField(upload_to="images/",null=True,blank=True)
 
+    # --- Clasificacion SIN (Fase 3), necesaria para facturacion electronica ---
+    actividad_economica_sin = models.CharField(
+        max_length=20, null=True, blank=True,
+        help_text="Código CAEB de actividad económica (catálogo ACTIVIDADES en "
+                   "app catalogos) asociado a este producto."
+    )
+    codigo_producto_sin = models.CharField(
+        max_length=20, null=True, blank=True,
+        help_text="Código de producto/servicio SIN (catálogo PRODUCTOS_SERVICIOS "
+                   "en app catalogos) asociado a este producto."
+    )
+
     def __str__(self):
         return '{}'.format(self.descripcion)
     
     def save(self, *args, **kwargs):
         self.descripcion = self.descripcion.upper()
         super(Producto, self).save(*args, **kwargs)
+
+    @property
+    def homologado_sin(self):
+        """
+        True si este producto ya tiene todo lo necesario para poder
+        facturarse electronicamente: actividad economica, codigo de
+        producto SIN, y que su unidad de medida tenga codigo_sin.
+        Mismo criterio que valida fe.services._validar_homologacion
+        antes de emitir -- se expone aca como property para poder
+        mostrarlo en pantalla (listado de productos, pantalla de
+        homologacion) sin duplicar la logica.
+        """
+        return bool(
+            self.actividad_economica_sin
+            and self.codigo_producto_sin
+            and self.unidad_medida_id
+            and self.unidad_medida.codigo_sin
+        )
 
     class Meta:
         verbose_name_plural= 'Productos'

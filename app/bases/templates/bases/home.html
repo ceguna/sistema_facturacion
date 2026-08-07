@@ -198,22 +198,49 @@
         type: 'line',
         data: {
             labels: [{% for l in chart_labels %}'{{ l }}'{% if not forloop.last %},{% endif %}{% endfor %}],
-            datasets: [{
-                label: 'Ventas (Bs.)',
-                data: [{% for d in chart_data %}{{ d|unlocalize }}{% if not forloop.last %},{% endif %}{% endfor %}],
-                borderColor: '#1E3A5F',
-                backgroundColor: 'rgba(20, 184, 166, 0.15)',
-                borderWidth: 2,
-                tension: 0.3,
-                fill: true,
-                pointBackgroundColor: '#14B8A6',
-                pointRadius: 4
-            }]
+            datasets: [
+                {
+                    type: 'line',
+                    label: 'Ventas (Bs.)',
+                    data: [{% for d in chart_data %}{{ d|unlocalize }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                    borderColor: '#1E3A5F',
+                    backgroundColor: 'rgba(20, 184, 166, 0.15)',
+                    borderWidth: 2,
+                    tension: 0.3,
+                    fill: true,
+                    pointBackgroundColor: '#14B8A6',
+                    pointRadius: 4,
+                    yAxisID: 'y-ventas',
+                    order: 1
+                },
+                {
+                    type: 'bar',
+                    label: 'Anulado (Bs.)',
+                    data: [{% for d in chart_anulado_data %}{{ d|unlocalize }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                    backgroundColor: 'rgba(220, 53, 69, 0.55)',
+                    borderColor: '#DC3545',
+                    borderWidth: 1,
+                    yAxisID: 'y-anulado',
+                    order: 2
+                }
+            ]
         },
         options: {
-            legend: { display: false },
+            legend: { display: true, position: 'top' },
             scales: {
-                yAxes: [{ ticks: { beginAtZero: true } }]
+                yAxes: [
+                    {
+                        id: 'y-ventas',
+                        position: 'left',
+                        ticks: { beginAtZero: true }
+                    },
+                    {
+                        id: 'y-anulado',
+                        position: 'right',
+                        ticks: { beginAtZero: true },
+                        gridLines: { drawOnChartArea: false }
+                    }
+                ]
             }
         }
     });

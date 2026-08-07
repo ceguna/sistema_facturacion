@@ -1,0 +1,138 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+    <h4 class="m-0 font-weight-bold text-primary">Cierre de Día — {{ fecha|date:"d/m/Y" }}</h4>
+    <a href="{% url 'fac:cierre_dia_pendientes' %}" class="btn btn-secondary btn-sm">
+      <i class="fas fa-arrow-left mr-1"></i>Volver
+    </a>
+  </div>
+  <div class="card-body">
+
+    <div class="row mb-3">
+      <div class="col-md-4"><b>Cantidad de facturas:</b> {{ facturas.count }}</div>
+      <div class="col-md-4"><b>Total facturado:</b> {{ total_facturado }}</div>
+      <div class="col-md-4"><b>Pendientes ante el SIN:</b> {{ sin_resolver.count }}</div>
+    </div>
+
+    <table class="table" id="tablaCierre">
+      <thead>
+        <tr>
+          <th>No.</th>
+          <th>Cliente</th>
+          <th>Total</th>
+          <th>Estado</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in facturas %}
+        <tr id="fila-factura-{{ item.id }}">
+          <td>{{ item.id }}</td>
+          <td>{{ item.cliente }}</td>
+          <td>{{ item.total }}</td>
+          <td>
+            {% if item.anulado %}
+              <span class="badge badge-dark">Anulada</span>
+            {% elif item.estado_sin == 'revertida' %}
+              <span class="badge badge-primary">Anulación Revertida SIN</span>
+            {% elif item.estado_sin == 'validada' %}
+              <span class="badge badge-success">Emitida al SIN</span>
+            {% elif item.estado_sin == 'pendiente' %}
+              <span class="badge badge-info">Pendiente SIN</span>
+            {% elif item.estado_sin == 'observada' %}
+              <span class="badge badge-warning">Observada SIN</span>
+            {% else %}
+              <span class="badge badge-secondary">Sin Emitir al SIN</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if not item.anulado and item.estado_sin == 'no_enviada' or item.estado_sin == 'observada' %}
+              {% if not item.anulado %}
+              <button type="button" class="btn btn-primary btn-sm btn-reintentar" data-id="{{ item.id }}">
+                Reintentar Envío
+              </button>
+              {% endif %}
+            {% else %}
+              <span class="text-muted small">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <hr>
+
+    <form method="post" id="frmCerrarDia">
+      {% csrf_token %}
+
+      {% if puede_cerrar_limpio %}
+        <button type="submit" class="btn btn-success">
+          <i class="fas fa-lock mr-1"></i>Cerrar Día {{ fecha|date:"d/m/Y" }}
+        </button>
+        <a href="{% url 'fac:cierre_dia_pendientes' %}" class="btn btn-secondary ml-2">Volver sin cerrar</a>
+      {% else %}
+        <div class="alert alert-warning">
+          Hay {{ sin_resolver.count }} factura(s) sin resolver ante el SIN. Reintente su envío
+          arriba, o resuélvalas (edición/eliminación) antes de cerrar el día.
+        </div>
+
+        {% if es_supervisor %}
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" name="forzar" value="1" id="chkForzar">
+          <label class="form-check-label" for="chkForzar">
+            Cerrar de todas formas, dejando estas facturas como pendientes (solo superusuario)
+          </label>
+        </div>
+        <div class="form-group">
+          <label for="observaciones">Observación (obligatoria si fuerza el cierre):</label>
+          <textarea class="form-control" name="observaciones" id="observaciones" rows="2"></textarea>
+        </div>
+        <button type="submit" class="btn btn-danger">
+          <i class="fas fa-exclamation-triangle mr-1"></i>Forzar Cierre con Pendientes
+        </button>
+        <a href="{% url 'fac:cierre_dia_pendientes' %}" class="btn btn-secondary ml-2">Volver sin cerrar</a>
+        {% else %}
+        <p class="text-muted">Solo un supervisor puede forzar el cierre del día con facturas pendientes.</p>
+        <a href="{% url 'fac:cierre_dia_pendientes' %}" class="btn btn-secondary">Volver</a>
+        {% endif %}
+      {% endif %}
+    </form>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block js_page %}
+<script>
+$(function(){
+    $(".btn-reintentar").click(function(){
+        var btn = $(this);
+        var id = btn.data("id");
+        var token = '{{ csrf_token }}';
+
+        btn.prop("disabled", true).text("Enviando...");
+
+        $.ajax({
+            headers: { "X-CSRFToken": token },
+            type: "POST",
+            url: "/fac/facturas/emitir/" + id,
+            success: function(r){
+                if(r.ok){
+                    mensaje("Factura " + id + " emitida: " + r.estado_sin, "green");
+                } else {
+                    mensaje("Factura " + id + ": " + r.error, "red");
+                }
+                location.reload(true);
+            },
+            error: function(){
+                mensaje("Error de conexión al reintentar la factura " + id, "red");
+                btn.prop("disabled", false).text("Reintentar Envío");
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

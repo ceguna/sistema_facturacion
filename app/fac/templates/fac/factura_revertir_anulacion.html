@@ -1,0 +1,52 @@
+<div class="modal-dialog modal-lg">
+    <div class="modal-content">
+        <form role="form" action="{% url 'fac:factura_revertir_anulacion' enc.id %}" method="POST">
+            <div class="col-xl-12 col-md-12 mb-12">
+                <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                Revertir Anulación (Supervisor)
+                            </div>
+                            <div class="dropdown-divider"></div>
+                                {% csrf_token %}
+                                <div class="row">
+                                    <div class="col-12">
+                                        ¿Revertir la anulación de la factura número <b>{{ enc.id }}</b> del cliente
+                                        <b>{{ enc.cliente }}</b>, por un total de <b>{{ enc.total }}</b>?
+                                    </div>
+                                </div>
+                                <div class="row mt-2">
+                                    <div class="col-12">
+                                        <small class="text-muted">
+                                            Esta acción se envía primero al SIN para su confirmación
+                                            formal (servicio de Reversión de Anulación). Solo si el
+                                            SIN la acepta, la factura vuelve a estar activa y se
+                                            descuenta nuevamente el stock.
+                                            <br><br>
+                                            <b>Esta reversión solo puede realizarse una vez por
+                                            factura</b> — una vez revertida, no podrá volver a
+                                            revertirla. Debe hacerse dentro del mismo plazo que rige
+                                            para las anulaciones.
+                                        </small>
+                                    </div>
+                                </div>
+                            <div class="dropdown-divider"></div>
+                                <div class="row">
+                                    <div class="col">
+                                        <button type="submit" class="btn btn-primary"><span class="fa fa-undo"></span> Sí, Revertir Anulación</button>
+                                        <button type="button" class="btn btn-success" onclick="return cerrar_modal()">Cancelar</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-undo-alt fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>

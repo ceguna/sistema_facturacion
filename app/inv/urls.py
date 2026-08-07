@@ -5,7 +5,8 @@ from .views import CategoriaView, CategoriaNew, CategoriaEdit, CategoriaDel, \
     SubCategoriaView, SubCategoriaNew, SubCategoriaEdit, SubCategoriaDel, \
     MarcaView, MarcaNew, MarcaEdit, marca_inactivar, \
     UMView, UMNew, UMEdit, um_inactivar, \
-    ProductoView, ProductoNew, ProductoEdit, producto_inactivar
+    ProductoView, ProductoNew, ProductoEdit, producto_inactivar, \
+    producto_homologar, producto_homologar_pendientes
 
 urlpatterns = [
     path('categorias/', CategoriaView.as_view(), name='categoria_list'),
@@ -32,4 +33,7 @@ urlpatterns = [
     path('productos/new', ProductoNew.as_view(), name='producto_new'),
     path('productos/edit/<int:pk>', ProductoEdit.as_view(), name='producto_edit'),
     path('productos/inactivar/<int:id>', producto_inactivar, name='producto_inactivar'),
+
+    path('productos/homologar/<int:id>', producto_homologar, name='producto_homologar'),
+    path('productos/homologar-pendientes/', producto_homologar_pendientes, name='producto_homologar_pendientes'),
 ]

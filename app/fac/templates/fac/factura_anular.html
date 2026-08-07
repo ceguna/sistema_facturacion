@@ -20,18 +20,31 @@
                                 <div class="row">
                                     <div class="col-12">
                                         <small class="text-muted">
-                                            Esta acción NO borra la factura, solo la marca como
-                                            "Anulada" y devuelve el stock de los productos
-                                            facturados. Solo debe usarse cuando la operación no
-                                            se llegó a realizar.
+                                            Esta acción se envía primero al SIN para su confirmación
+                                            formal (servicio de Anulación). Solo si el SIN la acepta,
+                                            se marca como "Anulada" y se devuelve el stock de los
+                                            productos facturados. Solo debe usarse cuando la operación
+                                            no se llegó a realizar.
                                         </small>
                                     </div>
                                 </div>
                                 <div class="row mt-2">
                                     <div class="col-12">
-                                        <label for="motivo_anulacion">Motivo (opcional):</label>
+                                        <label for="codigo_motivo">Motivo de anulación (obligatorio):</label>
+                                        <select class="form-control" id="codigo_motivo" name="codigo_motivo" required>
+                                            <option value="">Seleccione un motivo...</option>
+                                            {% for m in motivos %}
+                                                <option value="{{ m.codigo }}">{{ m.descripcion }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="row mt-2">
+                                    <div class="col-12">
+                                        <label for="motivo_anulacion">Detalle adicional (opcional):</label>
                                         <textarea class="form-control" id="motivo_anulacion"
-                                            name="motivo_anulacion" rows="2"></textarea>
+                                            name="motivo_anulacion" rows="2"
+                                            placeholder="Aclaración interna, no se envía al SIN"></textarea>
                                     </div>
                                 </div>
                             <div class="dropdown-divider"></div>

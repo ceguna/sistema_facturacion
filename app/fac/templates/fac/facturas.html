@@ -6,10 +6,33 @@
     {% csrf_token %}
 <div class="card shadow mb-4">
     <div class="csg-form-title" style="padding: 16px 24px 0;">
-        {% if enc %} Editar {% else %} Nueva {% endif %} Factura
+        {% if enc.id %} Editar {% else %} Nueva {% endif %} Factura
+        {% if enc.id and enc.estado_sin %}
+            <span class="badge
+                {% if enc.estado_sin == 'validada' %}badge-success
+                {% elif enc.estado_sin == 'pendiente' %}badge-info
+                {% elif enc.estado_sin == 'observada' %}badge-warning
+                {% elif enc.estado_sin == 'anulada' or enc.estado_sin == 'revertida' %}badge-secondary
+                {% else %}badge-light{% endif %}">
+                SIN: {{ enc.get_estado_sin_display }}
+            </span>
+        {% endif %}
     </div>
+    {% if enc.estado_sin == 'observada' and enc.mensaje_sin %}
+    <div class="alert alert-warning mx-3 mt-2 mb-0">
+        <strong>El SIN observó esta factura:</strong> {{ enc.mensaje_sin }}
+        <br>Corrija lo necesario y vuelva a intentar el envío.
+    </div>
+    {% endif %}
     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
-        <a href="{% url 'fac:factura_list' %}" class="btn btn-primary">Guardar</a>
+        <button type="button" class="btn btn-primary" id="btnEmitirSin"
+            {% if not enc.id or not enc.puede_editarse %}disabled{% endif %}>
+            {% if enc.reportada_ante_sin %}
+                Ya Emitida al SIN
+            {% else %}
+                Confirmar y Emitir al SIN
+            {% endif %}
+        </button>
         <a href="{% url 'fac:factura_imprimir_one' enc.id %}" class="btn btn-success" target="_factura">Imprimir</a>
         <a href="{% url 'fac:factura_list' %}" class="btn btn-info">Cancelar</a>
     </div>
@@ -20,77 +43,61 @@
                 <!-- Sección Izquierda -->
                 <div class="col-lg-6 form-group">
                     <div class="content">
-                        <div class="row ">
-                            <div class="col-lg-1">No.:</div>
-                            <div class="col-lg-4">
+                        <div class="row align-items-center mb-2">
+                            <div class="col-lg-2">No.:</div>
+                            <div class="col-lg-3">
                                 <input type="text" name="enc_id" id="enc_id" readonly class="form-control">
                             </div>
                             <div class="col-lg-2">
                                 Cliente:
                             </div>
-                            <div class="col-lg-5 form-group">
-                                <!-- <select name="enc_cliente" id="enc_cliente" class="form-control">
+                            <div class="col-lg-5 form-group mb-0">
+                                <select name="enc_cliente" id="enc_cliente" class="form-control">
                                     <option value="0">Seleccione Cliente</option>
                                     {% for item in clientes %}
                                         <option value="{{item.id}}">{{ item.nombres }} {{item.apellidos}} </option>
                                     {% endfor %}
-                                </select> -->
-                                <div class="row">
-                                    <div class="col-lg-12 col-md-12">
-                                        <select name="enc_cliente" id="enc_cliente" class="form-control">
-                                            <option value="0">Seleccione Cliente</option>
-                                            {% for item in clientes %}
-                                                <option value="{{item.id}}">{{ item.nombres }} {{item.apellidos}} </option>
-                                            {% endfor %}
-                                        </select>
-                                    </div>
-                                </div>
+                                </select>
                             </div>
                         </div>
 
-                        <div class="row">
-                            <div class="col-lg-6 p-2" >
-                                <div class="row">
-                                    <div class="col-lg-2">
-                                        Fecha:
-                                    </div>
-                                    <div class="col-lg-8 form-group">
-                                        <input type="text" name="fecha" id="fecha" class="form-control form-control-user" 
-                                        value="{{ enc.fecha|date:'Y-m-d' }}" readonly />
-                                    </div>
-                                </div>
+                        <div class="row align-items-center mb-2">
+                            <div class="col-lg-2">Fecha:</div>
+                            <div class="col-lg-3">
+                                <input type="text" name="fecha" id="fecha" class="form-control form-control-user"
+                                value="{{ enc.fecha|date:'Y-m-d' }}" readonly />
                             </div>
-                            <div class="col-lg-6 p-2 form-group">
-                                <div class="row">
-                                    <div class="col-lg-3">Sub Total:</div>
-                                    <div class="col-lg-8">
-                                        <input type="number" class="form-control text-right" value="0.00" readonly
-                                        name="sub_total" id="sub_total">
-                                    </div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-lg-3">Descuento:</div>
-                                    <div class="col-lg-8">
-                                        <input type="number" class="form-control text-right" value="0.00" disabled
-                                            name="descuento" id="descuento">
-                                    </div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-lg-3">Total:</div>
-                                    <div class="col-lg-8">
-                                        <input type="number" class="form-control text-right" value="0.00" disabled
-                                            name="total" id="total">
-                                    </div>
-                                </div>
+                            <div class="col-lg-2">Sub Total:</div>
+                            <div class="col-lg-5">
+                                <input type="number" class="form-control text-right" value="0.00" readonly
+                                name="sub_total" id="sub_total">
+                            </div>
+                        </div>
+                        <div class="row align-items-center mb-2">
+                            <div class="col-lg-2"></div>
+                            <div class="col-lg-3"></div>
+                            <div class="col-lg-2">Descuento:</div>
+                            <div class="col-lg-5">
+                                <input type="number" class="form-control text-right" value="0.00" disabled
+                                    name="descuento" id="descuento">
+                            </div>
+                        </div>
+                        <div class="row align-items-center mb-2">
+                            <div class="col-lg-2"></div>
+                            <div class="col-lg-3"></div>
+                            <div class="col-lg-2">Total:</div>
+                            <div class="col-lg-5">
+                                <input type="number" class="form-control text-right" value="0.00" disabled
+                                    name="total" id="total">
                             </div>
                         </div>
                     </div>
                 </div>
                 <!-- Fin Sección Izquierda -->
 
-
                 <!-- Sección Derecha -->
                 <div class="col-lg-6 from-group">
+                    {% if enc.puede_editarse %}
                     <div class="row p-2">
                         <div class="col-lg-1 pr-0 text-right">Cod.:</div>
                         <div class="col-lg-3">
@@ -135,6 +142,19 @@
                              value="0.00" disabled>
                         </div>
                     </div>
+                    {% else %}
+                    <div class="alert alert-secondary text-center">
+                        Esta factura {% if enc.anulado %}está anulada{% else %}ya fue reportada al SIN{% endif %}.
+                        No se pueden agregar más productos.
+                    </div>
+                    <input type="hidden" name="codigo" id="codigo" value="">
+                    <input type="hidden" name="cantidad" id="cantidad" value="0">
+                    <input type="hidden" name="precio" id="precio" value="0">
+                    <input type="hidden" name="existencia" id="existencia" value="0">
+                    <input type="hidden" name="descuento_detalle" id="descuento_detalle" value="0">
+                    <input type="hidden" name="sub_total_detalle" id="sub_total_detalle" value="0">
+                    <input type="hidden" name="total_detalle" id="total_detalle" value="0">
+                    {% endif %}
                 </div>
                 <!-- Fin Sección Derecha -->
             </div>
@@ -173,7 +193,7 @@
                                 <td>{{ item.descuento }}</td>
                                 <td>{{ item.total }}</td>
                             <td>
-                                {% if not enc.cuf and not enc.anulado %}
+                                {% if enc.puede_editarse %}
                                 <button type="button" class="btn btn-warning btn-circle"
                                     onclick="borrar_detalle({{ item.id|unlocalize }})">
                                     <i class="fas fa-history"></i>
@@ -228,41 +248,26 @@
 
         $('#sub_total_detalle').val(stotal);
         $('#total_detalle').val(total);
-
-        console.log("Cantidad " + cant);
-        console.log("prec " + prec);
-        console.log("desc " + desc);
-
-        console.log("sub_total_detalle " + $('#sub_total_detalle').val());
-        console.log("total_detalle " + $('#total_detalle').val());
     }
 
     function buscarProducto()
     {
-        //Primero se controla si el cliente a sido seleccionado.
         if ($("#enc_cliente").val()==="0" || $("#enc_cliente").val()===null){
             mensaje("Cliente No Seleccionado",'red');
             return false;
         }
 
-        //Segundo verifica que se haya ingresado un codigo de producto.
         var codigo = $("#codigo").val();
         if(codigo===""){
             return false;
         }
 
-        //Aqui se declara la ruta que se va a trabajar de la aplicacion api y pegamos el codigo.
         var path = "{% url 'api:producto_list' %}" + codigo;
 
         $.ajax({
             type:"GET",
             url: path,
-            success: function(r){ //esta es una funcion de callback que retorna el http://127.0.0.1:8000/api/v1/productos/codigo
-                console.log(r);
-                console.log(r.existencia);
-                console.log(r.estado);
-
-                //Una vez que recupera los datos del producto, verifica su existencia o estado.
+            success: function(r){
                 if(r.existencia<=0 || !r.estado){
                     mensaje("Producto No Tiene Existencia o está inactivo",'orange')
                     $("#codigo").val("");
@@ -272,7 +277,6 @@
                     return false;
                 }
 
-                //Si esta correcto, tomas los valores y los coloca en el formulario.
                 $("#codigo").val(r.codigo);
                 $("#descripcion").val(r.descripcion);
                 $("#precio").val(r.precio);
@@ -281,14 +285,7 @@
 
             },
             error: function(a,b,c){
-                console.log(a);
-                // console.log(b);
-                // console.log(c);
-                // console.log(a.status)
-                // console.log(a.responseText.detail);
-                // a.responseText["detail"]
-                // mensaje(c,'red');
-                if(a.status==404){ //Si el producto no existe.
+                if(a.status==404){
                     mensaje("Producto -" + codigo + "- No Encontrado o No Existe",'red');
                     $("#codigo").val("");
                     $("#descripcion").val("");
@@ -316,33 +313,24 @@
     });
 
     $("#codigo").keypress(function(e){
-            if(e.keyCode===13){ //Valida que la tecla presionada es ENTER
+            if(e.keyCode===13){
                 e.preventDefault();
                 buscarProducto();
             }
     });
 
     $("form").submit(function(e){
-
         if($('#total_detalle').val()==0 || $('#codigo').val()==0 ){
             e.preventDefault();
-            //alert("No ha agregado producto o está sin cantidades");
-            $.alert({
-                type:'red',
-                title:'',
-                content:'No ha agregado producto o está sin cantidades'
-                })
+            $.alert({type:'red', title:'', content:'No ha agregado producto o está sin cantidades'})
             return false;
         }
-
         var existencia = +$("#existencia").val();
         var cantidad = +$("#cantidad").val();
-
         if(cantidad>existencia){
             mensaje("No hay existencia suficiente");
             return false;
         }
-
     })
     
     $('#cantidad,#precio,#descuento_detalle').change(function(){
@@ -358,7 +346,6 @@
 
     function borrar_detalle(id)
     {
-        // mensaje(id);
         $.confirm({
             theme:"modern",
             icon:"fab fa-keycdn",
@@ -366,7 +353,6 @@
             title: "Confirmación Requerida",
             content: 'url:/fac/facturas/borrar-detalle/' + id,
             onContentReady: function () {
-                var self = this;
                 this.$content.find('#usuario').val('{{ user.username }}');
                 this.$content.find('#usuario').select();
                 this.$content.find('#usuario').focus();
@@ -376,7 +362,6 @@
                     text:"Confirmar Reversión",
                     btnClass:"btn btn-danger",
                     action: function(){
-                        //Aqui se captura el usuario y contraseña
                         var usuario = this.$content.find('input#usuario');
 	                    var pass = this.$content.find('input#password');
 
@@ -384,32 +369,21 @@
                             mensaje("Usuario es requerido",'red');
                             return false;
                         }
-
                         if(!pass.val().trim()){
-                            // $.alert({
-                            //     title:"Error",
-                            //     content: "Contraseña es Requerida",
-                            //     type: 'red'
-                            // });
                             mensaje("Contraseña es Requerida","red");
                             return false;
                         }
 
-                        //En este punto empezamos a enviar los datos.
                         var data = {"usuario":usuario.val(),"pass":pass.val()};
-	                    console.log(data); //Este punto es para enviar a la ventana de desarrollador del navegador
-
-                        //Aqui se hace el envio mediante AJAX utilizando el metodo POST.
                         var token = '{{csrf_token}}';
                         $.ajax({
                             headers: { "X-CSRFToken": token },
                             type:"POST",
-                            data:data, //Enviamos la data
+                            data:data,
                             url: '/fac/facturas/borrar-detalle/' + id,
                             success: function(r){
-                                console.log(r); //Este punto es para enviar a la ventana de desarrollador del navegador
                                 if(r==="ok"){
-                                    location.reload(true); //Aqui se recarga la pagina.
+                                    location.reload(true);
                                 }else{
                                     mensaje(r,'red');
                                 }
@@ -424,6 +398,61 @@
                 }
         });
     }
+
+    // --- Fase C: Confirmar y Emitir al SIN ---
+    $("#btnEmitirSin").click(function(){
+        var id = "{{ enc.id }}";
+        if(!id || id=="0"){
+            mensaje("Primero agregue al menos un producto antes de emitir","red");
+            return false;
+        }
+        var totalTexto = $("#total").val();
+        var clienteTexto = $("#enc_cliente option:selected").text();
+
+        $.confirm({
+            theme:"modern",
+            type:"blue",
+            title:"Confirmar envío al SIN",
+            content: "Va a emitir la factura N° " + id + " para <b>" + clienteTexto +
+                      "</b> por un total de Bs " + totalTexto + ".<br><br>" +
+                      "Una vez que el SIN la acepte, <b>no podrá modificar los productos</b> — " +
+                      "solo Anularla formalmente.<br><br>¿Confirma el envío?",
+            buttons: {
+                confirmar: {
+                    text: "Sí, Emitir al SIN",
+                    btnClass: "btn-primary",
+                    action: function(){
+                        var token = '{{csrf_token}}';
+                        $.ajax({
+                            headers: { "X-CSRFToken": token },
+                            type: "POST",
+                            url: "/fac/facturas/emitir/" + id,
+                            success: function(r){
+                                if(r.ok){
+                                    $.alert({
+                                        type:'green', title:'Factura Emitida',
+                                        content: 'Estado SIN: ' + r.estado_sin +
+                                                  '<br>Código de Recepción: ' + (r.codigo_recepcion || '-'),
+                                        onClose: function(){ location.reload(true); }
+                                    });
+                                } else {
+                                    $.alert({
+                                        type:'red', title:'No se pudo emitir',
+                                        content: r.error,
+                                        onClose: function(){ location.reload(true); }
+                                    });
+                                }
+                            },
+                            error: function(){
+                                mensaje("Error de conexión al intentar emitir","red");
+                            }
+                        });
+                    }
+                },
+                cancelar: function(){}
+            }
+        });
+    });
 
 </script>
 {% endblock %}

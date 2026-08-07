@@ -1,0 +1,51 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+    <h4 class="m-0 font-weight-bold text-primary">Homologación Pendiente</h4>
+    <a href="{% url 'inv:producto_list' %}" class="btn btn-secondary btn-sm">
+      <i class="fas fa-arrow-left mr-1"></i>Volver
+    </a>
+  </div>
+  <div class="card-body">
+    <p class="text-muted">
+      {{ total_pendientes }} de {{ total_productos }} producto{{ total_productos|pluralize }} activo{{ total_productos|pluralize }}
+      todavía sin homologar ante el SIN.
+    </p>
+
+    {% if not pendientes %}
+    <div class="alert alert-success">
+      <i class="fas fa-check-circle mr-2"></i>Todos los productos activos ya están homologados.
+    </div>
+    {% else %}
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Código</th>
+          <th>Descripción</th>
+          <th>Falta</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pendientes %}
+        <tr>
+          <td>{{ p.codigo }}</td>
+          <td>{{ p.descripcion }}</td>
+          <td class="small text-muted">
+            {% if not p.actividad_economica_sin %}Actividad económica{% endif %}
+            {% if not p.codigo_producto_sin %}{% if not p.actividad_economica_sin %}, {% endif %}Código de producto SIN{% endif %}
+            {% if not p.unidad_medida.codigo_sin %}, Código SIN de la unidad "{{ p.unidad_medida }}"{% endif %}
+          </td>
+          <td>
+            <a href="{% url 'inv:producto_homologar' p.id %}" class="btn btn-info btn-sm">Homologar</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
