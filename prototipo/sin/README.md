@@ -1,4 +1,10 @@
-# Prototipo SIN — Notas de autenticación (PILOTO)
+# Prototipo SIN — Bitácora de investigación y certificación Piloto
+
+> **Nota:** este archivo es la bitácora histórica de cómo se descubrió el
+> protocolo del SIN y se avanzó en la certificación Piloto. La
+> documentación del código real que usa el sistema en producción está en
+> **`app/fe/README.md`** — empezar por ahí si lo que buscás es "cómo se
+> emite una factura hoy", no "cómo se descubrió cómo hacerlo".
 
 ## Autenticación ante los servicios SOAP del SIN — CONFIRMADO (01/08/2026)
 
@@ -379,45 +385,71 @@ transaccion: True
 la Etapa VI (evento vinculado a paquete) para cerrar la certificación
 Piloto por completo.
 
-## Pendiente — Roadmap SaaS / multi-cliente (no urgente, anotado 02/08/2026)
+---
 
-Pregunta que surgió al cierre de esta sesión: ¿hay que repetir todo este
-proceso de descubrimiento por cada cliente nuevo que compre el sistema
-bajo modalidad SaaS? Respuesta corta: el código (autenticación, CUF,
-firma, XML, gzip, hash, envío) es genérico y no se repite — pero cada
-cliente sí necesita su propia identidad fiscal (NIT, certificado AGETIC,
-Token Delegado, actividad económica registrada, catálogo de productos
-asociado a su actividad). Eso es exigencia del SIN, no algo evitable con
-mejor código.
+**La integración a Django (Fases A-D), el servicio `emitir_factura_sin`,
+la decisión de ambiente de pruebas, y el roadmap SaaS/multi-cliente se
+documentan en `app/fe/README.md`, no acá.**
 
-Dos cosas a desarrollar más adelante (cuando haya un segundo cliente
-real, no antes):
+## Actualización — Fase D, generación de volumen (06/08/2026)
 
-1. **Registrar CSG Sistemas como Proveedor** (no Propietario) ante el SIN,
-   con NIT propio — habilita el trámite liviano de "Asociación de
-   Sistemas" para cada cliente nuevo, en vez de una Solicitud de
-   Autorización completa desde cero como la que se hizo para la librería
-   (Solicitud 9454).
-2. **Automatizar el onboarding de cada cliente nuevo** dentro de la app
-   Django: cargar NIT + certificado + credenciales de SIAT en Línea →
-   consultar automáticamente su actividad económica real (como se hizo
-   hoy a mano vía "Información del Contribuyente") → sincronizar el
-   catálogo de productos asociado a esa actividad → guardar todo en el
-   modelo `Empresa`. Así el proceso manual de hoy se convierte en una
-   función reutilizable, no en trabajo repetido por cliente.
+Se agregaron dos comandos de management nuevos para generar volumen de
+"casos correctos" hacia la certificación Piloto, reutilizando los
+servicios reales (sin duplicar lógica):
 
-## Estado actual (02/08/2026)
-- ✅ CUIS obtenido: `31477C6C`, vigente hasta 01/08/2027
-- ✅ CUFD real obtenido (vigencia corta — pedir uno nuevo por sesión de trabajo)
-- ✅ CUF real calculado, factura firmada y validada contra XSD
-- ❌ `registroPuntoVenta` descartado — no aplica al caso (ver arriba)
-- ✅ **`recepcionFactura` — PRIMERA FACTURA VALIDADA POR EL SIN** (`codigoRecepcion: a3d0a836-8ec8-11f1-a745-adb8279ff5dd`)
-- ⏳ Próximo paso: integrar este flujo al Django real (reemplazar el
-  prototipo aislado por la app de facturación), y/o seguir con las
-  siguientes etapas de certificación Piloto (Eventos Significativos,
-  Emisión de paquetes, Anulación, Reversión)
-- ⏳ Pendiente en paralelo: conectar la app `catalogos` con cliente `zeep`
-  real (reemplazar `MockSOAPClient`) — ya se tienen confirmados en esta
-  sesión los catálogos de Tipo de Punto de Venta, Tipo de Emisión, Tipos
-  de Factura, y Productos/Servicios por actividad; faltaría repetir el
-  patrón para el resto.
+- `app/fac/management/commands/generar_volumen_sin.py` — ciclos de
+  emisión + anulación + reversión, parametrizable (`--cantidad`, `--pausa`).
+- `app/catalogos/management/commands/generar_volumen_catalogos.py` —
+  corridas repetidas de sincronización de catálogos, parametrizable
+  (`--veces`, `--pausa`).
+
+### Descubrimiento importante: límite diario de casos correctos
+
+Corriendo varias tandas grandes en un solo día, se detectó que el portal
+de Seguimiento de Sistemas Informáticos **deja de sumar casos correctos**
+después de cierto punto, aunque las operaciones sigan funcionando con
+éxito técnico contra el SIN (sin ningún error, estado `validada`/`905`/
+`907` normal en cada una).
+
+Evidencia: se corrieron 10 ciclos adicionales de emisión+anulación+reversión
+(confirmados exitosos por consola) y el contador no se movió ni un caso
+en Etapas III, IV, VII, VIII, XI. Se probó también un llamado suelto a
+`cuis` (Etapa I) — tampoco sumó. Un lote nuevo de Catálogos (Etapa II)
+tampoco sumó, aunque esa misma etapa sí había sumado más temprano en el
+día (37→801).
+
+**Conclusión: existe un límite diario de casos que el SIN reconoce hacia
+el contador de certificación**, aparentemente amplio (no exclusivo de
+una sola etapa — parece ser por NIT/sistema en su totalidad, no
+confirmado con certeza, es una hipótesis fuerte basada en el patrón
+observado, no un hecho documentado oficialmente).
+
+**Implicancia práctica:** la generación de volumen debe hacerse en
+tandas moderadas repartidas en varios días — pasado cierto punto diario,
+correr más no suma nada al progreso real, solo genera datos de prueba
+de más sin beneficio.
+
+### Estado de las 9 etapas al cierre del 06/08/2026 (el portal ahora
+### muestra 9 etapas, no 8 — se agregó "VIII. Firma Digital" que no
+### estaba en el conteo original de sesiones anteriores)
+- I. CUIS: 1/2 (50%)
+- II. Catálogos: 801/1800 (44%)
+- III. CUFD: 100/200 (50%)
+- IV. Emisión individual: 125/500 (25%)
+- V. Eventos Significativos: 1/70 (1%) — sin volumen generado aún, pendiente
+- VI. Paquetes: 2/280 (0%) — bloqueada, pendiente respuesta del SIN (correo
+  sin respuesta hace 5 días; próximo paso: llamar al 800-10-3444)
+- VII. Anulación: 125/500 (25%)
+- VIII. Firma Digital: 115/460 (25%)
+- XI. Reversión: 125/500 (25%)
+
+### Próximos pasos al retomar
+1. Llamar al 800-10-3444 por la Etapa VI (bug de evento+paquete), con el
+   guión ya preparado (Nº Solicitud 9454, código de sistema, detalle del
+   error 984/914).
+2. Probar temprano en el día si el contador vuelve a sumar (confirmaría
+   reseteo diario) y, de ser así, estimar cuántos casos por día acepta
+   cada familia de servicios para planificar cuántos días de generación
+   de volumen van a hacer falta en total.
+3. Armar comando de volumen para Etapa V (Eventos Significativos) —
+   nunca se probó en tandas, solo el caso aislado de una sesión anterior.
