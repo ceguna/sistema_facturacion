@@ -1,0 +1,67 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+    <h4 class="m-0 font-weight-bold text-primary">Tipo de Cambio (Referencial)</h4>
+    <a href="{% url 'inv:revision_precios' %}" class="btn btn-outline-primary btn-sm">
+      <i class="fas fa-tags mr-1"></i>Ir a Revisión de Precios
+    </a>
+  </div>
+  <div class="card-body">
+    <p class="text-muted small">
+      Registro manual del Tipo de Cambio Oficial publicado por el BCB. Sirve como referencia
+      para calcular precios sugeridos de productos importados — no afecta la facturación
+      electrónica (que siempre opera en bolivianos).
+    </p>
+    <p class="text-muted small">
+      <b>¿Cada cuánto conviene cargarlo?</b> Se recomienda actualizarlo al menos <b>una vez por
+      semana</b>, y de inmediato si te enterás de un movimiento importante del dólar (por ejemplo,
+      una noticia de devaluación o ajuste del BCB). No hace falta cargarlo a diario — el sistema
+      solo te va a alertar en "Revisión de Precios" cuando la variación acumulada supere el 3%,
+      así que mientras esa referencia esté razonablemente al día, alcanza para tomar buenas decisiones.
+    </p>
+    <div class="buttons-toolbar">
+        <a class="btn btn-success" href="#" onclick="return abrir_modal('{% url 'inv:tipo_cambio_new' %}')">
+            <i class="far fa-calendar-plus"></i> Nuevo
+        </a>
+    </div>
+    <table
+      id="table"
+      data-toggle="table"
+      data-pagination="true"
+      data-search="true"
+      data-show-columns="true"
+      data-show-export="True"
+      data-export-types='["csv","txt","xlsx","pdf"]'
+      data-locale="es-NI"
+      class="table table-striped table-hover">
+      <thead>
+        <th data-sortable="true" data-field="fecha">Fecha</th>
+        <th data-sortable="true" data-field="valor">Valor (Bs/USD)</th>
+        <th data-field="fuente">Fuente</th>
+        <th data-field="estado">Estado</th>
+        <th class="all">Acciones</th>
+      </thead>
+      <tbody>
+        {% for item in obj %}
+        <tr>
+          <td>{{ item.fecha|date:"d/m/Y" }}</td>
+          <td data-tableexport-msonumberformat="\@">{{ item.valor }}</td>
+          <td>{{ item.fuente }}</td>
+          <td>
+            {% if item.estado %}<span class="badge badge-success">Activo</span>
+            {% else %}<span class="badge badge-secondary">Inactivo</span>{% endif %}
+          </td>
+          <td>
+            <button class="btn btn-warning btn-circle" onclick="return abrir_modal('{% url 'inv:tipo_cambio_edit' item.id %}')">
+              <i class="far fa-edit"></i>
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

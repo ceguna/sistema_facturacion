@@ -1,5 +1,7 @@
+import re
+
 from django.http import JsonResponse
-from django.shortcuts import render,redirect, get_object_or_404
+from django.shortcuts import render, redirect, get_object_or_404
 from django.views import generic
 from django.views.decorators.http import require_POST
 
@@ -12,12 +14,11 @@ from django.contrib import messages
 
 from django.contrib.auth import authenticate
 from django.utils import timezone
-from django.utils.dateparse import parse_date
 from django.db.models import Sum
 
 from bases.views import SinPrivilegios
 
-from .models import Cliente,FacturaEnc,FacturaDet,CierreDia,dias_pendientes_de_cierre
+from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, Pago
 from .forms import ClienteForm
 import inv.views as inv
 from inv.models import Producto
@@ -70,7 +71,7 @@ def clienteInactivar(request,id):
 
     if request.method=="POST":
         if cliente:
-            cliente.estado = not cliente.estado #Aqui va cambiar el estado de activo a inactivo y vice versa.
+            cliente.estado = not cliente.estado
             cliente.save()
             return HttpResponse("OK")
         return HttpResponse("FAIL")   
@@ -83,12 +84,6 @@ class FacturaView(SinPrivilegios, generic.ListView):
     permission_required="fac.view_facturaenc"
 
     def get_context_data(self, **kwargs):
-        """
-        Se agrega 'dia_cerrado' a cada factura de la lista -- indica si
-        la FECHA de esa factura ya tiene un CierreDia registrado (no
-        confundir con el estado_sin de la factura en si, que ya se
-        muestra en la columna 'Estado').
-        """
         context = super().get_context_data(**kwargs)
         fechas_cerradas = set(CierreDia.objects.values_list('fecha', flat=True))
         for item in context['obj']:
@@ -118,27 +113,30 @@ def facturas(request,id=None):
                 return redirect("fac:factura_list")
 
         if not enc:
-            # Instancia "vacia" en memoria (no guardada) para una factura
-            # nueva -- asi el template tiene acceso a los mismos campos y
-            # properties (puede_editarse, estado_sin, etc.) del modelo
-            # real, sin duplicar su definicion en un diccionario aparte.
             enc = FacturaEnc(id=0)
             enc.fecha = datetime.today()
             enc.cliente = None
             enc.sub_total = 0.00
             enc.descuento = 0.00
             enc.total = 0.00
+            enc.forma_pago = FacturaEnc.FORMA_PAGO_EFECTIVO
             detalle = None
+            ultimo = FacturaEnc.objects.order_by('-id').first()
+            siguiente_numero = (ultimo.id + 1) if ultimo else 1
         else:
             detalle = FacturaDet.objects.filter(factura=enc)
+            siguiente_numero = enc.id
 
-        contexto = {"enc": enc, "det": detalle, "clientes": clientes}
+        contexto = {
+            "enc": enc,
+            "det": detalle,
+            "clientes": clientes,
+            "siguiente_numero": siguiente_numero,
+            "forma_pago_choices": FacturaEnc.FORMA_PAGO_CHOICES,
+        }
         return render(request, template_name, contexto)
     
     if request.method == "POST":
-        # Misma proteccion que en el GET, pero del lado del servidor
-        # para una factura NUEVA (no aplica al editar una ya existente,
-        # que es justo lo que la pantalla de cierre necesita permitir).
         if not id and dias_pendientes_de_cierre():
             messages.warning(
                 request,
@@ -151,13 +149,20 @@ def facturas(request,id=None):
         cli = Cliente.objects.filter(pk=cliente).first()
         if not cli:
             messages.error(request, 'El cliente seleccionado no existe o no es válido')
-            return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_list")
+            return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
 
-        # Si la factura ya existe, verificar ANTES que nada que todavia
-        # se pueda editar -- esto es lo que realmente protege contra
-        # agregar productos a una factura ya emitida al SIN o anulada.
-        # El frontend puede ocultar botones, pero la unica proteccion
-        # real es esta, del lado del servidor.
+        # Bloqueo total: si el cliente tiene algun credito vencido, no se
+        # le permite NINGUNA venta nueva -- ni siquiera al contado --
+        # hasta que regularice. Solo se chequea al CREAR una factura
+        # nueva (no al seguir editando una ya existente).
+        if not id and cli.tiene_creditos_vencidos:
+            messages.error(
+                request,
+                f'No se puede facturar a {cli}: tiene crédito(s) vencido(s) pendiente(s) '
+                'de pago. Debe regularizar antes de una nueva venta.'
+            )
+            return redirect("fac:factura_new")
+
         if id:
             enc_existente = FacturaEnc.objects.filter(pk=id).first()
             if enc_existente and not enc_existente.puede_editarse:
@@ -167,24 +172,58 @@ def facturas(request,id=None):
                 )
                 return redirect("fac:factura_edit", id=id)
 
-        if not id:
-            enc = FacturaEnc(
-                cliente = cli,
-                fecha = fecha
-            )
-            if enc:
-                enc.save()
-                id = enc.id
-        else:
-            enc = FacturaEnc.objects.filter(pk=id).first()
-            if enc:
-                enc.cliente = cli
-                enc.save()
+            # Una vez que la factura ya tiene al menos un producto en el
+            # detalle, el cliente queda bloqueado: los descuentos, el
+            # limite de credito y demas ya se calcularon contra ese
+            # cliente especifico -- cambiarlo a mitad de la carga dejaria
+            # lineas de detalle asociadas a un cliente distinto del que
+            # termina en la cabecera. Se rechaza el POST entero (no se
+            # ignora el cliente en silencio) para que el cajero se de
+            # cuenta del error en el momento.
+            if enc_existente and FacturaDet.objects.filter(factura=enc_existente).exists():
+                if str(enc_existente.cliente_id) != str(cli.id):
+                    messages.error(
+                        request,
+                        'No se puede cambiar el cliente: esta factura ya tiene productos registrados.'
+                    )
+                    return redirect("fac:factura_edit", id=id)
 
-        if not id:
-            messages.error(request,'No Puedo Continuar No Pude Detectar No. de Factura')
-            return redirect("fac:factura_list")
-        
+        forma_pago = request.POST.get("forma_pago", FacturaEnc.FORMA_PAGO_EFECTIVO)
+        if forma_pago not in dict(FacturaEnc.FORMA_PAGO_CHOICES):
+            forma_pago = FacturaEnc.FORMA_PAGO_EFECTIVO
+
+        if forma_pago == FacturaEnc.FORMA_PAGO_CREDITO:
+            if not cli.autorizado_credito:
+                messages.error(request, f'{cli} no está autorizado para ventas a crédito.')
+                return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
+            if not cli.plazo_credito_dias:
+                messages.error(request, f'{cli} no tiene un plazo de crédito configurado.')
+                return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
+
+        # --- Tarjeta (Debito/Credito): el SIN exige el nodo numeroTarjeta
+        # poblado (no null) cuando el metodo de pago es con tarjeta --
+        # confirmado con el error real del SIN (codigo 1012) sobre la
+        # factura 549. Se pide solo los ULTIMOS 4 DIGITOS -- nunca la
+        # tarjeta completa, por seguridad (PCI). Validado aca, ANTES de
+        # tocar la cabecera, por la misma razon que el resto de las
+        # validaciones de este bloque (no dejar cabecera huerfana).
+        numero_tarjeta = request.POST.get("numero_tarjeta", "").strip()
+        if forma_pago in (FacturaEnc.FORMA_PAGO_TARJETA_DEBITO, FacturaEnc.FORMA_PAGO_TARJETA_CREDITO):
+            if not re.fullmatch(r"\d{4}", numero_tarjeta):
+                messages.error(
+                    request,
+                    'Debe ingresar los 4 últimos dígitos de la tarjeta para esta forma de pago.'
+                )
+                return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
+        else:
+            numero_tarjeta = ""
+
+        # --- Validaciones del PRODUCTO y del LIMITE de credito, ANTES
+        # de crear/guardar la cabecera (FacturaEnc). Si algo de esto
+        # falla, no debe quedar ninguna cabecera huerfana sin detalle
+        # en la base de datos -- por eso todo lo que puede rechazar el
+        # POST se valida primero, con los datos crudos del formulario,
+        # sin depender todavia de un objeto FacturaEnc guardado. ---
         codigo = request.POST.get("codigo")
         cantidad = request.POST.get("cantidad")
         precio = request.POST.get("precio")
@@ -195,12 +234,63 @@ def facturas(request,id=None):
         prod = Producto.objects.filter(codigo=codigo).first()
         if not prod:
             messages.error(request, 'El producto ingresado no existe')
-            return redirect("fac:factura_edit", id=id)
+            return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
 
-        # Validacion de stock del lado del servidor (no depender solo de JavaScript)
-        if int(cantidad) > prod.existencia:
+        try:
+            cantidad_num = float(cantidad)
+            precio_num = float(precio)
+            descuento_num = float(descuento) if descuento not in (None, '') else 0.0
+        except (TypeError, ValueError):
+            messages.error(request, 'Datos de cantidad/precio/descuento inválidos.')
+            return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
+
+        if int(cantidad_num) > prod.existencia:
             messages.error(request, 'No hay existencia suficiente de este producto')
-            return redirect("fac:factura_edit", id=id)
+            return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
+
+        if forma_pago == FacturaEnc.FORMA_PAGO_CREDITO:
+            total_linea_nueva = (cantidad_num * precio_num) - descuento_num
+            enc_previa = FacturaEnc.objects.filter(pk=id).first() if id else None
+            saldo_actual_esta_factura = enc_previa.saldo_pendiente if (
+                enc_previa and enc_previa.forma_pago == FacturaEnc.FORMA_PAGO_CREDITO
+            ) else 0
+            saldo_previo_otras_facturas = cli.saldo_credito_pendiente - saldo_actual_esta_factura
+            saldo_proyectado = saldo_previo_otras_facturas + saldo_actual_esta_factura + total_linea_nueva
+
+            if cli.limite_credito <= 0:
+                messages.error(
+                    request,
+                    f'{cli} no tiene un límite de crédito configurado (0). '
+                    'No se pueden agregar productos a esta venta a crédito.'
+                )
+                return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
+            if saldo_proyectado > cli.limite_credito:
+                messages.error(
+                    request,
+                    f'Esta venta superaría el límite de crédito de {cli} '
+                    f'(límite: Bs {cli.limite_credito}, saldo proyectado: Bs {round(saldo_proyectado, 2)}).'
+                )
+                return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
+
+        # --- Recien aca, con todo ya validado, se crea o actualiza la
+        # cabecera. Si algo fallara despues de este punto (no deberia,
+        # pero por las dudas), se limpia la cabecera huerfana en vez
+        # de dejarla sin detalle. ---
+        if not id:
+            enc = FacturaEnc(
+                cliente = cli,
+                fecha = fecha,
+                forma_pago = forma_pago,
+                numero_tarjeta = numero_tarjeta or None,
+            )
+            enc.save()
+            id = enc.id
+        else:
+            enc = FacturaEnc.objects.filter(pk=id).first()
+            enc.cliente = cli
+            enc.forma_pago = forma_pago
+            enc.numero_tarjeta = numero_tarjeta or None
+            enc.save()
 
         det = FacturaDet(
             factura = enc,
@@ -211,13 +301,93 @@ def facturas(request,id=None):
             descuento = descuento,
             total = total
         )
-        
-        if det:
+
+        try:
             det.save()
+        except Exception:
+            if not FacturaDet.objects.filter(factura=enc).exists():
+                enc.delete()
+            raise
         
         return redirect("fac:factura_edit",id=id)
 
     return render(request,template_name,contexto)
+
+
+@login_required(login_url='/login/')
+@require_POST
+def factura_actualizar_datos(request, id):
+    """
+    Actualiza SOLO Cliente y Forma de Pago de una factura ya existente,
+    sin requerir agregar un producto nuevo -- pensado para corregir un
+    error (ej. se cargo como Efectivo por error y en realidad era una
+    venta a credito) sin necesidad de agregar otra linea de producto.
+    Devuelve JSON, la pantalla se actualiza via AJAX.
+    """
+    enc = FacturaEnc.objects.filter(pk=id).first()
+    if not enc:
+        return JsonResponse({"ok": False, "error": "Factura no existe"}, status=404)
+
+    if not enc.puede_editarse:
+        return JsonResponse({"ok": False, "error": "Esta factura ya no se puede editar (reportada al SIN o anulada)."})
+
+    cliente_id = request.POST.get("enc_cliente")
+    forma_pago = request.POST.get("forma_pago", FacturaEnc.FORMA_PAGO_EFECTIVO)
+
+    cli = Cliente.objects.filter(pk=cliente_id).first()
+    if not cli:
+        return JsonResponse({"ok": False, "error": "Cliente no válido."})
+
+    # Mismo bloqueo que en facturas(): con productos ya en el detalle,
+    # el cliente no se puede tocar desde este boton tampoco -- solo
+    # Forma de Pago (que es para lo que este boton esta pensado).
+    if FacturaDet.objects.filter(factura=enc).exists() and str(enc.cliente_id) != str(cli.id):
+        return JsonResponse({
+            "ok": False,
+            "error": "No se puede cambiar el cliente: esta factura ya tiene productos registrados."
+        })
+
+    if forma_pago not in dict(FacturaEnc.FORMA_PAGO_CHOICES):
+        forma_pago = FacturaEnc.FORMA_PAGO_EFECTIVO
+
+    # Mismo requisito que en facturas(): con tarjeta, el SIN exige el
+    # numeroTarjeta poblado -- ver comentario alla para el detalle.
+    numero_tarjeta = request.POST.get("numero_tarjeta", "").strip()
+    if forma_pago in (FacturaEnc.FORMA_PAGO_TARJETA_DEBITO, FacturaEnc.FORMA_PAGO_TARJETA_CREDITO):
+        if not re.fullmatch(r"\d{4}", numero_tarjeta):
+            return JsonResponse({
+                "ok": False,
+                "error": "Debe ingresar los 4 últimos dígitos de la tarjeta para esta forma de pago."
+            })
+    else:
+        numero_tarjeta = ""
+
+    if forma_pago == FacturaEnc.FORMA_PAGO_CREDITO:
+        if not cli.autorizado_credito:
+            return JsonResponse({"ok": False, "error": f"{cli} no está autorizado para ventas a crédito."})
+        if not cli.plazo_credito_dias:
+            return JsonResponse({"ok": False, "error": f"{cli} no tiene un plazo de crédito configurado."})
+        if cli.limite_credito <= 0:
+            return JsonResponse({"ok": False, "error": f"{cli} no tiene un límite de crédito configurado (0)."})
+
+        saldo_previo_otras_facturas = cli.saldo_credito_pendiente - (
+            enc.saldo_pendiente if enc.forma_pago == FacturaEnc.FORMA_PAGO_CREDITO else 0
+        )
+        saldo_proyectado = saldo_previo_otras_facturas + enc.total
+        if saldo_proyectado > cli.limite_credito:
+            return JsonResponse({
+                "ok": False,
+                "error": f"Esta venta superaría el límite de crédito de {cli} "
+                         f"(límite: Bs {cli.limite_credito}, saldo proyectado: Bs {round(saldo_proyectado, 2)})."
+            })
+
+    enc.cliente = cli
+    enc.forma_pago = forma_pago
+    enc.numero_tarjeta = numero_tarjeta or None
+    enc.save()
+
+    return JsonResponse({"ok": True, "forma_pago_display": enc.get_forma_pago_display()})
+
  
 class ProductoView(inv.ProductoView):
     template_name="fac/buscar_producto.html" 
@@ -227,8 +397,13 @@ def borrar_detalle_factura(request, id):
 
     det = get_object_or_404(FacturaDet, pk=id)
 
+    if not det.factura.puede_editarse:
+        return HttpResponse(
+            "No se puede revertir: esta factura ya fue reportada al SIN o está anulada."
+        )
+
     if request.method=="GET":
-        context={"det":det} #Aqui se carga el detalle en la variable det.
+        context={"det":det}
 
     if request.method == "POST":
         usr = request.POST.get("usuario")
@@ -243,8 +418,7 @@ def borrar_detalle_factura(request, id):
             return HttpResponse("Usuario Inactivo")
 
         if user.is_superuser or user.has_perm("fac.sup_caja_facturadet"):
-            det.id = None #Al quitar el ID, genera otro registro 
-            # Aqui para que aparezca el nuevo registro pero como valores negativos.
+            det.id = None
             det.cantidad = (-1 * det.cantidad)
             det.sub_total = (-1 * det.sub_total)
             det.descuento = (-1 * det.descuento)
@@ -264,12 +438,6 @@ class FacturaDetDelete(SinPrivilegios, generic.DeleteView):
     context_object_name = 'obj'
 
     def _bloqueada(self, obj):
-        """
-        Chequeo real del lado del servidor: independiente de que el
-        template oculte o no el boton, esta es la unica proteccion
-        que efectivamente impide borrar un detalle de una factura ya
-        reportada al SIN o anulada.
-        """
         return not obj.factura.puede_editarse
 
     def get(self, request, *args, **kwargs):
@@ -299,11 +467,6 @@ class FacturaDetDelete(SinPrivilegios, generic.DeleteView):
           return reverse_lazy('fac:factura_edit', kwargs={'id': id})
 
 def _dentro_plazo_anulacion(fecha_factura, ahora):
-    """
-    Regla del SIN (RND 102100000011): las facturas de la modalidad
-    Electronica en Linea pueden anularse (o revertir su anulacion)
-    hasta el dia 9 del mes siguiente a su emision.
-    """
     if ahora.year == fecha_factura.year and ahora.month == fecha_factura.month:
         return True
 
@@ -319,30 +482,15 @@ def _dentro_plazo_anulacion(fecha_factura, ahora):
 
 
 def _es_supervisor(user):
-    """Mismo criterio de autorizacion para Anular y Revertir Anulacion."""
     return user.is_superuser or user.has_perm('fac.anular_facturaenc')
 
 
 def _es_supervisor_cierre(user):
-    """Autorizacion para cerrar el dia -- mismo patron que _es_supervisor."""
     return user.is_superuser or user.has_perm('fac.gestionar_cierre_dia')
 
 
 @login_required(login_url='/login/')
 def anular_factura(request, id):
-    """
-    Anula una factura: primero ante el SIN (servicio real
-    anulacionFactura, Etapa VII), y solo si el SIN confirma, recien
-    ahi se marca localmente y se devuelve el stock. Si el SIN rechaza,
-    la factura queda tal cual estaba -- no se toca stock ni el flag
-    local 'anulado'.
-
-    Solo se permite dentro del plazo que exige el SIN, a usuarios
-    autorizados (superusuario o con el permiso 'fac.anular_facturaenc').
-    Solo aplica a facturas que ya fueron aceptadas por el SIN
-    (reportada_ante_sin) -- si nunca se envio o fue observada, no hay
-    nada que anular formalmente.
-    """
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
         messages.error(request, 'Factura No Existe')
@@ -392,9 +540,6 @@ def anular_factura(request, id):
             messages.error(request, f'El SIN rechazó la anulación: {e}')
             return redirect('fac:factura_edit', id=id)
 
-        # El SIN confirmo (905) -- recien ahora se refleja localmente:
-        # devolver stock, marcar anulado, y guardar el texto combinado
-        # (descripcion oficial del catalogo + detalle opcional del usuario).
         detalles = FacturaDet.objects.filter(factura=enc)
         for det in detalles:
             prod = det.producto
@@ -422,15 +567,6 @@ def anular_factura(request, id):
 
 @login_required(login_url='/login/')
 def revertir_anulacion(request, id):
-    """
-    Revierte ante el SIN la anulacion de una factura (Etapa VIII).
-    Mismo nivel de autorizacion que anular_factura (superusuario o
-    'fac.anular_facturaenc') -- solo un supervisor puede hacerlo.
-
-    Si el SIN confirma, recien ahi se refleja localmente: se vuelve a
-    descontar el stock (inverso exacto de lo que hizo la anulacion),
-    y se desmarca 'anulado' -- la factura vuelve a estar activa.
-    """
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
         messages.error(request, 'Factura No Existe')
@@ -460,9 +596,6 @@ def revertir_anulacion(request, id):
             messages.error(request, f'El SIN rechazó la reversión: {e}')
             return redirect('fac:factura_edit', id=id)
 
-        # El SIN confirmo (907) -- recien ahora se refleja localmente:
-        # se vuelve a descontar el stock (se habia devuelto al anular),
-        # y se desmarca el flag local 'anulado'.
         detalles = FacturaDet.objects.filter(factura=enc)
         for det in detalles:
             prod = det.producto
@@ -483,11 +616,6 @@ def revertir_anulacion(request, id):
 
 @login_required(login_url='/login/')
 def eliminar_factura(request, id):
-    """
-    Elimina fisicamente una factura. Reservado solo para superusuario.
-    Bloqueado si la factura ya fue aceptada por el SIN (reportada_ante_sin),
-    ya que en ese caso la unica accion valida es Anular.
-    """
     if not request.user.is_superuser:
         messages.error(request, 'Solo el superusuario puede eliminar facturas')
         return redirect('fac:factura_edit', id=id)
@@ -506,7 +634,7 @@ def eliminar_factura(request, id):
         return redirect('fac:factura_edit', id=id)
 
     if request.method == 'POST':
-        enc.delete()  # cascada borra FacturaDet; la señal post_delete restituye stock
+        enc.delete()
         messages.success(request, 'Factura eliminada correctamente')
         return redirect('fac:factura_list')
 
@@ -516,11 +644,6 @@ def eliminar_factura(request, id):
 @login_required(login_url='/login/')
 @require_POST
 def factura_emitir_sin(request, id):
-    """
-    Emite la factura ante el SIN (Fase C). Devuelve JSON para que el
-    modal de confirmacion en facturas.html (o la pantalla de Cierre
-    de Dia) muestre el resultado sin recargar a ciegas.
-    """
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
         return JsonResponse({"ok": False, "error": "Factura no existe"}, status=404)
@@ -551,12 +674,6 @@ def factura_emitir_sin(request, id):
 
 @login_required(login_url='/login/')
 def cierre_dia_pendientes(request):
-    """
-    Lista los dias anteriores a hoy que todavia no tienen Cierre de Dia.
-    Mientras exista al menos uno, el sistema no permite registrar
-    facturas nuevas. Los cierres se resuelven en orden cronologico --
-    solo el mas antiguo pendiente se puede gestionar en cada momento.
-    """
     pendientes = dias_pendientes_de_cierre()
     dias = []
     for fecha in pendientes:
@@ -568,7 +685,7 @@ def cierre_dia_pendientes(request):
         dias.append({
             'fecha': fecha,
             'cantidad_facturas': facturas_dia.count(),
-            'total_facturado': facturas_dia.aggregate(t=Sum('total'))['t'] or 0,
+            'total_facturado': round(facturas_dia.aggregate(t=Sum('total'))['t'] or 0, 2),
             'pendientes_sin': sin_resolver.count(),
         })
     return render(request, 'fac/cierre_dia_pendientes.html', {'dias': dias})
@@ -576,15 +693,8 @@ def cierre_dia_pendientes(request):
 
 @login_required(login_url='/login/')
 def cierre_dia_detalle(request, fecha):
-    """
-    Pantalla de gestion del cierre de un dia puntual: muestra las
-    facturas del dia (en especial las que todavia no se resolvieron
-    ante el SIN) y permite reintentar su envio (reusa
-    factura_emitir_sin via AJAX), antes de poder cerrar el dia
-    formalmente. Cerrar requiere ser supervisor; si quedan facturas
-    sin resolver, solo un supervisor puede forzar el cierre dejando
-    constancia con una observacion obligatoria.
-    """
+    from django.utils.dateparse import parse_date
+
     fecha_parsed = parse_date(fecha)
     pendientes = dias_pendientes_de_cierre()
 
@@ -635,7 +745,7 @@ def cierre_dia_detalle(request, fecha):
             fecha=fecha_parsed,
             estado=CierreDia.ESTADO_CERRADO_CON_PENDIENTES if cantidad_pendientes > 0 else CierreDia.ESTADO_CERRADO,
             usuario_cierre=request.user,
-            total_facturado=facturas_dia.aggregate(t=Sum('total'))['t'] or 0,
+            total_facturado=round(facturas_dia.aggregate(t=Sum('total'))['t'] or 0, 2),
             cantidad_facturas=facturas_dia.count(),
             facturas_pendientes_sin=cantidad_pendientes,
             observaciones=observaciones or None,
@@ -649,17 +759,153 @@ def cierre_dia_detalle(request, fecha):
         'fecha': fecha_parsed,
         'facturas': facturas_dia,
         'sin_resolver': sin_resolver,
-        'total_facturado': facturas_dia.aggregate(t=Sum('total'))['t'] or 0,
+        'total_facturado': round(facturas_dia.aggregate(t=Sum('total'))['t'] or 0, 2),
         'puede_cerrar_limpio': sin_resolver.count() == 0,
         'es_supervisor': _es_supervisor_cierre(request.user),
     })
 
+
+@login_required(login_url='/login/')
+def factura_descargar_xml(request, id):
+    enc = FacturaEnc.objects.filter(pk=id).first()
+    if not enc or not enc.xml_firmado:
+        messages.error(request, 'Esta factura todavía no tiene un XML enviado al SIN para descargar.')
+        return redirect('fac:factura_list')
+
+    response = HttpResponse(enc.xml_firmado, content_type='application/xml')
+    response['Content-Disposition'] = f'attachment; filename="factura_{enc.id}_{enc.cuf or "sin_cuf"}.xml"'
+    return response
+
+
+@login_required(login_url='/login/')
+def facturas_descargar_xml_rango(request, f1, f2):
+    import io
+    import zipfile
+    from django.utils.dateparse import parse_date
+    from datetime import timedelta
+
+    f1_parsed = parse_date(f1)
+    f2_parsed = parse_date(f2)
+    f2_con_margen = f2_parsed + timedelta(days=1)
+
+    facturas = FacturaEnc.objects.filter(
+        fecha__gte=f1_parsed, fecha__lt=f2_con_margen, xml_firmado__isnull=False
+    ).exclude(xml_firmado='')
+
+    if not facturas.exists():
+        messages.error(request, 'No hay facturas con XML enviado en ese rango de fechas.')
+        return redirect('fac:factura_list')
+
+    buffer_zip = io.BytesIO()
+    with zipfile.ZipFile(buffer_zip, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for enc in facturas:
+            nombre_archivo = f"factura_{enc.id}_{enc.cuf or 'sin_cuf'}.xml"
+            zip_file.writestr(nombre_archivo, enc.xml_firmado)
+
+    buffer_zip.seek(0)
+    response = HttpResponse(buffer_zip.read(), content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="facturas_xml_{f1}_a_{f2}.zip"'
+    return response
+
+
 @login_required(login_url='/login/')
 @permission_required('fac.view_facturaenc', login_url='bases:sin_privilegios')
 def cierre_ventas_selector(request):
-    """
-    Pantalla para elegir el rango de fechas del Reporte de Cierre de
-    Ventas (uso contable), antes de verlo en pantalla o descargarlo
-    en PDF. Mismo patron que el Listado de Facturas.
-    """
     return render(request, 'fac/cierre_ventas_selector.html', {})
+
+
+@login_required(login_url='/login/')
+def factura_mostrar_qr(request, id):
+    from fe.models import Empresa
+
+    enc = FacturaEnc.objects.filter(pk=id).first()
+    if not enc:
+        messages.error(request, 'Factura no existe.')
+        return redirect('fac:factura_list')
+
+    empresa = Empresa.objects.first()
+    if not empresa or not empresa.qr_cobro:
+        messages.error(request, 'No hay un QR de cobro cargado. Súbalo desde Configuración SIN → Empresa.')
+        return redirect('fac:factura_edit', id=id)
+
+    return render(request, 'fac/factura_mostrar_qr.html', {'enc': enc, 'empresa': empresa})
+
+
+@login_required(login_url='/login/')
+@permission_required('fac.view_facturaenc', login_url='bases:sin_privilegios')
+def cierre_caja_selector(request):
+    return render(request, 'fac/cierre_caja_selector.html', {})
+
+
+@login_required(login_url='/login/')
+@permission_required('fac.gestionar_creditos', login_url='bases:sin_privilegios')
+def cartera_creditos(request):
+    """
+    Cartera de creditos: lista todas las facturas a credito activas
+    (con saldo pendiente > 0), con dias de mora si estan vencidas.
+    Sirve como reporte de recordatorio de cobranza -- el cajero/cobrador
+    usa esta lista para llamar/escribir manualmente a cada cliente.
+    """
+    facturas = FacturaEnc.objects.filter(
+        forma_pago=FacturaEnc.FORMA_PAGO_CREDITO, anulado=False, saldo_pendiente__gt=0
+    ).select_related('cliente').order_by('fecha_vencimiento')
+
+    filas = []
+    for f in facturas:
+        filas.append({
+            'factura': f,
+            'estado_credito': f.estado_credito,
+            'dias_mora': f.dias_mora,
+        })
+
+    vencidas = [f for f in filas if f['estado_credito'] == 'vencido']
+    vigentes = [f for f in filas if f['estado_credito'] == 'vigente']
+
+    return render(request, 'fac/cartera_creditos.html', {
+        'vencidas': vencidas,
+        'vigentes': vigentes,
+        'total_vencido': round(sum(f['factura'].saldo_pendiente for f in vencidas), 2),
+        'total_vigente': round(sum(f['factura'].saldo_pendiente for f in vigentes), 2),
+    })
+
+
+@login_required(login_url='/login/')
+@permission_required('fac.gestionar_creditos', login_url='bases:sin_privilegios')
+def registrar_pago(request, id):
+    """Registra un abono a una venta a credito."""
+    enc = FacturaEnc.objects.filter(pk=id, forma_pago=FacturaEnc.FORMA_PAGO_CREDITO).first()
+    if not enc:
+        messages.error(request, 'Factura a crédito no encontrada.')
+        return redirect('fac:cartera_creditos')
+
+    if request.method == 'POST':
+        monto = request.POST.get('monto')
+        forma_pago_abono = request.POST.get('forma_pago', 'EFECTIVO')
+        observacion = request.POST.get('observacion', '').strip()
+
+        try:
+            monto = float(monto)
+        except (TypeError, ValueError):
+            messages.error(request, 'Monto inválido.')
+            return redirect('fac:cartera_creditos')
+
+        if monto <= 0:
+            messages.error(request, 'El monto debe ser mayor a 0.')
+            return redirect('fac:cartera_creditos')
+
+        if monto > enc.saldo_pendiente:
+            messages.error(
+                request,
+                f'El monto (Bs {monto}) supera el saldo pendiente (Bs {enc.saldo_pendiente}).'
+            )
+            return redirect('fac:cartera_creditos')
+
+        Pago.objects.create(
+            factura=enc, monto=monto, forma_pago=forma_pago_abono,
+            observacion=observacion or None, uc=request.user,
+        )
+
+        messages.success(request, f'Abono de Bs {monto} registrado para la factura {enc.id}.')
+        return redirect('fac:cartera_creditos')
+
+    return render(request, 'fac/registrar_pago.html', {'enc': enc})

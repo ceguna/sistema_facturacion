@@ -1,11 +1,11 @@
-{% load static %} <!-- El load permite acceder a los archivos estaticos -->
+{% load static %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>Listado de Compras</title>
+    <title>Recibo de Venta</title>
     <link rel="stylesheet" href="{% static 'base/css/recibo.css' %}">
     <style type="text/css">
         @page {
@@ -13,21 +13,29 @@
             size: auto;   
             margin: 0mm;
             }
+        .qr-cobro-box {
+            text-align: center;
+            margin-top: 8px;
+            padding-top: 6px;
+            border-top: 1px dashed #000;
+        }
+        .qr-cobro-box img {
+            width: 35mm;
+            height: 35mm;
+        }
     </style>
 </head>
-<!-- Window.print renderiza la pagina directamente a la impresora y no a una pagina web -->
-<!-- <body onload="window.print();window.close()" class="receipt"> -->
 <body onload="window.print()" class="receipt">
     <div class="col-md-1 col-sm-1 col-xs-1 col-xl-1">
         <center>
-            <b class="text-center">Tienda UDEMY DEBSCONSULTORES</b><br> 
-            <small>Direccion</small><br>
-            <small>FACTURA No. {{enc.factura}}</small><br>
+            <b class="text-center">{{ empresa.razon_social|default:"Sistema de Facturación" }}</b><br>
+            {% if empresa.nit %}<small>NIT: {{ empresa.nit }}</small><br>{% endif %}
         </center>
         <small>
             <br>
             <b>Factura No.:</b>&nbsp;&nbsp;{{enc.id}}&nbsp;&nbsp;
             <b>Fecha Fact:</b>&nbsp;&nbsp;{{enc.fecha}}&nbsp;&nbsp; <br>
+            {% if enc.cuf %}<b>CUF:</b>&nbsp;&nbsp;{{ enc.cuf }}<br>{% endif %}
             <b>Cliente:</b>&nbsp;&nbsp;{{enc.cliente.id}}&nbsp;&nbsp;- {{enc.cliente}}<br>
             <br><br>
         </small>
@@ -68,7 +76,7 @@
                         <td>Sub Total:</td> <td align='right'>{{enc.sub_total}}</td>
                     </tr>
                     <tr>
-                        <td>Iva:</td> <td align='right'>{{enc.descuento}}</td>
+                        <td>Descuento:</td> <td align='right'>{{enc.descuento}}</td>
                     </tr>
                     <tr>
                         <td>Total:</td> <td align='right'><b>{{enc.total}}</b></td>
@@ -77,13 +85,14 @@
             </table>
             </div>
         </div>
+
         <div class="row">
         <small class="pie">
             <br><br>
             <center>
                 Creada por:  {{enc.uc}} - Fecha:  {{enc.fc}}
                 <br>
-                <i>&copy; &reg; <b>Carlos Guna Desarrollo</b><br> - ceguna@gmail.com</i> 
+                <i>&copy; &reg; <b>CSG Sistemas</b></i>
             </center>
         </small>
         </div>

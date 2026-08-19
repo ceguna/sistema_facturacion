@@ -34,6 +34,16 @@
             {% endif %}
         </button>
         <a href="{% url 'fac:factura_imprimir_one' enc.id %}" class="btn btn-success" target="_factura">Imprimir</a>
+        {% if enc.id %}
+        <a href="{% url 'fac:factura_mostrar_qr' enc.id %}" class="btn btn-outline-primary" target="_qr">
+            <i class="fas fa-qrcode mr-1"></i>Mostrar QR
+        </a>
+        {% endif %}
+        {% if enc.xml_firmado %}
+        <a href="{% url 'fac:factura_descargar_xml' enc.id %}" class="btn btn-outline-secondary">
+            <i class="fas fa-file-code mr-1"></i>Descargar XML
+        </a>
+        {% endif %}
         <a href="{% url 'fac:factura_list' %}" class="btn btn-info">Cancelar</a>
     </div>
     <div class="card-body">
@@ -53,11 +63,52 @@
                             </div>
                             <div class="col-lg-5 form-group mb-0">
                                 <select name="enc_cliente" id="enc_cliente" class="form-control">
-                                    <option value="0">Seleccione Cliente</option>
+                                    <option value="0" data-descuento="0">Seleccione Cliente</option>
                                     {% for item in clientes %}
-                                        <option value="{{item.id}}">{{ item.nombres }} {{item.apellidos}} </option>
+                                        <option value="{{item.id}}" data-descuento="{{item.descuento_autorizado_pct|default:0}}">{{ item.nombres }} {{item.apellidos}} </option>
                                     {% endfor %}
                                 </select>
+                                {% if det %}
+                                <small class="text-muted">Cliente bloqueado: la factura ya tiene productos registrados.</small>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="row align-items-center mb-2">
+                            <div class="col-lg-2">Forma de Pago:</div>
+                            <div class="col-lg-5">
+                                <select name="forma_pago" id="forma_pago" class="form-control">
+                                    {% for valor, etiqueta in forma_pago_choices %}
+                                    <option value="{{ valor }}" {% if enc.forma_pago == valor %}selected{% endif %}>
+                                        {{ etiqueta }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            {% if enc.id and enc.puede_editarse %}
+                            <div class="col-lg-5">
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="btnActualizarDatos">
+                                    <i class="fas fa-save mr-1"></i>Actualizar Cliente/Forma de Pago
+                                </button>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Campo condicional: solo visible/obligatorio si Forma de Pago
+                             es Tarjeta de Debito o Credito. El SIN exige el nodo numeroTarjeta
+                             poblado en ese caso (confirmado con el error real 1012 del SIN) --
+                             se pide solo los ULTIMOS 4 DIGITOS del voucher del datafono, nunca
+                             la tarjeta completa. Se muestra/oculta con JS via
+                             actualizarCampoTarjeta() segun el valor de #forma_pago. -->
+                        <div class="row align-items-center mb-2" id="filaNumeroTarjeta" style="display:none;">
+                            <div class="col-lg-2">Últ. 4 díg. tarjeta:</div>
+                            <div class="col-lg-3">
+                                <input type="text" class="form-control" name="numero_tarjeta" id="numero_tarjeta"
+                                    maxlength="4" inputmode="numeric" pattern="\d{4}" placeholder="0000"
+                                    value="{{ enc.numero_tarjeta|default:'' }}">
+                            </div>
+                            <div class="col-lg-7">
+                                <small class="text-muted">Los 4 dígitos finales que aparecen en el voucher del datáfono.</small>
                             </div>
                         </div>
 
@@ -115,14 +166,16 @@
                     <div class="row">
                         <div class="col-lg-1 pr-0 text-right">Cant.:</div>
                         <div class="col-lg-3">
-                            <input type="number" class="form-control" name="cantidad" id="cantidad" placeholder="Cantidad" value="0">
+                            <input type="number" class="form-control" name="cantidad" id="cantidad" placeholder="0">
                             <input type="hidden" class="form-control" name="existencia" id="existencia">
                         </div>
                         <div class="col-lg-4">
                             <input type="number" class="form-control" name="precio" id="precio" placeholder="Precio" value="0.0" readonly>
                         </div>
                         <div class="col-lg-3">
-                            <input type="number" class="form-control" name="descuento_detalle" id="descuento_detalle" placeholder="Descuento">
+                            <input type="number" class="form-control" name="descuento_detalle" id="descuento_detalle" placeholder="Descuento" value="0" readonly>
+                            <input type="hidden" id="descuento_pct_aplicable" value="0">
+                            <small class="text-muted" id="descuento_pct_label"></small>
                         </div>
                         <div class="col-lg-1">
                             <button type="submit" class="btn btn-danger" id="btnGuardar"> <i class="far fa-plus-square"></i> </button>
@@ -223,7 +276,7 @@
 
     function calcular_detalle()
     {
-        var cant,prec,desc,stotal,total;
+        var cant,prec,pct,stotal,desc,total;
 
         cant = $("#cantidad").val();
         cant = cant==="" ? 0 : +cant;
@@ -233,21 +286,38 @@
         prec = prec==="" ? 0 : +prec;
         prec = prec<0 ? 0 : prec;
 
-        desc = $('#descuento_detalle').val();
-        desc = desc==="" ? 0 : +desc;
-        desc = desc<0 ? 0 : desc;
-
-        desc = desc>(cant * prec) ? 0 : desc;
+        pct = parseFloat($("#descuento_pct_aplicable").val()) || 0;
 
         stotal = cant * prec;
-        total  = stotal - desc;
+        desc = stotal * (pct / 100);
+        total = stotal - desc;
 
-        $('#cantidad').val(cant);
         $('#precio').val(prec);
-        $('#descuento_detalle').val(desc);
+        $('#descuento_detalle').val(desc.toFixed(2));
 
         $('#sub_total_detalle').val(stotal);
-        $('#total_detalle').val(total);
+        $('#total_detalle').val(total.toFixed(2));
+    }
+
+    // Muestra/oculta y marca obligatorio el campo de ultimos 4 digitos
+    // de tarjeta segun la Forma de Pago seleccionada. El SIN exige el
+    // dato solo para Tarjeta de Debito/Credito -- para el resto de
+    // formas de pago el campo se oculta y se limpia (asi nunca se
+    // manda un valor viejo/irrelevante si el cajero cambia de forma
+    // de pago despues de haberlo llenado).
+    function actualizarCampoTarjeta()
+    {
+        var formaPago = $('#forma_pago').val();
+        var esTarjeta = (formaPago === 'TARJETA_DEBITO' || formaPago === 'TARJETA_CREDITO');
+
+        if (esTarjeta) {
+            $('#filaNumeroTarjeta').show();
+            $('#numero_tarjeta').prop('required', true);
+        } else {
+            $('#filaNumeroTarjeta').hide();
+            $('#numero_tarjeta').prop('required', false);
+            $('#numero_tarjeta').val('');
+        }
     }
 
     function buscarProducto()
@@ -273,6 +343,8 @@
                     $("#codigo").val("");
                     $("#descripcion").val("");
                     $("#precio").val("0.00");
+                    $("#descuento_pct_aplicable").val(0);
+                    $("#descuento_pct_label").text("");
                     $("#codigo").focus();
                     return false;
                 }
@@ -281,7 +353,20 @@
                 $("#descripcion").val(r.descripcion);
                 $("#precio").val(r.precio);
                 $("#existencia").val(r.existencia);
-                $("#cantidad").focus();
+
+                var descCliente = parseFloat($('#enc_cliente option:selected').data('descuento')) || 0;
+                var descProducto = parseFloat(r.descuento_vigente_pct) || 0;
+                var descAplicar = Math.max(descCliente, descProducto);
+
+                $("#descuento_pct_aplicable").val(descAplicar);
+                if (descAplicar > 0) {
+                    $("#descuento_pct_label").text("Descuento aplicado: " + descAplicar + "%");
+                } else {
+                    $("#descuento_pct_label").text("");
+                }
+
+                calcular_detalle();
+                $("#cantidad").val("").focus();
 
             },
             error: function(a,b,c){
@@ -296,12 +381,35 @@
         });  
     }
 
+    // true si esta factura ya tiene al menos un producto en el detalle
+    // (factura existente con lineas ya guardadas) -- en ese caso el
+    // cliente queda bloqueado, ver aplicarBloqueoCliente() mas abajo.
+    var detalleTieneProductos = {% if det %}true{% else %}false{% endif %};
+
+    // Bloquea la interaccion del select2 de Cliente sin deshabilitar
+    // el <select> subyacente (si se usara disabled, el navegador NO
+    // incluiria el campo al enviar el formulario, y el backend
+    // rechazaria el POST por falta de cliente). Se previene el evento
+    // de apertura del dropdown de select2, que es la unica forma en
+    // que el usuario podria cambiar el valor.
+    function aplicarBloqueoCliente()
+    {
+        if (!detalleTieneProductos) {
+            return;
+        }
+        $('#enc_cliente').on('select2:opening', function(e){
+            e.preventDefault();
+        });
+        $('#enc_cliente').next('.select2-container').css('opacity', '0.6');
+    }
+
     $(function () {
         $("#sidebarToggle").click();
         $('#enc_cliente').select2({
             placeholder: "Seleccione Cliente",
             allowClear: true
         });
+        aplicarBloqueoCliente();
 
         $("#btnBuscar").click(function(e){
             if ($("#enc_cliente").val()==="0"){
@@ -310,6 +418,30 @@
             }
             abrir_modal("{% url 'fac:factura_producto' %}");
         });
+
+        $('#enc_cliente').on('select2:select', function (e) {
+            $('#codigo').focus();
+        });
+
+        // Solucion definitiva al "0 fantasma" en Cantidad: el campo ya
+        // NO tiene value="0" por defecto (ver placeholder="0" arriba),
+        // asi que no hay nada que "estorbe" al empezar a escribir. Como
+        // respaldo extra (por si algun navegador dejara texto
+        // seleccionable ahi despues de un calculo previo), tambien se
+        // selecciona todo el contenido al hacer foco/clic, con un
+        // pequeño delay -- necesario porque algunos navegadores
+        // reposicionan el cursor DESPUES del evento focus, pisando el
+        // .select() si se llama de forma inmediata/sincronica.
+        $('#cantidad').on('focus click', function(){
+            var el = this;
+            setTimeout(function(){ el.select(); }, 0);
+        });
+
+        // Estado inicial del campo de tarjeta segun la Forma de Pago
+        // ya seleccionada al cargar la pagina (nueva factura = Efectivo
+        // por defecto; factura existente = lo que tenga guardado).
+        actualizarCampoTarjeta();
+        $('#forma_pago').on('change', actualizarCampoTarjeta);
     });
 
     $("#codigo").keypress(function(e){
@@ -319,7 +451,23 @@
             }
     });
 
+    $("#codigo").on('blur', function(){
+        if ($(this).val() !== "" && $("#descripcion").val() === "") {
+            buscarProducto();
+        }
+    });
+
     $("form").submit(function(e){
+        var formaPago = $('#forma_pago').val();
+        if (formaPago === 'TARJETA_DEBITO' || formaPago === 'TARJETA_CREDITO') {
+            var numTarjeta = $('#numero_tarjeta').val();
+            if (!/^\d{4}$/.test(numTarjeta)) {
+                e.preventDefault();
+                $.alert({type:'red', title:'', content:'Debe ingresar los 4 últimos dígitos de la tarjeta (los del voucher del datáfono).'});
+                return false;
+            }
+        }
+
         if($('#total_detalle').val()==0 || $('#codigo').val()==0 ){
             e.preventDefault();
             $.alert({type:'red', title:'', content:'No ha agregado producto o está sin cantidades'})
@@ -333,11 +481,29 @@
         }
     })
     
-    $('#cantidad,#precio,#descuento_detalle').change(function(){
+    $('#cantidad,#precio').change(function(){
             calcular_detalle();
     });
 
-    $("#enc_id").val("{{ enc.id }}");
+    $('#enc_cliente').on('change', function(){
+        if ($('#codigo').val() !== '') {
+            var descCliente = parseFloat($('#enc_cliente option:selected').data('descuento')) || 0;
+            var codigoActual = $('#codigo').val();
+            $.ajax({
+                type: "GET",
+                url: "{% url 'api:producto_list' %}" + codigoActual,
+                success: function(r){
+                    var descProducto = parseFloat(r.descuento_vigente_pct) || 0;
+                    var descAplicar = Math.max(descCliente, descProducto);
+                    $("#descuento_pct_aplicable").val(descAplicar);
+                    $("#descuento_pct_label").text(descAplicar > 0 ? "Descuento aplicado: " + descAplicar + "%" : "");
+                    calcular_detalle();
+                }
+            });
+        }
+    });
+
+    $("#enc_id").val("{{ siguiente_numero }}");
     $("#enc_cliente").val("{{ enc.cliente.id }}").change();
     $("#fecha").val("{{ enc.fecha|date:'Y-m-d' }}");
     $("#sub_total").val({{ enc.sub_total }});
@@ -398,6 +564,44 @@
                 }
         });
     }
+
+    // --- Actualizar SOLO Cliente/Forma de Pago, sin agregar producto ---
+    $("#btnActualizarDatos").click(function(){
+        var id = "{{ enc.id }}";
+        var token = '{{csrf_token}}';
+        var formaPago = $("#forma_pago").val();
+        var numTarjeta = $("#numero_tarjeta").val();
+
+        if (formaPago === 'TARJETA_DEBITO' || formaPago === 'TARJETA_CREDITO') {
+            if (!/^\d{4}$/.test(numTarjeta)) {
+                mensaje("Debe ingresar los 4 últimos dígitos de la tarjeta (los del voucher del datáfono).", "red");
+                return false;
+            }
+        }
+
+        var data = {
+            "enc_cliente": $("#enc_cliente").val(),
+            "forma_pago": formaPago,
+            "numero_tarjeta": numTarjeta,
+        };
+        $.ajax({
+            headers: { "X-CSRFToken": token },
+            type: "POST",
+            data: data,
+            url: "/fac/facturas/actualizar-datos/" + id + "/",
+            success: function(r){
+                if(r.ok){
+                    mensaje("Actualizado: Forma de Pago ahora es " + r.forma_pago_display, "green");
+                    setTimeout(function(){ location.reload(true); }, 1200);
+                } else {
+                    mensaje(r.error, "red");
+                }
+            },
+            error: function(){
+                mensaje("Error de conexión al actualizar", "red");
+            }
+        });
+    });
 
     // --- Fase C: Confirmar y Emitir al SIN ---
     $("#btnEmitirSin").click(function(){

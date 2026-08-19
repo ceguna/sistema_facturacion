@@ -226,13 +226,28 @@ def _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_vent
         "codigoTipoDocumentoIdentidad": codigo_tipo_doc,
         "numeroDocumento": numero_documento,
         "codigoCliente": str(cliente.id),
-        "codigoMetodoPago": 1,  # Efectivo -- unico metodo modelado hoy
+        "codigoMetodoPago": int(factura_enc.codigo_metodo_pago),
+        # El SIN exige este nodo poblado (no null) cuando el metodo de
+        # pago es con tarjeta -- confirmado con el error real 1012 sobre
+        # la factura 549 ("EL NUMERO DE TARJETA SOLO PUEDE SER ENVIADO
+        # CUANDO EL METODO DE PAGO SEA CON TARJETA"). factura_enc solo
+        # tiene numero_tarjeta cargado cuando forma_pago es Debito o
+        # Credito (ver FacturaEnc.save()), asi que alcanza con este
+        # condicional -- para el resto de metodos queda None (nil).
+        "numeroTarjeta": int(factura_enc.numero_tarjeta) if factura_enc.numero_tarjeta else None,
         "montoTotal": factura_enc.total,
         "montoTotalSujetoIva": factura_enc.total,
         "codigoMoneda": 1,      # Bolivianos -- unica moneda modelada hoy
         "tipoCambio": 1,
         "montoTotalMoneda": factura_enc.total,
-        "descuentoAdicional": factura_enc.descuento or 0,
+        # El descuento ya esta reflejado en montoTotal/montoTotalSujetoIva
+        # (que usan factura_enc.total, ya neto) -- descuentoAdicional es
+        # para un descuento GLOBAL aparte del de cada linea, no para
+        # repetir el mismo descuento que ya se resto. Mandarlo en 0
+        # evita que el SIN lo reste dos veces (confirmado con el error
+        # real: 86.0 - 8.6 - 8.6 = 68.8, exactamente el "esperado" que
+        # reporto el SIN).
+        "descuentoAdicional": 0,
         "leyenda": LEYENDA_DEFAULT,
         "usuario": "sistema",
         "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR,
@@ -252,10 +267,15 @@ def _armar_detalle(factura_det_qs):
             "unidadMedida": prod.unidad_medida.codigo_sin,
             "precioUnitario": det.precio,
             "montoDescuento": det.descuento or 0,
-            "subTotal": det.sub_total,
+            # El SIN espera el subtotal NETO (ya restado el descuento de
+            # esa linea), no el bruto -- confirmado con el error real
+            # "EL CALCULO DEL SUBTOTAL ES ERRONEO" en facturas con
+            # descuento (bug detectado 11/08/2026, nunca se manifesto
+            # antes porque todas las facturas de prueba previas tenian
+            # descuento en 0, donde bruto y neto coinciden).
+            "subTotal": det.total,
         })
     return detalle
-
 
 def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     """
@@ -275,10 +295,35 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
         else CODIGO_AMBIENTE_PILOTO
     )
 
-    factura_det_qs = FacturaDet.objects.filter(factura=factura_enc).select_related(
-        "producto", "producto__unidad_medida"
-    )
-    if not factura_det_qs.exists():
+    # Se excluyen los pares (linea original + su reversora en negativo)
+    # generados por borrar_detalle_factura: esa funcion no borra
+    # fisicamente una linea, crea un registro nuevo con los mismos
+    # valores en negativo para neutralizarla contablemente en el total
+    # de la factura. El SIN rechaza cualquier cantidad/monto negativo
+    # en el XML, asi que ninguna de las dos lineas de un par compensado
+    # debe llegar al detalle que se envia (es como si ese producto
+    # nunca se hubiera facturado).
+    todos_los_detalles = list(FacturaDet.objects.filter(factura=factura_enc)
+                               .select_related("producto", "producto__unidad_medida"))
+    ids_excluidos = set()
+    for det in todos_los_detalles:
+        if det.cantidad < 0 and det.id not in ids_excluidos:
+            # Busca la linea original que esta reversora neutraliza:
+            # mismo producto, cantidad exactamente opuesta, creada antes.
+            original = next(
+                (d for d in todos_los_detalles
+                 if d.id not in ids_excluidos
+                 and d.producto_id == det.producto_id
+                 and d.cantidad == -det.cantidad
+                 and d.id < det.id),
+                None
+            )
+            ids_excluidos.add(det.id)
+            if original:
+                ids_excluidos.add(original.id)
+
+    factura_det_qs = [d for d in todos_los_detalles if d.id not in ids_excluidos]
+    if not factura_det_qs:
         raise EmisionSinError("La factura no tiene detalle (ningun producto cargado).")
     _validar_homologacion(factura_det_qs)
 
@@ -370,6 +415,11 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     factura_enc.fecha_hora_envio_sin = timezone.now()
     factura_enc.codigo_recepcion_sin = resp.get("codigoRecepcion")
     factura_enc.mensaje_sin = str(resp.get("mensajesList") or "")
+    # Se guarda el XML tal cual se envio (firmado, sin comprimir) para
+    # poder descargarlo despues -- auditoria, pedidos de contadores, etc.
+    # Se guarda independientemente del resultado (tambien util para
+    # depurar una factura observada).
+    factura_enc.xml_firmado = xml_bytes.decode('utf-8')
 
     if resp["transaccion"] and resp.get("codigoEstado") == 908:
         factura_enc.estado_sin = factura_enc.SIN_VALIDADA

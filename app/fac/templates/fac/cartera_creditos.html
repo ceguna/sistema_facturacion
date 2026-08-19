@@ -1,0 +1,96 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+    <h4 class="m-0 font-weight-bold text-primary">Cartera de Créditos — Cobranza</h4>
+    <a href="{% url 'bases:home' %}" class="btn btn-secondary btn-sm">
+      <i class="fas fa-arrow-left mr-1"></i>Volver
+    </a>
+  </div>
+  <div class="card-body">
+
+    <div class="row mb-3">
+      <div class="col-md-6">
+        <div class="alert alert-danger mb-0">
+          <b>Vencido:</b> Bs {{ total_vencido }}
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="alert alert-info mb-0">
+          <b>Vigente (no vencido):</b> Bs {{ total_vigente }}
+        </div>
+      </div>
+    </div>
+
+    {% if vencidas %}
+    <h6 class="text-danger">Créditos Vencidos — Contactar</h6>
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Factura</th>
+          <th>Cliente</th>
+          <th>Celular</th>
+          <th>Vencimiento</th>
+          <th>Días de Mora</th>
+          <th>Saldo Pendiente</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in vencidas %}
+        <tr class="table-danger">
+          <td>{{ fila.factura.id }}</td>
+          <td>{{ fila.factura.cliente }}</td>
+          <td>{{ fila.factura.cliente.celular }}</td>
+          <td>{{ fila.factura.fecha_vencimiento|date:"d/m/Y" }}</td>
+          <td>{{ fila.dias_mora }}</td>
+          <td>Bs {{ fila.factura.saldo_pendiente }}</td>
+          <td>
+            <button class="btn btn-primary btn-sm" onclick="return abrir_modal('{% url 'fac:registrar_pago' fila.factura.id %}')">
+              Registrar Pago
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if vigentes %}
+    <h6 class="mt-4">Créditos Vigentes (aún no vencen)</h6>
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Factura</th>
+          <th>Cliente</th>
+          <th>Vencimiento</th>
+          <th>Saldo Pendiente</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in vigentes %}
+        <tr>
+          <td>{{ fila.factura.id }}</td>
+          <td>{{ fila.factura.cliente }}</td>
+          <td>{{ fila.factura.fecha_vencimiento|date:"d/m/Y" }}</td>
+          <td>Bs {{ fila.factura.saldo_pendiente }}</td>
+          <td>
+            <button class="btn btn-primary btn-sm" onclick="return abrir_modal('{% url 'fac:registrar_pago' fila.factura.id %}')">
+              Registrar Pago
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if not vencidas and not vigentes %}
+    <div class="alert alert-success">No hay créditos pendientes de cobro. ¡Cartera al día!</div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

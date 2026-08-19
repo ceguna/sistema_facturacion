@@ -6,7 +6,11 @@ from .views import CategoriaView, CategoriaNew, CategoriaEdit, CategoriaDel, \
     MarcaView, MarcaNew, MarcaEdit, marca_inactivar, \
     UMView, UMNew, UMEdit, um_inactivar, \
     ProductoView, ProductoNew, ProductoEdit, producto_inactivar, \
-    producto_homologar, producto_homologar_pendientes
+    producto_homologar, producto_homologar_pendientes, \
+    TipoCambioView, TipoCambioNew, TipoCambioEdit, \
+    revision_precios, aplicar_precio_sugerido, aplicar_todos_sugeridos
+
+from .reportes import lista_precios, lista_precios_pdf
 
 urlpatterns = [
     path('categorias/', CategoriaView.as_view(), name='categoria_list'),
@@ -36,4 +40,15 @@ urlpatterns = [
 
     path('productos/homologar/<int:id>', producto_homologar, name='producto_homologar'),
     path('productos/homologar-pendientes/', producto_homologar_pendientes, name='producto_homologar_pendientes'),
+
+    path('productos/reportes/lista-precios/', lista_precios, name='lista_precios'),
+    path('productos/reportes/lista-precios-pdf/', lista_precios_pdf, name='lista_precios_pdf'),
+
+    path('tipo-cambio/', TipoCambioView.as_view(), name='tipo_cambio_list'),
+    path('tipo-cambio/new', TipoCambioNew.as_view(), name='tipo_cambio_new'),
+    path('tipo-cambio/edit/<int:pk>', TipoCambioEdit.as_view(), name='tipo_cambio_edit'),
+
+    path('productos/revision-precios/', revision_precios, name='revision_precios'),
+    path('productos/revision-precios/aplicar/<int:id>/', aplicar_precio_sugerido, name='aplicar_precio_sugerido'),
+    path('productos/revision-precios/aplicar-todos/', aplicar_todos_sugeridos, name='aplicar_todos_sugeridos'),
 ]

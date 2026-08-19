@@ -9,6 +9,7 @@ class EmpresaForm(forms.ModelForm):
         fields = [
             'razon_social', 'nit', 'tipo_persona', 'codigo_actividad_economica',
             'ambiente', 'telefono', 'email', 'logo',
+            'qr_cobro', 'banco_qr',
             'tipo_autorizacion', 'nombre_sistema', 'version_sistema', 'codigo_sistema',
         ]
         widgets = {
@@ -22,6 +23,10 @@ class EmpresaForm(forms.ModelForm):
             'telefono': forms.TextInput(attrs={'class': 'form-control'}),
             'email': forms.EmailInput(attrs={'class': 'form-control'}),
             'logo': forms.ClearableFileInput(attrs={'class': 'form-control-file'}),
+            'qr_cobro': forms.ClearableFileInput(attrs={'class': 'form-control-file'}),
+            'banco_qr': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Ej: Banco Unión, BCP, BNB...'}),
             'tipo_autorizacion': forms.Select(attrs={'class': 'form-control'}),
             'nombre_sistema': forms.TextInput(attrs={'class': 'form-control'}),
             'version_sistema': forms.TextInput(attrs={'class': 'form-control'}),
@@ -38,6 +43,8 @@ class EmpresaForm(forms.ModelForm):
             'telefono': 'Teléfono',
             'email': 'Correo Electrónico',
             'logo': 'Logo (para facturas impresas/PDF)',
+            'qr_cobro': 'QR de Cobro (para recibos de venta)',
+            'banco_qr': 'Banco emisor del QR',
             'tipo_autorizacion': 'Tipo de Autorización SIN',
             'nombre_sistema': 'Nombre del Sistema (declarado ante el SIN)',
             'version_sistema': 'Versión del Sistema',

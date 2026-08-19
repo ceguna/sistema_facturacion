@@ -121,11 +121,22 @@ $(function(){
             url: "/fac/facturas/emitir/" + id,
             success: function(r){
                 if(r.ok){
-                    mensaje("Factura " + id + " emitida: " + r.estado_sin, "green");
+                    $.alert({
+                        theme: "modern",
+                        type: "green",
+                        title: "Factura Emitida",
+                        content: "Factura " + id + " emitida: " + r.estado_sin,
+                        onClose: function(){ location.reload(true); }
+                    });
                 } else {
-                    mensaje("Factura " + id + ": " + r.error, "red");
+                    $.alert({
+                        theme: "modern",
+                        type: "red",
+                        title: "No se pudo emitir",
+                        content: "Factura " + id + ": " + r.error,
+                        onClose: function(){ location.reload(true); }
+                    });
                 }
-                location.reload(true);
             },
             error: function(){
                 mensaje("Error de conexión al reintentar la factura " + id, "red");

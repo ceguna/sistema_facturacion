@@ -48,6 +48,15 @@
         })();
     </script>
 
+    <!-- Evita el "flash" de tabla sin estilo (FOUC): oculta cualquier
+         tabla bootstrap-table hasta que el plugin termine de darle
+         formato. Se revela con JS mas abajo, apenas esta lista. -->
+    <style>
+        table[data-toggle="table"] {
+            visibility: hidden;
+        }
+    </style>
+
 </head>
 
 <body id="page-top" class="bg-gradient-primary">
@@ -109,6 +118,10 @@
                         {% if perms.inv.view_producto %}
                         <a class="collapse-item" href="{% url 'inv:producto_list' %}">Producto</a>
                         {% endif %}
+                        {% if perms.inv.gestionar_precios_tc %}
+                        <a class="collapse-item" href="{% url 'inv:tipo_cambio_list' %}">Tipo de Cambio</a>
+                        <a class="collapse-item" href="{% url 'inv:revision_precios' %}">Revisión de Precios</a>
+                        {% endif %}
 
                         <h6 class="collapse-header">Catálogos de Compras</h6>
 
@@ -121,13 +134,17 @@
                         {% if perms.fac.view_cliente %}
                         <a class="collapse-item" href="{% url 'fac:cliente_list' %}">Clientes</a>
                         {% endif %}
+                        
+                        {% if perms.fac.gestionar_creditos %}
+                        <a class="collapse-item" href="{% url 'fac:cartera_creditos' %}">Cartera de Créditos</a>
+                        {% endif %}
                     </div>
                 </div>
             </li>
 
             <li class="nav-item">
                 <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseCompras"
-                    aria-expanded="true" aria-controls="collapseTwo">
+                    aria-expanded="true" aria-controls="headingTwo">
                     <i class="fas fa-fw fa-truck"></i>
                     <span>Movimientos</span>
                 </a>
@@ -151,7 +168,7 @@
 
             <li class="nav-item">
                 <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseReportes"
-                    aria-expanded="true" aria-controls="collapseReportes">
+                    aria-expanded="true" aria-controls="headingReportes">
                     <i class="fas fa-fw fa-file-invoice-dollar"></i>
                     <span>Reportes</span>
                 </a>
@@ -168,9 +185,8 @@
                         <h6 class="collapse-header">Otros</h6>
                         {% if perms.fac.view_facturaenc %}
                         <a class="collapse-item" href="{% url 'bases:facturas_anuladas' %}">Facturas Anuladas</a>
-                        {% endif %}
-                        {% if perms.fac.view_facturaenc %}
                         <a class="collapse-item" href="{% url 'fac:cierre_ventas_selector' %}">Cierre de Ventas</a>
+                        <a class="collapse-item" href="{% url 'fac:cierre_caja_selector' %}">Cierre de Caja</a>
                         {% endif %}
                     </div>
                 </div>
@@ -205,7 +221,7 @@
             </div>
             <li class="nav-item">
                 <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseAdmin"
-                    aria-expanded="true" aria-controls="collapseAdmin">
+                    aria-expanded="true" aria-controls="headingAdmin">
                     <i class="fas fa-fw fa-user-shield"></i>
                     <span>Usuarios y Roles</span>
                 </a>
@@ -402,10 +418,11 @@
                     $("#popup").find("form").on("submit", function (e) {
                     e.preventDefault();
                     var form = $(this);
-                    $.ajax({
+
+                    var esMultipart = (form.attr("enctype") === "multipart/form-data");
+                    var ajaxOptions = {
                         type: form.attr("method"),
                         url: form.attr("action"),
-                        data: form.serialize(),
                         headers: {
                             "X-Requested-With": "XMLHttpRequest"
                         },
@@ -419,26 +436,40 @@
                                     location.reload();
                                 }
                             });
-
                         },
                         error: function (xhr) {
-                        var errors = JSON.parse(xhr.responseText).errors;
-                        console.log(errors)
-                        if (errors) {
-                            var errors = $.parseJSON(errors);
-                            console.log(errors.__all__)
-                            errors = errors.__all__
-
-                            var messages = ""
-                            for (var i = 0; i < errors.length; i++) {
-                                var message = errors[i].message;
-                                messages += message + "\n"
+                            var mensajeError = "Ocurrió un error al guardar. Verifique los datos.";
+                            try {
+                                var respuesta = JSON.parse(xhr.responseText).errors;
+                                if (respuesta) {
+                                    var errores = $.parseJSON(respuesta);
+                                    var messages = "";
+                                    for (var campo in errores) {
+                                        var lista = errores[campo];
+                                        for (var i = 0; i < lista.length; i++) {
+                                            messages += lista[i].message + "\n";
+                                        }
+                                    }
+                                    if (messages) {
+                                        mensajeError = messages;
+                                    }
+                                }
+                            } catch (e) {
+                                console.log(e);
                             }
+                            mensaje(mensajeError, 'red');
+                        }
+                    };
 
-                            mensaje(messages)
-                        }
-                        }
-                    });
+                    if (esMultipart) {
+                        ajaxOptions.data = new FormData(form[0]);
+                        ajaxOptions.processData = false;
+                        ajaxOptions.contentType = false;
+                    } else {
+                        ajaxOptions.data = form.serialize();
+                    }
+
+                    $.ajax(ajaxOptions);
                     });
                 });
                 return false;
@@ -496,7 +527,40 @@
                 {% for message in messages %}
                     mensaje("{{ message }}","{{ message.tags }}");
                 {% endfor %}
-            {% endif %}  
+            {% endif %}
+
+            // Revela las tablas (ocultas en el <head> para evitar el
+            // flash sin estilo) apenas bootstrap-table termina de darles
+            // formato. 'post-body.bs.table' dispara una vez por cada
+            // tabla, en cualquier pantalla del sistema -- un solo lugar,
+            // aplica a todas las tablas presentes y futuras.
+            $(document).on('post-body.bs.table', function (e) {
+                $(e.target).css('visibility', 'visible');
+            });
+            // Respaldo: si por algun motivo el evento no llega a
+            // dispararse (tabla vacia, version del plugin, etc.), se
+            // revela de todas formas despues de un tiempo prudencial,
+            // para no dejar ninguna tabla oculta para siempre.
+            setTimeout(function () {
+                $('table[data-toggle="table"]').css('visibility', 'visible');
+            }, 1500);
+
+            // Mayusculas automaticas para todo el sistema: cualquier
+            // <input type="text"> se convierte a mayuscula mientras se
+            // escribe. Se excluyen explicitamente los campos de tipo
+            // password/email (ya no matchean el selector) y los que
+            // tengan la clase "no-uppercase" (ej. el campo Usuario del
+            // login, que debe respetar mayusculas/minusculas exactas).
+            $(document).on('input', 'input[type="text"]:not(.no-uppercase)', function () {
+                var el = this;
+                var start = el.selectionStart;
+                var end = el.selectionEnd;
+                var valorMayuscula = el.value.toUpperCase();
+                if (el.value !== valorMayuscula) {
+                    el.value = valorMayuscula;
+                    el.setSelectionRange(start, end);
+                }
+            });
         </script>
     {% endblock %}
     

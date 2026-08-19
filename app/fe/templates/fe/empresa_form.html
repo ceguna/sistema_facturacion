@@ -77,6 +77,29 @@
                     </div>
 
                     <div class="dropdown-divider"></div>
+                    <div class="csg-form-title">Cobro por QR</div>
+                    <div class="text-muted small mb-2">
+                        QR de cobro estático (QR Simple) solicitado a tu banco. Se muestra
+                        en el recibo de venta para que el cliente pueda escanearlo y
+                        transferir el monto de la compra.
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.qr_cobro.label }}</label>
+                            {{ form.qr_cobro }}
+                            {% if obj.qr_cobro %}
+                            <div class="mt-2">
+                                <img src="{{ obj.qr_cobro.url }}" alt="QR de cobro actual" style="max-height: 120px;">
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.banco_qr.label }}</label>
+                            {{ form.banco_qr }}
+                        </div>
+                    </div>
+
+                    <div class="dropdown-divider"></div>
                     <div class="csg-form-title">Autorización de Sistemas (SIN)</div>
                     <div class="text-muted small mb-2">
                         Este trámite se realiza en el portal SIAT en Línea del SIN,

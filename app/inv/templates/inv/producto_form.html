@@ -1,4 +1,4 @@
-<div class="modal-dialog modal-lg">
+<div class="modal-dialog modal-xl">
     <div class="modal-content">
         {% if obj %}
         <form method="POST" role="form" class="form-inline" action="{% url 'inv:producto_edit' obj.pk %}" enctype="multipart/form-data" >
@@ -12,122 +12,164 @@
                 <div class="card border-left-success shadow h-100 py-2">
                 {% endif %}
                 <div class="card-body">
-                    <div class="row no-gutters align-items-center">
+                    <div class="row no-gutters align-items-start">
                     <div class="col mr-2">
-                        <div class="csg-form-title">
-                            {% if obj %} Editar {% else %} Nuevo {% endif %} Producto
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <div class="csg-form-title">
+                                    {% if obj %} Editar {% else %} Nuevo {% endif %} Producto
+                                </div>
+                            </div>
+                            <!-- Recuadro de foto, arriba a la derecha -->
+                            <div class="col-auto text-center">
+                                <div id="cajaFotoPreview"
+                                     style="width:130px;height:130px;border:1px solid #d1d3e2;border-radius:6px;
+                                            display:flex;align-items:center;justify-content:center;overflow:hidden;
+                                            background:#f8f9fc;margin:0 auto;">
+                                    {% if obj.foto %}
+                                    <img id="imgFotoPreview" src="{{obj.foto.url}}" alt=""
+                                         style="max-width:100%;max-height:100%;object-fit:contain;">
+                                    {% else %}
+                                    <i class="fas fa-image text-gray-300" id="iconoFotoPreview" style="font-size:2.5rem;"></i>
+                                    <img id="imgFotoPreview" src="" alt="" style="display:none;max-width:100%;max-height:100%;object-fit:contain;">
+                                    {% endif %}
+                                </div>
+                                <label for="id_foto" class="btn btn-outline-secondary btn-sm mt-2 mb-0" style="width:130px;">
+                                    <i class="fas fa-camera mr-1"></i>Cambiar foto
+                                </label>
+                                <input type="file" name="foto" id="id_foto" accept="image/*" style="display:none;">
+                            </div>
                         </div>
                         <div class="dropdown-divider"></div>
                         {% csrf_token %}
-                        <div class="row">
-                            {#{ form.as_p }#}
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="col-md-6">{{form.codigo.label}}</div>
-                                <div class="col-md-6">{{form.codigo}}</div>
-                            </div>
 
-                            <div class="col-md-6">
-                                <div class="col-md-6">{{form.codigo_barra.label}}</div>
-                                <div class="col-md-6">{{form.codigo_barra}}</div>    
-                            </div>                            
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="col-md-6">{{form.descripcion.label}}</div>
-                                <div class="col-md-6">{{form.descripcion}}</div>
-                            </div>
-
-                            <div class="col-md-6">
-                                <div class="col-md-6">{{form.estado.label}}</div>
-                                <div class="col-md-6">{{form.estado}}</div>    
-                            </div>                            
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="col-md-6">{{form.precio.label}}</div>
-                                <div class="col-md-6">{{form.precio}}</div>
-                            </div>
-
-                            <div class="col-md-6">
-                                <div class="col-md-6">{{form.existencia.label}}</div>
-                                <div class="col-md-6">{{form.existencia}}</div>    
-                            </div>                            
-                        </div>
-
+                        <!-- Fila 1: Codigo / Barra / Estado -->
                         <div class="row">
                             <div class="col-md-4">
-                                <div class="col-md-6">{{form.ultima_compra.label}}</div>
-                                <div class="col-md-6">{{form.ultima_compra}}</div>
+                                <label class="small mb-0">{{form.codigo.label}}</label>
+                                {{form.codigo}}
                             </div>
-
                             <div class="col-md-4">
-                                <div class="col-md-6">{{form.marca.label}}</div>
-                                <div class="col-md-6">{{form.marca}}</div>    
-                            </div>     
+                                <label class="small mb-0">{{form.codigo_barra.label}}</label>
+                                {{form.codigo_barra}}
+                            </div>
                             <div class="col-md-4">
-                                <div class="col-md-6">{{form.unidad_medida.label}}</div>
-                                <div class="col-md-6">{{form.unidad_medida}}</div>    
-                            </div>                        
+                                <label class="small mb-0">{{form.estado.label}}</label>
+                                {{form.estado}}
+                            </div>
                         </div>
 
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="col-md-6">Categoría</div>
-                                <div class="col-md-6">
-                                    <select name="categoria" id="id_categoria" class="form-control from-control-sm">
-                                        <option value="0">-------</option>
-                                        {% for item in categorias %}
-                                        <option value="{{item.id}}">{{item.descripcion}}</option>
-                                        {% endfor%}
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="col-md-6">
-                                <div class="col-md-6">Sub Categoría</div>
-                                <div class="col-md-6">
-                                    <select name="subcategoria" id="id_subcategoria" class="form-control from-control-sm">
-                                        <option value="0">-------</option>
-                                        {% for item in subcategorias %}
-                                        <option value="{{item.id}}" data-chained="{{item.categoria.id}}">{{item.descripcion}}</option>
-                                        {% endfor%}
-                                    </select>
-                                </div>
-                            </div>                           
-                        </div>
-                        <div class="row">
+                        <!-- Fila 2: Descripcion (ancho completo) -->
+                        <div class="row mt-2">
                             <div class="col-md-12">
-                                <div class="col-md-2">
-                                    {{form.foto.label}}
-                                </div>
-                                <div class="col-md-8">
-                                    {% if obj.foto %}
-                                    <img src="{{obj.foto.url}}" width="100%" alt="">
-                                    {% endif %}
-                                </div>
-                                <!-- <div class="col-md-4">{{form.foto}}</div> -->
-                                <div class="col-md-2">
-                                    <input type="file" name="foto" id="id_foto" accept="image/*">
-                                </div>
+                                <label class="small mb-0">{{form.descripcion.label}}</label>
+                                {{form.descripcion}}
                             </div>
                         </div>
 
-                        <div class="dropdown-divider"></div>
+                        <!-- Fila 3: Precio / Existencia / Ultima Compra -->
+                        <div class="row mt-2">
+                            <div class="col-md-4">
+                                <label class="small mb-0">{{form.precio.label}}</label>
+                                {{form.precio}}
+                            </div>
+                            <div class="col-md-4">
+                                <label class="small mb-0">{{form.existencia.label}}</label>
+                                {{form.existencia}}
+                            </div>
+                            <div class="col-md-4">
+                                <label class="small mb-0">{{form.ultima_compra.label}}</label>
+                                {{form.ultima_compra}}
+                            </div>
+                        </div>
+
+                        <!-- Fila 4: Marca / U.M. / Categoria -->
+                        <div class="row mt-2">
+                            <div class="col-md-4">
+                                <label class="small mb-0">{{form.marca.label}}</label>
+                                {{form.marca}}
+                            </div>
+                            <div class="col-md-4">
+                                <label class="small mb-0">{{form.unidad_medida.label}}</label>
+                                {{form.unidad_medida}}
+                            </div>
+                            <div class="col-md-4">
+                                <label class="small mb-0">Categoría</label>
+                                <select name="categoria" id="id_categoria" class="form-control from-control-sm">
+                                    <option value="0">-------</option>
+                                    {% for item in categorias %}
+                                    <option value="{{item.id}}">{{item.descripcion}}</option>
+                                    {% endfor%}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Fila 5: Sub Categoria -->
+                        <div class="row mt-2">
+                            <div class="col-md-4">
+                                <label class="small mb-0">Sub Categoría</label>
+                                <select name="subcategoria" id="id_subcategoria" class="form-control from-control-sm">
+                                    <option value="0">-------</option>
+                                    {% for item in subcategorias %}
+                                    <option value="{{item.id}}" data-chained="{{item.categoria.id}}">{{item.descripcion}}</option>
+                                    {% endfor%}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="dropdown-divider mt-2"></div>
+
+                        <!-- Fila 6: Descuento Promocional -->
+                        <div class="row">
+                            <div class="col-md-12"><b class="small">Descuento Promocional</b></div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-3">
+                                <label class="small mb-0">{{form.descuento_promocional_pct.label}}</label>
+                                {{form.descuento_promocional_pct}}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="small mb-0">{{form.descuento_vigencia_desde.label}}</label>
+                                {{form.descuento_vigencia_desde}}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="small mb-0">{{form.descuento_vigencia_hasta.label}}</label>
+                                {{form.descuento_vigencia_hasta}}
+                            </div>
+                            <div class="col-md-3 d-flex align-items-end">
+                                <small class="text-muted">Se aplica el mayor entre cliente y producto — no se suman.</small>
+                            </div>
+                        </div>
+
+                        <div class="dropdown-divider mt-2"></div>
+
+                        <!-- Fila 7: Costo de Referencia -->
+                        <div class="row">
+                            <div class="col-md-12"><b class="small">Costo de Referencia (productos importados)</b></div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-3">
+                                <label class="small mb-0">{{form.costo_referencia_usd.label}}</label>
+                                {{form.costo_referencia_usd}}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="small mb-0">{{form.margen_deseado_pct.label}}</label>
+                                {{form.margen_deseado_pct}}
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <small class="text-muted">Opcional. Habilita este producto en "Revisión de Precios" (Catálogos).</small>
+                            </div>
+                        </div>
+
+                        <div class="dropdown-divider mt-2"></div>
                         <div class="row">
                             <div class="col">
                                 <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
-                                <!-- <a href="{% url 'inv:um_list' %}" class="btn btn-outline-secondary"><span class="fa fa-undo"></span>Cancelar</a> -->
                                 <button type="button" class="btn btn-outline-secondary" onclick="return cerrar_modal()">
                                     Cancelar
                                 </button>
                             </div>
                         </div>
-                    </div>
-                    <div class="col-auto">
-                        <i class="far fa-calendar-plus fa-2x text-gray-300"></i>
                     </div>
                     </div>
                 </div>
@@ -142,5 +184,39 @@
         $("#id_categoria").val("{{ obj.subcategoria.categoria.id }}").change();
         $("#id_subcategoria").val("{{ obj.subcategoria.id }}").change();
         $("#id_subcategoria").chained("#id_categoria");
+
+        $('#id_descuento_vigencia_desde, #id_descuento_vigencia_hasta').datetimepicker({
+            format: 'Y-m-d',
+            timepicker: false
+        });
+
+        function actualizarEstadoDescuentoProducto(){
+            var pct = parseFloat($('#id_descuento_promocional_pct').val()) || 0;
+            var $desde = $('#id_descuento_vigencia_desde');
+            var $hasta = $('#id_descuento_vigencia_hasta');
+            if (pct > 0) {
+                $desde.prop('disabled', false);
+                $hasta.prop('disabled', false);
+            } else {
+                $desde.prop('disabled', true).val('');
+                $hasta.prop('disabled', true).val('');
+            }
+        }
+
+        $('#id_descuento_promocional_pct').on('input change', actualizarEstadoDescuentoProducto);
+        actualizarEstadoDescuentoProducto();
+
+        // Vista previa en vivo: al elegir un archivo nuevo, se muestra
+        // dentro del recuadro de arriba a la derecha, sin esperar a guardar.
+        $('#id_foto').on('change', function(){
+            var archivo = this.files[0];
+            if (!archivo) return;
+            var lector = new FileReader();
+            lector.onload = function(e){
+                $('#imgFotoPreview').attr('src', e.target.result).show();
+                $('#iconoFotoPreview').hide();
+            };
+            lector.readAsDataURL(archivo);
+        });
     });
 </script>

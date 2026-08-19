@@ -26,11 +26,11 @@ class Proveedor(ClaseModelo):
     )
     telefono=models.CharField(
         max_length=10,
-        null=True, blank=True
+        null=True, blank=False
     )
     email=models.CharField(
         max_length=250,
-        null=True, blank=True
+        null=True, blank=False
     )
 
     def __str__(self):

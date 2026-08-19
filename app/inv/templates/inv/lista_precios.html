@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Lista de Precios</title>
+
+    <style type="text/css">
+    @page {
+        size: letter;
+        margin: 1cm;
+    }
+    .table {
+        width: 100%;
+        max-width: 100%;
+        margin-bottom: 5px;
+        background-color: #fff;
+    }
+    .table th,
+    .table td {
+        padding: 5px;
+        vertical-align: top;
+        border-top: 1px solid #000;
+        text-align: center;
+    }
+    .table thead th {
+        vertical-align: bottom;
+        border-bottom: 2px solid #000;
+    }
+    .tabla-cabecera {
+        width: 100%;
+        border: none;
+        margin-bottom: 5px;
+    }
+    .tabla-cabecera td {
+        border: none;
+        padding: 0;
+        font-size: 0.95em;
+        font-weight: bold;
+    }
+    .tabla-titulo {
+        width: 100%;
+        border: none;
+        margin-bottom: 15px;
+    }
+    .tabla-titulo td {
+        border: none;
+        padding: 0;
+        vertical-align: middle;
+    }
+    .col-fecha-emision {
+        width: 22%;
+        text-align: right;
+        font-size: 0.85em;
+        font-weight: normal;
+    }
+    .badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-weight: bold;
+        color: #fff;
+    }
+    .badge-success { background-color: #28a745; }
+    .badge-secondary { background-color: #6c757d; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <table class="tabla-cabecera">
+                    <tr>
+                        <td style="text-align:left;">CSG Sistemas - Facturación</td>
+                        <td style="text-align:right;">{{ empresa.razon_social|default:"" }}</td>
+                    </tr>
+                </table>
+                <table class="tabla-titulo">
+                    <tr>
+                        <td style="width:22%;"></td>
+                        <td style="width:56%; text-align:center;">
+                            <h3>Lista de Precios</h3>
+                        </td>
+                        <td class="col-fecha-emision">
+                            Fecha de emisión:<br>{{ fecha_emision|date:"d/m/Y H:i" }}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Código</th>
+                        <th>Descripción</th>
+                        <th>Precio</th>
+                        <th>Descuento</th>
+                        <th>Vigencia</th>
+                        <th>Estado Promo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in productos %}
+                    <tr>
+                        <td>{{ p.codigo }}</td>
+                        <td>{{ p.descripcion }}</td>
+                        <td>{{ p.precio }}</td>
+                        <td>
+                            {% if p.descuento_promocional_pct %}{{ p.descuento_promocional_pct }}%{% else %}-{% endif %}
+                        </td>
+                        <td>
+                            {% if p.descuento_vigencia_desde %}
+                                {{ p.descuento_vigencia_desde|date:"d/m/Y" }} - {{ p.descuento_vigencia_hasta|date:"d/m/Y" }}
+                            {% else %}-{% endif %}
+                        </td>
+                        <td>
+                            {% if p.descuento_promocional_pct %}
+                                {% if p.descuento_promocional_vigente_pct %}
+                                    <span class="badge badge-success">Vigente</span>
+                                {% else %}
+                                    <span class="badge badge-secondary">No vigente</span>
+                                {% endif %}
+                            {% else %}-{% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6">No hay productos activos.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if not es_pdf %}
+            <p style="margin-top: 20px; text-align: center;">
+                <a href="{{ url_descargar_pdf }}">Descargar esta versión como PDF</a>
+            </p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

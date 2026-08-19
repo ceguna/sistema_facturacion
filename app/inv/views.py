@@ -4,13 +4,12 @@ from django.views import generic
 from django.urls import reverse_lazy
 from django.contrib import messages
 
-# Se necesita importar el login required
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
 from django.contrib.auth.decorators import login_required, permission_required
 
-from .models import Categoria,SubCategoria, Marca, UnidadMedida, Producto
-from .forms import CategoriaForm, SubCategoriaForm, MarcaForm, UnidadMedidaForm, ProductoForm
+from .models import Categoria, SubCategoria, Marca, UnidadMedida, Producto, TipoCambio, HistorialPrecioProducto
+from .forms import CategoriaForm, SubCategoriaForm, MarcaForm, UnidadMedidaForm, ProductoForm, TipoCambioForm
 
 from bases.views import SinPrivilegios
 
@@ -127,10 +126,9 @@ class MarcaEdit(SinPrivilegios, generic.UpdateView):
 
 @login_required(login_url='/login/')
 @permission_required('inv.change_marca',login_url='bases:sin_privilegios')
-
 def marca_inactivar(request, id):
-    marca = Marca.objects.filter(pk=id).first() #Una consulta a la base de datos mediante el ORM de django.
-    contexto={} #El contexto esta vacio para poder rellenar
+    marca = Marca.objects.filter(pk=id).first()
+    contexto={}
     template_name="inv/catalogos_inactivo.html"
 
     if not marca:
@@ -183,8 +181,8 @@ class UMEdit(SinPrivilegios, generic.UpdateView):
 @login_required(login_url='/login/')
 @permission_required('inv.change_unidadmedida',login_url='bases:sin_privilegios')
 def um_inactivar(request, id):
-    um = UnidadMedida.objects.filter(pk=id).first() #Una consulta a la base de datos mediante el ORM de django.
-    contexto={} #El contexto esta vacio para poder rellenar
+    um = UnidadMedida.objects.filter(pk=id).first()
+    contexto={}
     template_name="inv/catalogos_inactivo.html"
 
     if not um:
@@ -281,23 +279,12 @@ def producto_inactivar(request, id):
 
 
 # =====================================================================
-# Homologacion de Productos ante el SIN (obligacion normativa,
-# RND 102500000018). Vincula cada Producto local con su codigo real de
-# actividad economica y de producto/servicio SIN, usando el catalogo
-# PRODUCTOS_SERVICIOS ya sincronizado en app.catalogos.
+# Homologacion de Productos ante el SIN (RND 102500000018)
 # =====================================================================
 
 @login_required(login_url='/login/')
 @permission_required('inv.change_producto', login_url='bases:sin_privilegios')
 def producto_homologar(request, id):
-    """
-    Pantalla para asignar a un Producto su actividad economica SIN y su
-    codigo de producto/servicio SIN. El select de actividad se llena con
-    las actividades distintas presentes en el catalogo PRODUCTOS_SERVICIOS
-    ya sincronizado; el select de producto se filtra con JavaScript propio
-    (no con el plugin jquery.chained -- tiene incompatibilidades conocidas
-    con versiones modernas de jQuery, ver issue #70 del repo del plugin).
-    """
     from catalogos.models import CatalogoSIN
 
     template_name = "inv/producto_homologar.html"
@@ -353,34 +340,35 @@ def producto_homologar(request, id):
         )
         return redirect('inv:producto_list')
 
-    # Datos para el filtrado en JavaScript (ver json_script en el template) --
-    # se arma como lista simple de diccionarios, no el queryset directo,
-    # para que Django lo pueda serializar a JSON sin problema.
+    # --- FIX: el template espera 'productos_sin_data' (un array de
+    # dicts con claves 'actividad'/'codigo'/'descripcion') para armar
+    # el select en cascada via JS + json_script. Antes solo se pasaba
+    # 'productos_sin' (el queryset), asi que esa variable no existia
+    # en el contexto del template -- Django la renderizaba como cadena
+    # vacia, json_script serializaba "" en vez de un array, y el JS
+    # rompia al intentar hacer .filter() sobre un string. Se arma aca
+    # la lista con las claves correctas (el modelo usa
+    # 'codigo_actividad', no 'actividad', que es lo que consume el JS).
     productos_sin_data = [
         {
-            "codigo": item.codigo,
-            "actividad": item.codigo_actividad,
-            "descripcion": item.descripcion[:90],
+            'actividad': p.codigo_actividad,
+            'codigo': p.codigo,
+            'descripcion': p.descripcion,
         }
-        for item in productos_sin
+        for p in productos_sin
     ]
 
     return render(request, template_name, {
         'producto': prod,
         'actividades': actividades,
         'actividades_faltantes': actividades_faltantes,
+        'productos_sin': productos_sin,
         'productos_sin_data': productos_sin_data,
     })
 
+
 @login_required(login_url='/login/')
 def producto_homologar_pendientes(request):
-    """
-    Lista rapida de que productos activos todavia NO estan homologados
-    (les falta actividad, codigo de producto SIN, o su unidad de medida
-    no tiene codigo_sin) -- para que sea facil ver de un vistazo cuanto
-    falta, sin tener que revisar producto por producto en el listado
-    general.
-    """
     productos = Producto.objects.filter(estado=True).select_related('unidad_medida')
     pendientes = [p for p in productos if not p.homologado_sin]
     return render(request, 'inv/producto_homologar_pendientes.html', {
@@ -388,3 +376,134 @@ def producto_homologar_pendientes(request):
         'total_productos': productos.count(),
         'total_pendientes': len(pendientes),
     })
+
+
+# =====================================================================
+# Tipo de Cambio y Revision de Precios (productos importados)
+# =====================================================================
+
+class TipoCambioView(SinPrivilegios, generic.ListView):
+    permission_required = "inv.gestionar_precios_tc"
+    model = TipoCambio
+    template_name = "inv/tipo_cambio_list.html"
+    context_object_name = "obj"
+
+class TipoCambioNew(SuccessMessageMixin, SinPrivilegios, generic.CreateView):
+    permission_required = "inv.gestionar_precios_tc"
+    model = TipoCambio
+    template_name = "inv/tipo_cambio_form.html"
+    context_object_name = "obj"
+    form_class = TipoCambioForm
+    success_url = reverse_lazy("inv:tipo_cambio_list")
+    success_message = "Tipo de Cambio Registrado Satisfactoriamente"
+
+    def form_valid(self, form):
+        form.instance.uc = self.request.user
+        return super().form_valid(form)
+
+class TipoCambioEdit(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
+    permission_required = "inv.gestionar_precios_tc"
+    model = TipoCambio
+    template_name = "inv/tipo_cambio_form.html"
+    context_object_name = "obj"
+    form_class = TipoCambioForm
+    success_url = reverse_lazy("inv:tipo_cambio_list")
+    success_message = "Tipo de Cambio Actualizado Satisfactoriamente"
+
+    def form_valid(self, form):
+        form.instance.um = self.request.user.id
+        return super().form_valid(form)
+
+
+@login_required(login_url='/login/')
+@permission_required('inv.gestionar_precios_tc', login_url='bases:sin_privilegios')
+def revision_precios(request):
+    UMBRAL_VARIACION_PCT = 3
+
+    tipo_cambio_actual = TipoCambio.objects.filter(estado=True).order_by('-fecha').first()
+    productos = Producto.objects.filter(
+        estado=True, costo_referencia_usd__isnull=False
+    ).order_by('codigo')
+
+    filas = []
+    for p in productos:
+        precio_sugerido = p.calcular_precio_sugerido(tipo_cambio_actual)
+        variacion = p.variacion_tipo_cambio_pct(tipo_cambio_actual)
+        filas.append({
+            'producto': p,
+            'precio_sugerido': precio_sugerido,
+            'variacion_pct': variacion,
+            'supera_umbral': variacion is not None and abs(variacion) >= UMBRAL_VARIACION_PCT,
+        })
+
+    return render(request, 'inv/revision_precios.html', {
+        'filas': filas,
+        'tipo_cambio_actual': tipo_cambio_actual,
+        'umbral': UMBRAL_VARIACION_PCT,
+    })
+
+
+def _aplicar_precio_sugerido(producto, tipo_cambio_actual, usuario):
+    precio_sugerido = producto.calcular_precio_sugerido(tipo_cambio_actual)
+    if precio_sugerido is None:
+        return None
+
+    HistorialPrecioProducto.objects.create(
+        producto=producto,
+        precio_anterior=producto.precio,
+        precio_nuevo=precio_sugerido,
+        tipo_cambio_usado=tipo_cambio_actual,
+        motivo="Ajuste por tipo de cambio",
+        uc=usuario,
+    )
+    producto.precio = precio_sugerido
+    producto.tipo_cambio_referencia = tipo_cambio_actual
+    producto.save()
+    return precio_sugerido
+
+
+@login_required(login_url='/login/')
+@permission_required('inv.gestionar_precios_tc', login_url='bases:sin_privilegios')
+def aplicar_precio_sugerido(request, id):
+    if request.method != 'POST':
+        return redirect('inv:revision_precios')
+
+    producto = Producto.objects.filter(pk=id).first()
+    if not producto:
+        messages.error(request, 'Producto no existe.')
+        return redirect('inv:revision_precios')
+
+    tipo_cambio_actual = TipoCambio.objects.filter(estado=True).order_by('-fecha').first()
+    precio_nuevo = _aplicar_precio_sugerido(producto, tipo_cambio_actual, request.user)
+
+    if precio_nuevo is None:
+        messages.error(request, 'No se pudo calcular un precio sugerido para este producto.')
+    else:
+        messages.success(request, f'Precio de "{producto.descripcion}" actualizado a Bs {precio_nuevo}.')
+
+    return redirect('inv:revision_precios')
+
+
+@login_required(login_url='/login/')
+@permission_required('inv.gestionar_precios_tc', login_url='bases:sin_privilegios')
+def aplicar_todos_sugeridos(request):
+    if request.method != 'POST':
+        return redirect('inv:revision_precios')
+
+    UMBRAL_VARIACION_PCT = 3
+    tipo_cambio_actual = TipoCambio.objects.filter(estado=True).order_by('-fecha').first()
+    productos = Producto.objects.filter(estado=True, costo_referencia_usd__isnull=False)
+
+    aplicados = 0
+    for p in productos:
+        variacion = p.variacion_tipo_cambio_pct(tipo_cambio_actual)
+        if variacion is not None and abs(variacion) >= UMBRAL_VARIACION_PCT:
+            if _aplicar_precio_sugerido(p, tipo_cambio_actual, request.user) is not None:
+                aplicados += 1
+
+    if aplicados:
+        messages.success(request, f'{aplicados} producto(s) actualizados por lote.')
+    else:
+        messages.warning(request, 'Ningún producto superaba el umbral de variación para aplicar en lote.')
+
+    return redirect('inv:revision_precios')

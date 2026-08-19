@@ -59,6 +59,20 @@ class Empresa(ClaseModelo2):
         help_text="Se usa en el encabezado de las facturas impresas/PDF."
     )
 
+    # --- Cobro por QR (QR Simple interbancario, ver app/fac README) ---
+    qr_cobro = models.ImageField(
+        upload_to='empresa/qr_cobro/', null=True, blank=True,
+        help_text="Imagen del QR de cobro estatico (QR Simple) solicitado "
+                   "al banco. Se muestra en el recibo de venta para que el "
+                   "cliente pueda escanearlo y transferir el monto a mano "
+                   "(el QR estatico no lleva el monto incrustado)."
+    )
+    banco_qr = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="Nombre del banco emisor del QR de cobro (solo informativo, "
+                   "se muestra junto al QR en el recibo)."
+    )
+
     # --- Autorizacion de Sistemas ante el SIN (tramite externo, en el
     # portal SIAT en Linea; aca solo se guarda el resultado) ---
     tipo_autorizacion = models.CharField(

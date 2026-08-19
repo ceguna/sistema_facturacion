@@ -1,0 +1,35 @@
+<div class="modal-dialog">
+    <div class="modal-content">
+        <form role="form" action="{% url 'fac:registrar_pago' enc.id %}" method="POST">
+            <div class="card border-left-primary shadow py-2">
+                <div class="card-body">
+                    <div class="csg-form-title">Registrar Pago — Factura N° {{ enc.id }}</div>
+                    <div class="dropdown-divider"></div>
+                    {% csrf_token %}
+                    <p>Cliente: <b>{{ enc.cliente }}</b><br>
+                       Saldo pendiente: <b>Bs {{ enc.saldo_pendiente }}</b></p>
+                    <div class="form-group">
+                        <label>Monto a abonar (Bs)</label>
+                        <input type="number" step="0.01" name="monto" class="form-control" max="{{ enc.saldo_pendiente }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Forma de Pago del abono</label>
+                        <select name="forma_pago" class="form-control">
+                            <option value="EFECTIVO">Efectivo</option>
+                            <option value="TARJETA">Tarjeta</option>
+                            <option value="QR">QR</option>
+                            <option value="TRANSFERENCIA">Transferencia Bancaria</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Observación (opcional)</label>
+                        <textarea name="observacion" class="form-control" rows="2"></textarea>
+                    </div>
+                    <div class="dropdown-divider"></div>
+                    <button type="submit" class="btn btn-primary">Registrar Pago</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="return cerrar_modal()">Cancelar</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>

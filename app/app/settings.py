@@ -130,6 +130,20 @@ USE_L10N = True
 
 USE_TZ = True
 
+# Formato de numeros personalizado (ver app/formats/es_BO/formats.py) --
+# fuerza punto decimal en vez de coma, para que coincida con el estandar
+# que espera la libreria de exportacion de tablas (Excel/CSV/PDF), sin
+# tener que parchear cada plantilla individualmente.
+FORMAT_MODULE_PATH = [
+    'app.formats',
+]
+
+# Activa el separador de miles en TODOS los numeros mostrados por
+# templates (Django lo respeta automaticamente al renderizar {{ valor }}
+# para floats/Decimal, sin tocar cada template uno por uno). Usa el
+# separador definido en app/formats/es_BO/formats.py (coma para miles,
+# punto para decimales).
+USE_THOUSAND_SEPARATOR = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/2.2/howto/static-files/

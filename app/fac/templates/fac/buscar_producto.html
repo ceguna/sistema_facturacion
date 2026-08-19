@@ -41,7 +41,7 @@
                                   <td>
                                       {% if item.existencia > 0 and item.estado %}
                                       <button class="btn btn-warning btn-circle" id="btnSelect" 
-                                      onclick="seleccionarProducto({{item.id|unlocalize}},'{{item.codigo}}','{{item.descripcion}}',{{item.precio|unlocalize}},{{item.existencia|unlocalize}})">
+                                      onclick="seleccionarProducto({{item.id|unlocalize}},'{{item.codigo}}','{{item.descripcion}}',{{item.precio|unlocalize}},{{item.existencia|unlocalize}},{{item.descuento_promocional_vigente_pct|unlocalize}})">
                                           <i class="far fa-hand-pointer"></i>
                                       </button>
                                       {% endif %}
@@ -83,11 +83,29 @@
   });
   $('#tblProducto').bootstrapTable();
 
-  function seleccionarProducto(id,codigo,descripcion,precio,existencia){
+  function seleccionarProducto(id,codigo,descripcion,precio,existencia,descuentoProductoVigente){
       $("#codigo").val(codigo);
       $("#descripcion").val(descripcion);
       $("#precio").val(precio);
       $("#existencia").val(existencia);
+
+      // Misma logica de descuento que buscarProducto() en facturas.html:
+      // se aplica el MAYOR entre el % del cliente (data-descuento del
+      // select) y el % vigente del producto -- no se suman.
+      var descCliente = parseFloat($('#enc_cliente option:selected').data('descuento')) || 0;
+      var descProducto = parseFloat(descuentoProductoVigente) || 0;
+      var descAplicar = Math.max(descCliente, descProducto);
+
+      $("#descuento_pct_aplicable").val(descAplicar);
+      if (descAplicar > 0) {
+          $("#descuento_pct_label").text("Descuento aplicado: " + descAplicar + "%");
+      } else {
+          $("#descuento_pct_label").text("");
+      }
+      if (typeof calcular_detalle === "function") {
+          calcular_detalle();
+      }
+
       $("#btnCancelar").click(); //Cierra la ventana modal
       $("#codigo").select();
       $("#codigo").focus();

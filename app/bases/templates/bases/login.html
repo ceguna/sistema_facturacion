@@ -30,8 +30,8 @@
                 {% csrf_token %}
                 <div class="form-group">
                     <label for="id_username" class="small text-muted mb-1">Usuario</label>
-                    <input type="text" class="form-control form-control-user"
-                        id="id_username" name="username" placeholder="Tu usuario" autofocus>
+                    <input type="text" class="form-control form-control-user no-uppercase"
+                        id="id_username" name="username" placeholder="Tu usuario" autofocus autocapitalize="off" autocorrect="off">
                 </div>
                 <div class="form-group">
                     <label for="Id_password" class="small text-muted mb-1">Contraseña</label>

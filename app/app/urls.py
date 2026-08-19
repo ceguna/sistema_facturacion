@@ -16,6 +16,8 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('',include(('bases.urls','bases'), namespace='bases')),
@@ -27,3 +29,13 @@ urlpatterns = [
     
     path('admin/', admin.site.urls),
 ]
+
+# Sirve los archivos de MEDIA_ROOT (fotos de productos, etc.) durante
+# el desarrollo local. En produccion (Render), esto NO se usa -- el
+# propio servidor web (o un servicio de almacenamiento aparte) debe
+# encargarse de servir esos archivos; static() con MEDIA solo aplica
+# cuando DEBUG=True, por diseño de Django (nunca sirve archivos de
+# usuario en produccion via el proceso de la app, seria ineficiente
+# e inseguro).
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
