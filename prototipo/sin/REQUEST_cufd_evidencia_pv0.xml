@@ -1,0 +1,15 @@
+<soap-env:Envelope xmlns:soap-env="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap-env:Body>
+    <ns0:cufd xmlns:ns0="https://siat.impuestos.gob.bo/">
+      <SolicitudCufd>
+        <codigoAmbiente>2</codigoAmbiente>
+        <codigoModalidad>1</codigoModalidad>
+        <codigoPuntoVenta>0</codigoPuntoVenta>
+        <codigoSistema>373A0EA0FBA931B62586</codigoSistema>
+        <codigoSucursal>0</codigoSucursal>
+        <cuis>31477C6C</cuis>
+        <nit>3852849010</nit>
+      </SolicitudCufd>
+    </ns0:cufd>
+  </soap-env:Body>
+</soap-env:Envelope>

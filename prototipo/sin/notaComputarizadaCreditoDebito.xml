@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<notaFiscalComputarizadaCreditoDebito xsi:noNamespaceSchemaLocation="notaComputarizadaCreditoDebito.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <cabecera>
+        <nitEmisor>1003579028</nitEmisor>
+        <razonSocialEmisor>ENTEL</razonSocialEmisor>
+        <municipio>La Paz</municipio>
+        <telefono>2846005</telefono>
+        <numeroNotaCreditoDebito>1</numeroNotaCreditoDebito>
+        <cuf>44AAEC00DBD34C53C3E5B135433591A5FA086F86A867A75AC82F24C74</cuf>
+        <cufd>BQUE+QytqQUDBKVUFOSVRPQkxVRFZNVFVJBMDAwMDAwM</cufd>
+        <codigoSucursal>0</codigoSucursal>
+        <direccion>AV. JORGE LOPEZ #123</direccion>
+        <codigoPuntoVenta>0</codigoPuntoVenta>
+        <fechaEmision>2021-10-06T16:03:49.570</fechaEmision>
+        <nombreRazonSocial>Juan Valdez</nombreRazonSocial>
+        <codigoTipoDocumentoIdentidad>1</codigoTipoDocumentoIdentidad>
+        <numeroDocumento>5115889</numeroDocumento>
+        <complemento xsi:nil="true"/>
+        <codigoCliente>51158891</codigoCliente>
+        <numeroFactura>1</numeroFactura>
+        <numeroAutorizacionCuf>dsa564dsa54d6as5</numeroAutorizacionCuf>
+        <fechaEmisionFactura>3919-02-01T10:14:36.000</fechaEmisionFactura>
+        <montoTotalOriginal>775.00</montoTotalOriginal>
+        <montoTotalDevuelto>75.00</montoTotalDevuelto>
+        <montoDescuentoCreditoDebito xsi:nil="true"/>
+        <montoEfectivoCreditoDebito>9.75</montoEfectivoCreditoDebito>
+        <codigoExcepcion xsi:nil="true"/>
+        <leyenda>Ley N° 453: Los servicios deben suministrarse en condiciones de inocuidad, calidad y seguridad.
+        </leyenda>
+        <usuario>vjcm</usuario>
+        <codigoDocumentoSector>24</codigoDocumentoSector>
+    </cabecera>
+    <detalle>
+        <actividadEconomica>451010</actividadEconomica>
+        <codigoProductoSin>49111</codigoProductoSin>
+        <codigoProducto>123456</codigoProducto>
+        <descripcion>Amortiguadores</descripcion>
+        <cantidad>1</cantidad>
+        <unidadMedida>1</unidadMedida>
+        <precioUnitario>775.00</precioUnitario>
+        <montoDescuento xsi:nil="true"/>
+        <subTotal>775.00</subTotal>
+        <codigoDetalleTransaccion>1</codigoDetalleTransaccion>
+    </detalle>
+    <detalle>
+        <actividadEconomica>451010</actividadEconomica>
+        <codigoProductoSin>49111</codigoProductoSin>
+        <codigoProducto>123456</codigoProducto>
+        <descripcion>Tornillos</descripcion>
+        <cantidad>1</cantidad>
+        <unidadMedida>1</unidadMedida>
+        <precioUnitario>75.00</precioUnitario>
+        <montoDescuento xsi:nil="true"/>
+        <subTotal>75.00</subTotal>
+        <codigoDetalleTransaccion>2</codigoDetalleTransaccion>
+    </detalle>
+</notaFiscalComputarizadaCreditoDebito>

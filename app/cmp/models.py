@@ -70,6 +70,15 @@ class ComprasEnc(ClaseModelo):
     class Meta:
         verbose_name_plural = "Encabezado Compras"
         verbose_name="Encabezado Compra"
+        # Agregado 02/09/2026 al corregir el hallazgo "no existe forma
+        # de eliminar una compra completa" -- permiso DEDICADO (no
+        # reutiliza change_comprasenc), mismo criterio que se acordo
+        # para fac.eliminar_facturaenc: una accion tan sensible
+        # (revierte stock de todas las lineas) merece su propio
+        # permiso, no quedar agrupada bajo "puede editar".
+        permissions = [
+            ('eliminar_comprasenc', 'Permiso para eliminar una compra completa'),
+        ]
 
 class ComprasDet(ClaseModelo):
     compra=models.ForeignKey(ComprasEnc,on_delete=models.CASCADE)

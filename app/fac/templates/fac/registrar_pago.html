@@ -1,6 +1,6 @@
 <div class="modal-dialog">
     <div class="modal-content">
-        <form role="form" action="{% url 'fac:registrar_pago' enc.id %}" method="POST">
+        <form role="form" id="frmRegistrarPago" action="{% url 'fac:registrar_pago' enc.id %}" method="POST">
             <div class="card border-left-primary shadow py-2">
                 <div class="card-body">
                     <div class="csg-form-title">Registrar Pago — Factura N° {{ enc.id }}</div>
@@ -33,3 +33,19 @@
         </form>
     </div>
 </div>
+
+<script>
+    // abrir_modal() (base.html) engancha su propio submit AJAX a
+    // CUALQUIER form cargado en el popup -- por eso el pago se
+    // registraba bien (el POST igual llegaba a registrar_pago) pero
+    // nunca se veia la pantalla de pago_confirmacion: una redirect()
+    // de Django dentro de una respuesta AJAX no hace que el navegador
+    // cambie de pagina, jQuery solo trae el HTML final por dentro sin
+    // mostrarlo. stopImmediatePropagation() bloquea ese handler
+    // generico solo para este form, dejando que el navegador haga el
+    // POST nativo de pagina completa -- asi el redirect() de Django
+    // a pago_confirmacion funciona como corresponde.
+    $('#frmRegistrarPago').on('submit', function(e){
+        e.stopImmediatePropagation();
+    });
+</script>

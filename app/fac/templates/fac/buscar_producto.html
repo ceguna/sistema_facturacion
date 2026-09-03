@@ -1,4 +1,4 @@
-<div class="modal-dialog modal-lg">
+<div class="modal-dialog modal-xl">
   {% load l10n %}
   <div class="modal-content">
       <div class="col-xl-12 col-md-12 mb-12">
@@ -19,12 +19,15 @@
                               data-show-columns="true"
                               data-show-fullscreen="true"
                               data-locale="es-NI"
+                              data-sort-name="descripcion"
+                              data-sort-order="asc"
                               >
                               <thead>
-                                <th data-sortable="true" data-field="id">Id</th>        
+                                <th data-sortable="true" data-field="id">Id</th>
+                                <th data-field="foto">Foto</th>
                                 <th data-sortable="true" data-field="codigo">Código</th>
                                 <th data-sortable="true" data-field="codigo_barra">Barra</th>
-                                <th data-field="descripcion">Descripción</th>
+                                <th data-sortable="true" data-field="descripcion">Descripción</th>
                                 <th data-field="existencia">Existencia</th>
                                 <th data-field="precio">Precio</th>
                                 <th class="all">Acciones</th>
@@ -33,6 +36,17 @@
                                 {% for item in obj%}
                                 <tr>
                                   <td>{{ item.id }}</td>
+                                  <td>
+                                      {% if item.foto %}
+                                          <img src="{{ item.foto.url }}" alt="{{ item.descripcion }}"
+                                               class="miniatura-producto"
+                                               data-full-src="{{ item.foto.url }}"
+                                               data-descripcion="{{ item.descripcion }}"
+                                               style="width:40px;height:40px;object-fit:cover;border-radius:4px;cursor:pointer;">
+                                      {% else %}
+                                          <i class="fas fa-image text-gray-300" style="font-size:1.5rem;"></i>
+                                      {% endif %}
+                                  </td>
                                   <td>{{ item.codigo }}</td>
                                   <td>{{ item.codigo_barra }}</td>
                                   <td>{{item.descripcion}}</td>
@@ -70,7 +84,26 @@
           </div>
       </div>
   </div>
-</div> 
+</div>
+
+<!-- Mismo modal de imagen ampliada que ya usa producto_list.html --
+     al hacer click en la miniatura, se ve grande. -->
+<div class="modal fade" id="modalImagenProducto" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="modalImagenTitulo"></h6>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="modalImagenGrande" src="" alt="" style="max-width:100%;max-height:70vh;">
+            </div>
+        </div>
+    </div>
+</div>
+
 {% block js_page %}
 <script>
   $(function () {
@@ -79,6 +112,17 @@
           e.preventDefault();
           cerrar_modal();
 
+      });
+
+      // Mismo patron que producto_list.html: click en la miniatura
+      // abre el modal de imagen ampliada, sin seleccionar el producto.
+      $(document).on('click', '.miniatura-producto', function(e){
+          e.stopPropagation();
+          var src = $(this).data('full-src');
+          var descripcion = $(this).data('descripcion');
+          $('#modalImagenGrande').attr('src', src);
+          $('#modalImagenTitulo').text(descripcion);
+          $('#modalImagenProducto').modal('show');
       });
   });
   $('#tblProducto').bootstrapTable();

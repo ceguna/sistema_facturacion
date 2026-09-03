@@ -1,0 +1,39 @@
+{% extends 'base/base.html' %}
+{% block page_content %}
+<div class="card shadow mb-4">
+    <div class="card-header py-3">
+        <h4 class="m-0 font-weight-bold text-primary">Kardex de Cliente — Cuenta de Crédito</h4>
+    </div>
+    <div class="card-body">
+        <p class="text-muted">
+            Elegí un cliente para ver el detalle de sus ventas a crédito y abonos,
+            con el saldo acumulado a lo largo del tiempo.
+        </p>
+        <div class="form-group" style="max-width: 500px;">
+            <label for="selCliente">Cliente:</label>
+            <select id="selCliente" class="form-control">
+                <option value="">-- Elegir cliente --</option>
+                {% for c in clientes %}
+                <option value="{{ c.id }}">{{ c.apellidos }} {{ c.nombres }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block js_page %}
+<script>
+    $(function () {
+        $('#selCliente').select2({
+            placeholder: "Buscar cliente...",
+            allowClear: true
+        });
+        $('#selCliente').on('change', function () {
+            var id = $(this).val();
+            if (id) {
+                window.location.href = "/fac/creditos/kardex/" + id + "/";
+            }
+        });
+    });
+</script>
+{% endblock %}

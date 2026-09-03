@@ -46,6 +46,7 @@ def probar_con_header(nombre_header, valor_header, etiqueta):
             "codigoSistema": CODIGO_SISTEMA,
             "codigoSucursal": 0,
             "nit": NIT,
+            "codigoPuntoVenta": 1,
         }
         resp = client.service.cuis(SolicitudCuis=solicitud)
         print(f"cuis → Respuesta: {resp}")

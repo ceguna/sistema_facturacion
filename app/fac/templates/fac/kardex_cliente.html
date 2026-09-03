@@ -1,0 +1,136 @@
+{% extends es_pdf|yesno:"fac/kardex_cliente_pdf_base.html,base/base.html" %}
+{% load l10n %}
+{% block page_content %}
+<style>
+    /* Definidos aca (no en base.html ni en el base del PDF) para que
+       se vean identicos en pantalla y en PDF sin depender de clases
+       de Bootstrap, que xhtml2pdf no interpreta. */
+    .venc-vencido { background-color: #f8d7da; color: #721c24; }
+    .venc-proximo { background-color: #fff3cd; color: #856404; }
+</style>
+<div class="{% if not es_pdf %}card shadow mb-4{% endif %}">
+    {% if not es_pdf %}
+    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+        <h4 class="m-0 font-weight-bold text-primary">Kardex de Cliente — Cuenta de Crédito</h4>
+        <a href="{% url 'fac:kardex_cliente_selector' %}" class="btn btn-info btn-sm">
+            <i class="fas fa-arrow-left mr-1"></i>Elegir otro cliente
+        </a>
+    </div>
+    <div class="card-body">
+    {% endif %}
+
+        <div class="header-empresa">
+            {% if es_pdf %}
+            <b>{{ empresa.razon_social|default:"Sistema de Facturación" }}</b><br>
+            {% if empresa.nit %}NIT: {{ empresa.nit }}<br>{% endif %}
+            <h3>Kardex de Cliente — Cuenta de Crédito</h3>
+            {% endif %}
+        </div>
+
+        <p>
+            <b>Cliente:</b> {{ cliente.apellidos }} {{ cliente.nombres }}
+            {% if cliente.nit %}(NIT: {{ cliente.nit }}){% elif cliente.ci %}(CI: {{ cliente.ci }}){% endif %}
+        </p>
+        <p>
+            <b>Plazo de crédito:</b> {{ cliente.get_plazo_credito_dias_display|default:"No definido" }}
+            &nbsp;&nbsp;&nbsp;
+            <b>Límite de crédito autorizado:</b> Bs {{ cliente.limite_credito }}
+        </p>
+        {% if f1 or f2 %}
+        <p><b>Período:</b> {{ f1|date:'d/m/Y'|default:"inicio" }} al {{ f2|date:'d/m/Y'|default:"hoy" }}</p>
+        {% endif %}
+
+        {% if not es_pdf %}
+        <form method="get" class="form-inline mb-3">
+            <label class="mr-2">Desde:</label>
+            <input type="date" name="f1" value="{{ f1|date:'Y-m-d' }}" class="form-control mr-3">
+            <label class="mr-2">Hasta:</label>
+            <input type="date" name="f2" value="{{ f2|date:'Y-m-d' }}" class="form-control mr-3">
+            <button type="submit" class="btn btn-primary mr-2">
+                <i class="fas fa-filter mr-1"></i>Filtrar
+            </button>
+            <a href="{% url 'fac:kardex_cliente_pdf' cliente.id %}?f1={{ f1|date:'Y-m-d' }}&f2={{ f2|date:'Y-m-d' }}"
+               class="btn btn-outline-secondary" target="_blank">
+                <i class="fas fa-file-pdf mr-1"></i>Descargar PDF
+            </a>
+        </form>
+        {% endif %}
+
+        <table {% if not es_pdf %}class="table table-striped table-sm" data-toggle="table"{% else %}width="100%"{% endif %}>
+            <thead>
+                <tr>
+                    <th {% if es_pdf %}width="9%"{% endif %}>Fecha</th>
+                    <th {% if es_pdf %}width="11%"{% endif %}>Tipo</th>
+                    <th {% if es_pdf %}width="16%"{% endif %}>Documento</th>
+                    <th {% if es_pdf %}width="12%"{% endif %}>Vencimiento</th>
+                    <th class="text-right" {% if es_pdf %}width="9%"{% endif %}>Debe</th>
+                    <th class="text-right" {% if es_pdf %}width="9%"{% endif %}>Haber</th>
+                    <th class="text-right" {% if es_pdf %}width="10%"{% endif %}>Saldo</th>
+                    <th {% if es_pdf %}width="24%"{% endif %}>Nota</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in movimientos %}
+                <tr>
+                    <td>{{ m.fecha|date:'d/m/Y' }}</td>
+                    <td>{{ m.tipo }}</td>
+                    <td>{{ m.documento }}</td>
+                    <td class="{% if m.color_vencimiento == 'vencido' %}venc-vencido{% elif m.color_vencimiento == 'proximo' %}venc-proximo{% endif %}">
+                        {% if m.vencimiento %}{{ m.vencimiento|date:'d/m/Y' }}{% else %}&nbsp;{% endif %}
+                    </td>
+                    <td class="text-right">{% if m.debe %}{{ m.debe }}{% else %}&nbsp;{% endif %}</td>
+                    <td class="text-right">{% if m.haber %}{{ m.haber }}{% else %}&nbsp;{% endif %}</td>
+                    <td class="text-right"><b>{{ m.saldo }}</b></td>
+                    <td>{% if m.nota %}{{ m.nota }}{% else %}&nbsp;{% endif %}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" class="text-center">Este cliente no tiene movimientos de crédito registrados.</td></tr>
+                {% endfor %}
+            </tbody>
+            {% if movimientos %}
+            <tfoot>
+                <tr>
+                    <th colspan="4" style="text-align:right;">Totales</th>
+                    <th class="text-right">{{ total_debe }}</th>
+                    <th class="text-right">{{ total_haber }}</th>
+                    <th class="text-right">{{ saldo_final }}</th>
+                    <th>&nbsp;</th>
+                </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+
+        {% if not es_pdf %}
+        <p class="small text-muted mt-2">
+            <span class="venc-vencido" style="padding: 1px 6px;">&nbsp;</span> Vencida &nbsp;&nbsp;
+            <span class="venc-proximo" style="padding: 1px 6px;">&nbsp;</span> Próxima a vencer (7 días o menos)
+        </p>
+        {% endif %}
+
+        <div class="totales">
+            <p style="font-size: 1.15em;">
+                {% if saldo_final > 0 %}
+                    <span {% if not es_pdf %}class="text-danger"{% endif %}>
+                        <b>Saldo pendiente: Bs {{ saldo_final }} (el cliente debe)</b>
+                    </span>
+                {% elif saldo_final < 0 %}
+                    <span {% if not es_pdf %}class="text-info"{% endif %}>
+                        <b>Saldo a favor del cliente: Bs {{ saldo_final }}</b>
+                    </span>
+                {% else %}
+                    <span {% if not es_pdf %}class="text-success"{% endif %}>
+                        <b>Cliente al día (saldo en 0)</b>
+                    </span>
+                {% endif %}
+            </p>
+        </div>
+
+        {% if es_pdf %}
+        <p class="pie-pdf">Generado el {{ fecha_emision|date:'d/m/Y H:i' }} — {{ empresa.razon_social|default:"Sistema de Facturación" }}</p>
+        {% endif %}
+
+    {% if not es_pdf %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

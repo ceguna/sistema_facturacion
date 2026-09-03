@@ -46,6 +46,13 @@
         {% endif %}
         <a href="{% url 'fac:factura_list' %}" class="btn btn-info">Cancelar</a>
     </div>
+    <div id="progresoEmisionContenedor" style="display:none;" class="px-3 pt-2">
+        <div class="progress" style="height: 8px;">
+            <div id="barraProgresoEmision" class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                 role="progressbar" style="width: 0%;"></div>
+        </div>
+        <small class="text-muted" id="textoProgresoEmision"></small>
+    </div>
     <div class="card-body">
         <div class="content">
             <!-- Sección Superior -->
@@ -197,7 +204,7 @@
                     </div>
                     {% else %}
                     <div class="alert alert-secondary text-center">
-                        Esta factura {% if enc.anulado %}está anulada{% else %}ya fue reportada al SIN{% endif %}.
+                        Esta factura {% if not enc.estado %}fue eliminada{% elif enc.anulado %}está anulada{% else %}ya fue reportada al SIN{% endif %}.
                         No se pueden agregar más productos.
                     </div>
                     <input type="hidden" name="codigo" id="codigo" value="">
@@ -248,15 +255,19 @@
                             <td>
                                 {% if enc.puede_editarse %}
                                 <button type="button" class="btn btn-warning btn-circle"
-                                    onclick="borrar_detalle({{ item.id|unlocalize }})">
+                                    onclick="borrar_detalle({{ item.id|unlocalize }})"
+                                    data-toggle="tooltip" data-placement="top"
+                                    title="Revertir: crea una línea compensatoria en negativo y mantiene el historial. Requiere usuario y clave de supervisor.">
                                     <i class="fas fa-history"></i>
                                 </button>
                                 <button class="btn btn-danger btn-circle" 
-                                    onclick="return abrir_modal('{% url 'fac:facturas_del' enc.id item.id %}')">
+                                    onclick="return abrir_modal('{% url 'fac:facturas_del' enc.id item.id %}')"
+                                    data-toggle="tooltip" data-placement="top"
+                                    title="Eliminar permanentemente: no queda registro de que esta línea existió.">
                                     <i class="fas fa-trash-alt"></i>
                                 </button>
                                 {% else %}
-                                <span class="text-muted small">Sin acciones (factura {% if enc.anulado %}anulada{% else %}ya reportada al SIN{% endif %})</span>
+                                <span class="text-muted small">Sin acciones (factura {% if not enc.estado %}eliminada{% elif enc.anulado %}anulada{% else %}ya reportada al SIN{% endif %})</span>
                                 {% endif %}
                             </td>
                             </tr>
@@ -266,6 +277,56 @@
                 </div>
             </div>
             <!-- Fin Detalle -->
+
+            {% if enc.id and enc.forma_pago == 'CREDITO' %}
+            <hr>
+            <div class="row p-1">
+                <div class="col-lg-12">
+                    <h6 class="font-weight-bold text-primary">Abonos registrados</h6>
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Monto</th>
+                                <th>Forma de Pago</th>
+                                <th>Estado</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for pago in enc.pagos.all %}
+                            <tr>
+                                <td>{{ pago.fecha|date:'d/m/Y H:i' }}</td>
+                                <td>Bs {{ pago.monto }}</td>
+                                <td>{{ pago.get_forma_pago_display }}</td>
+                                <td>
+                                    {% if pago.revertido %}
+                                    <span class="badge badge-secondary" data-toggle="tooltip" title="{{ pago.motivo_reversion }}">Revertido</span>
+                                    {% else %}
+                                    <span class="badge badge-success">Vigente</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if not pago.revertido and not enc.anulado and enc.estado %}
+                                    <button type="button" class="btn btn-warning btn-circle btn-sm"
+                                        onclick="revertir_pago({{ pago.id|unlocalize }})"
+                                        data-toggle="tooltip" data-placement="top"
+                                        title="Revertir este abono: corrige un error de carga, no una devolución real. Requiere usuario y clave de supervisor.">
+                                        <i class="fas fa-undo"></i>
+                                    </button>
+                                    {% else %}
+                                    <span class="text-muted small">—</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="5" class="text-muted text-center">Sin abonos registrados</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -411,6 +472,9 @@
         });
         aplicarBloqueoCliente();
 
+        // Tooltips de los botones de Reversion/Borrado en el detalle.
+        $('[data-toggle="tooltip"]').tooltip();
+
         $("#btnBuscar").click(function(e){
             if ($("#enc_cliente").val()==="0"){
                 mensaje("Cliente No Seleccionado",'red');
@@ -419,8 +483,14 @@
             abrir_modal("{% url 'fac:factura_producto' %}");
         });
 
+        // Orden de avance pedido: Cliente -> Forma de Pago -> (digitos
+        // de tarjeta si aplica) -> Codigo de producto -> Cantidad. Se
+        // arranca aca: al elegir Cliente, el foco salta a Forma de
+        // Pago, para que el facturador la revise/corrija ANTES de
+        // cargar productos (evita el error de facturar con la forma de
+        // pago por defecto sin querer).
         $('#enc_cliente').on('select2:select', function (e) {
-            $('#codigo').focus();
+            $('#forma_pago').focus();
         });
 
         // Solucion definitiva al "0 fantasma" en Cantidad: el campo ya
@@ -441,7 +511,19 @@
         // ya seleccionada al cargar la pagina (nueva factura = Efectivo
         // por defecto; factura existente = lo que tenga guardado).
         actualizarCampoTarjeta();
-        $('#forma_pago').on('change', actualizarCampoTarjeta);
+        $('#forma_pago').on('change', function(){
+            actualizarCampoTarjeta();
+            // Continua la cadena de foco: si la forma de pago recien
+            // elegida es con tarjeta, el campo de 4 digitos recien
+            // aparecio y falta completarlo -- el foco va ahi. Para
+            // cualquier otra forma de pago, se salta directo a Codigo.
+            var formaPago = $(this).val();
+            if (formaPago === 'TARJETA_DEBITO' || formaPago === 'TARJETA_CREDITO') {
+                $('#numero_tarjeta').focus();
+            } else {
+                $('#codigo').focus();
+            }
+        });
     });
 
     $("#codigo").keypress(function(e){
@@ -565,6 +647,70 @@
         });
     }
 
+    // Mismo patron que borrar_detalle() -- Caso 1 de la politica de
+    // abonos: revertir un abono cargado por error (no una devolucion
+    // real), con usuario y clave de un supervisor real, y motivo
+    // obligatorio para dejar rastro de por que se autorizo.
+    function revertir_pago(id)
+    {
+        $.confirm({
+            theme:"modern",
+            icon:"fas fa-undo",
+            type:'orange',
+            title: "Confirmación Requerida",
+            content: 'url:/fac/creditos/revertir-pago/' + id + '/',
+            onContentReady: function () {
+                this.$content.find('#usuario').val('{{ user.username }}');
+                this.$content.find('#usuario').select();
+                this.$content.find('#usuario').focus();
+            },
+            buttons:{
+                revertir:{
+                    text:"Confirmar Reversión",
+                    btnClass:"btn btn-warning",
+                    action: function(){
+                        var usuario = this.$content.find('input#usuario');
+                        var pass = this.$content.find('input#password');
+                        var motivo = this.$content.find('textarea#motivo');
+
+                        if(!usuario.val().trim()){
+                            mensaje("Usuario es requerido",'red');
+                            return false;
+                        }
+                        if(!pass.val().trim()){
+                            mensaje("Contraseña es Requerida","red");
+                            return false;
+                        }
+                        if(!motivo.val().trim()){
+                            mensaje("Debe indicar el motivo de la reversión",'red');
+                            return false;
+                        }
+
+                        var data = {"usuario":usuario.val(),"pass":pass.val(),"motivo":motivo.val()};
+                        var token = '{{csrf_token}}';
+                        $.ajax({
+                            headers: { "X-CSRFToken": token },
+                            type:"POST",
+                            data:data,
+                            url: '/fac/creditos/revertir-pago/' + id + '/',
+                            success: function(r){
+                                if(r==="ok"){
+                                    location.reload(true);
+                                }else{
+                                    mensaje(r,'red');
+                                }
+                            },
+                            error: function(a,b,c){
+                                mensaje(c);
+                            }
+                        });
+                    }
+                },
+                cancelar: function(){}
+            }
+        });
+    }
+
     // --- Actualizar SOLO Cliente/Forma de Pago, sin agregar producto ---
     $("#btnActualizarDatos").click(function(){
         var id = "{{ enc.id }}";
@@ -603,6 +749,45 @@
         });
     });
 
+    // --- Barra de progreso estimada para la emision al SIN ---
+    // No hay forma de saber el avance REAL (es una sola llamada, el
+    // SIN no informa "voy por la mitad") -- esto es una animacion
+    // basada en el tiempo PROMEDIO real observado (~40-45s, ver los
+    // logs de fe/services.py), pensada para que el cajero sepa que
+    // sigue en curso, no para prometer un porcentaje exacto. Nunca
+    // llega sola al 100% -- se planta en 90% y avisa si se pasa del
+    // tiempo esperado, en vez de mentir que ya termino.
+    var intervaloProgresoEmision = null;
+
+    function iniciarProgresoEmision() {
+        var duracionEstimadaMs = 42000;
+        var pasoMs = 300;
+        var incremento = (pasoMs / duracionEstimadaMs) * 90;
+        var progresoActual = 0;
+
+        $("#progresoEmisionContenedor").show();
+        $("#barraProgresoEmision").css("width", "0%");
+        $("#textoProgresoEmision").text("Enviando al SIN, puede tardar unos 30-45 segundos...");
+
+        intervaloProgresoEmision = setInterval(function () {
+            progresoActual = Math.min(progresoActual + incremento, 90);
+            $("#barraProgresoEmision").css("width", progresoActual + "%");
+            if (progresoActual >= 90) {
+                $("#textoProgresoEmision").text("Esto está tardando un poco más de lo normal, seguí esperando...");
+            }
+        }, pasoMs);
+    }
+
+    function detenerProgresoEmision(completado) {
+        clearInterval(intervaloProgresoEmision);
+        if (completado) {
+            $("#barraProgresoEmision").css("width", "100%");
+        }
+        setTimeout(function () {
+            $("#progresoEmisionContenedor").hide();
+        }, 400);
+    }
+
     // --- Fase C: Confirmar y Emitir al SIN ---
     $("#btnEmitirSin").click(function(){
         var id = "{{ enc.id }}";
@@ -627,11 +812,13 @@
                     btnClass: "btn-primary",
                     action: function(){
                         var token = '{{csrf_token}}';
+                        iniciarProgresoEmision();
                         $.ajax({
                             headers: { "X-CSRFToken": token },
                             type: "POST",
                             url: "/fac/facturas/emitir/" + id,
                             success: function(r){
+                                detenerProgresoEmision(true);
                                 if(r.ok){
                                     $.alert({
                                         type:'green', title:'Factura Emitida',
@@ -648,6 +835,7 @@
                                 }
                             },
                             error: function(){
+                                detenerProgresoEmision(false);
                                 mensaje("Error de conexión al intentar emitir","red");
                             }
                         });

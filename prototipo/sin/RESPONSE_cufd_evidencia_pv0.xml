@@ -1,0 +1,13 @@
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ns2:cufdResponse xmlns:ns2="https://siat.impuestos.gob.bo/">
+      <RespuestaCufd>
+        <codigo>FBQUFCeGMuREE=E5MzFCNjI1ODY=QktSV2JUQkphVUMzczQTBFQTBGQk</codigo>
+        <codigoControl>9BFAA81E5E1BF74</codigoControl>
+        <direccion>BARRIO CASCO VIEJO UV 000B MZA 0034 CALLE BOLIVAR ESQUINA MURILLO BOLIVAR ESQUINA MURILLO Nro.: 203 Zona/Barrio.: CASCO VIEJO UV 000B MZA 0034</direccion>
+        <fechaVigencia>2026-09-01T19:27:22.172-04:00</fechaVigencia>
+        <transaccion>true</transaccion>
+      </RespuestaCufd>
+    </ns2:cufdResponse>
+  </soap:Body>
+</soap:Envelope>

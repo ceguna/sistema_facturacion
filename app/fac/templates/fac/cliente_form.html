@@ -84,10 +84,20 @@
                             <div class="col-4">
                                 {{ form.plazo_credito_dias.label_tag }}
                                 {{ form.plazo_credito_dias }}
+                                {% if form.plazo_credito_dias.errors %}
+                                <small class="text-danger d-block">{{ form.plazo_credito_dias.errors.0 }}</small>
+                                {% else %}
+                                <small class="text-muted" id="hintPlazoCredito">Obligatorio si está autorizado para crédito.</small>
+                                {% endif %}
                             </div>
                             <div class="col-4">
                                 {{ form.limite_credito.label_tag }}
                                 {{ form.limite_credito }}
+                                {% if form.limite_credito.errors %}
+                                <small class="text-danger d-block">{{ form.limite_credito.errors.0 }}</small>
+                                {% else %}
+                                <small class="text-muted" id="hintLimiteCredito">Obligatorio (mayor a 0) si está autorizado para crédito.</small>
+                                {% endif %}
                             </div>
                         </div>
 
@@ -110,11 +120,68 @@
             </div>
         </form>
     </div>
-</div> 
+</div>
 
-{% if t %}
 <script>
-$("#frmCliente").submit(function( e ) {
+// Marca plazo_credito_dias / limite_credito como visualmente obligatorios
+// (HTML5 required) apenas se tilda "Autorizado para Credito", y los
+// destilda si se destilda el checkbox. Es solo el aviso visual -- la
+// validacion real corre en el servidor via ClienteForm.clean().
+function actualizarCamposCredito()
+{
+    var autorizado = $('#id_autorizado_credito').is(':checked');
+    $('#id_plazo_credito_dias, #id_limite_credito').prop('required', autorizado);
+}
+
+$(function(){
+    actualizarCamposCredito();
+    $('#id_autorizado_credito').on('change', actualizarCamposCredito);
+});
+
+// Un solo handler de submit para las dos formas en que se usa este
+// formulario: dentro de una factura (con AJAX, ver el bloque
+// condicional del contexto "t" mas abajo) o desde el listado de
+// Clientes (POST normal de pagina completa). La validacion de credito
+// corre PRIMERO en los dos casos, para no depender de que el usuario
+// vea (o no) los errores que devuelva el servidor tras un POST normal
+// -- esta plantilla hoy no muestra errores de campo salvo los de
+// plazo/limite que agregamos arriba, asi que conviene cortarlo aca
+// antes de mandar el form.
+//
+// IMPORTANTE: este mismo <form> tambien tiene un segundo handler de
+// submit, atado por abrir_modal() en base.html DESPUES de que este
+// script corre (via $("#popup").find("form").on("submit", ...)). Un
+// "return false" de jQuery equivale a preventDefault()+stopPropagation()
+// -- pero NO detiene a otros handlers atados al MISMO elemento para el
+// MISMO evento. Sin stopImmediatePropagation() expreso, el handler
+// generico de abrir_modal() se ejecutaba IGUAL a continuacion, aunque
+// este handler ya hubiera rechazado el envio -- eso causaba el mensaje
+// de error duplicado (bug real detectado por el usuario), y en el caso
+// "en factura" (t=True), directamente un doble guardado del cliente
+// (dos POST en paralelo, cada handler con su propio $.ajax()).
+$('#frmCliente').on('submit', function(e){
+    var autorizado = $('#id_autorizado_credito').is(':checked');
+    if (autorizado) {
+        var plazo = $('#id_plazo_credito_dias').val();
+        var limite = parseFloat($('#id_limite_credito').val());
+
+        if (!plazo) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            mensaje('Debe seleccionar un plazo de crédito si el cliente está autorizado.', 'red');
+            return false;
+        }
+        if (!limite || limite <= 0) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            mensaje('Debe indicar un límite de crédito mayor a 0 si el cliente está autorizado.', 'red');
+            return false;
+        }
+    }
+
+    {% if t %}
+    e.preventDefault();
+    e.stopImmediatePropagation();
     var frm = $('#frmCliente');
     $.ajax({
             type: frm.attr('method'),
@@ -131,7 +198,6 @@ $("#frmCliente").submit(function( e ) {
             }
         });
         return false;
+    {% endif %}
 });
-
 </script>
-{% endif %}

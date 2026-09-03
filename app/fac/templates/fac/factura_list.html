@@ -78,6 +78,9 @@
           {% else %}
             <span class="badge badge-secondary">Sin Emitir al SIN</span>
           {% endif %}
+          {% if item.tiene_ncd %}
+            <br><span class="badge badge-dark" title="Corregida con Nota de Crédito-Débito -- cerrada fiscalmente">NCD Emitida</span>
+          {% endif %}
         </td>
         <td>
           {% if item.dia_cerrado %}
@@ -95,16 +98,30 @@
               <i class="fas fa-file-code"></i>
           </a>
           {% endif %}
-          {% if item.reportada_ante_sin and not item.anulado %}
+          <!-- Anular/Revertir: ocultos por completo si el usuario no es
+               supervisor (es_supervisor viene de FacturaView.get_context_data).
+               Antes, cualquier usuario logueado veia el boton, y al hacer
+               click sin permiso, la vista devolvia un redirect() que
+               abrir_modal() cargaba COMPLETO adentro del popup chico --
+               dando la impresion de haber "entrado" a la factura. Ver
+               tambien fac/_modal_error.html para el caso en que igual se
+               llegue a la URL (ej. permiso revocado a mitad de sesion). -->
+          {% if item.reportada_ante_sin and not item.anulado and es_supervisor %}
           <a href="#" class="href btn btn-secondary btn-circle" title="Anular factura"
              onclick="return abrir_modal('{% url 'fac:factura_anular' item.id %}')">
               <i class="fas fa-ban"></i>
           </a>
           {% endif %}
-          {% if item.anulado and item.estado_sin == 'anulada' %}
+          {% if item.anulado and item.estado_sin == 'anulada' and es_supervisor %}
           <a href="#" class="href btn btn-primary btn-circle" title="Revertir anulación (supervisor)"
              onclick="return abrir_modal('{% url 'fac:factura_revertir_anulacion' item.id %}')">
               <i class="fas fa-undo"></i>
+          </a>
+          {% endif %}
+          {% if item.reportada_ante_sin and not item.anulado and not item.tiene_ncd and es_supervisor %}
+          <a href="#" class="href btn btn-warning btn-circle" title="Emitir Nota de Crédito-Débito (supervisor)"
+             onclick="return abrir_modal('{% url 'fac:factura_emitir_ncd' item.id %}')">
+              <i class="fas fa-file-invoice-dollar"></i>
           </a>
           {% endif %}
           {% if user.is_superuser and not item.reportada_ante_sin %}

@@ -34,7 +34,7 @@ solicitud = {
     "codigoModalidad": 1,
     "codigoSistema": CODIGO_SISTEMA,
     "codigoSucursal": 0,
-    "codigoTipoPuntoVenta": 1,
+    "codigoTipoPuntoVenta": 5,
     "cuis": CUIS,
     "descripcion": "Punto de venta principal - Libreria Millennium",
     "nit": NIT,

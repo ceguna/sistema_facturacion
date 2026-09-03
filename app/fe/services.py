@@ -27,6 +27,7 @@ import gzip
 import hashlib
 import os
 import socket
+import time
 
 from decouple import config
 from django.utils import timezone
@@ -41,19 +42,29 @@ from zeep.helpers import serialize_object
 from requests import Session
 
 from .cuf import calcular_cuf
-from .factura_xml import construir_factura_xml
-from .models import Empresa, Sucursal
+from .factura_xml import construir_factura_xml, construir_nota_credito_debito_xml
+from .models import Empresa, Sucursal, PuntoVenta
 
 WSDL_CODIGOS = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionCodigos?wsdl"
 WSDL_FACTURACION = "https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionCompraVenta?wsdl"
+WSDL_OPERACIONES = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionOperaciones?wsdl"
 
 # Limites de tiempo para las llamadas al SIN. TIMEOUT_CONEXION es cuanto
 # esperar a que el servidor conteste al establecer la conexion (WSDL,
 # handshake). TIMEOUT_OPERACION es cuanto esperar la respuesta de una
 # operacion SOAP real (cuis, cufd, recepcionFactura, etc.) -- mas alto
 # porque el SIN puede tardar en procesar, sobre todo en Piloto.
+#
+# Confirmado con datos reales (21/08/2026, facturas 557/558/559): con
+# 30s, recepcionFactura daba timeout de forma consistente bajo carga
+# del Piloto; subido a 90s como diagnostico, las tres pasaron bien --
+# osea que es lentitud real del servidor, no un cuelgue. 45s queda como
+# valor definitivo: bastante mas margen que los 30 originales, sin
+# hacer esperar al cajero los 90s completos que solo se usaron para
+# aislar el problema. Revisar de nuevo con datos reales si vuelve a
+# fallar, sobre todo una vez en Produccion (no Piloto).
 TIMEOUT_CONEXION = 15
-TIMEOUT_OPERACION = 30
+TIMEOUT_OPERACION = 45
 
 # Rutas del certificado real. Configurables por variable de entorno para
 # no atar el codigo a la ubicacion actual (prototipo/sin/certificado_real).
@@ -72,6 +83,31 @@ ARCHIVO_XSD = config(
     default=os.path.join(os.path.dirname(__file__), "..", "..", "prototipo", "sin",
                           "facturaElectronicaCompraVenta.xsd")
 )
+# XSD especifico de Nota de Credito-Debito -- distinto del de factura
+# normal (estructura de cabecera/detalle diferente). Debe vivir en la
+# MISMA carpeta que ARCHIVO_XSD, ya que importa '../SignatureSchema.xsd'
+# con ruta relativa -- la misma dependencia que ya resuelve el XSD de
+# factura normal. CORREGIDO 26/08/2026: el archivo real se llama
+# notaElectronicaCreditoDebito.xsd (sin "Descuento" -- esa es una
+# variante distinta, para bonificaciones posteriores a la venta).
+ARCHIVO_XSD_NCD = config(
+    "SIN_ARCHIVO_XSD_NCD",
+    default=os.path.join(os.path.dirname(__file__), "..", "..", "prototipo", "sin",
+                          "notaElectronicaCreditoDebito.xsd")
+)
+
+# Se cargan UNA SOLA VEZ al importar este modulo (arranque del servidor),
+# no en cada factura -- releer estos tres archivos de disco y volver a
+# compilar el validador XSD en cada emision es trabajo repetido
+# innecesario (el certificado, la llave y el XSD no cambian entre una
+# factura y la siguiente). Antes de este cambio, emitir_factura_sin
+# hacia las tres cosas de nuevo cada vez que se llamaba.
+with open(ARCHIVO_LLAVE, "rb") as _f:
+    _LLAVE_PRIVADA = _f.read()
+with open(ARCHIVO_CERT, "rb") as _f:
+    _CERTIFICADO = _f.read()
+_XSD_SCHEMA = etree.XMLSchema(etree.parse(ARCHIVO_XSD))
+_XSD_SCHEMA_NCD = etree.XMLSchema(etree.parse(ARCHIVO_XSD_NCD))
 
 # Constantes de negocio confirmadas en la certificacion Piloto -- no
 # cambian de una factura a otra en este sistema (todas Compra-Venta,
@@ -82,6 +118,15 @@ CODIGO_MODALIDAD = 1          # Electronica en Linea
 CODIGO_TIPO_EMISION = 1       # En linea
 CODIGO_DOCUMENTO_SECTOR = 1   # Compra y Venta
 TIPO_FACTURA_DOCUMENTO = 1    # Con derecho a credito fiscal
+# Nota de Credito-Debito: CORREGIDO 26/08/2026 -- el documento real es
+# 'notaFiscalElectronicaCreditoDebito' (XSD notaElectronicaCreditoDebito.xsd),
+# NO la variante "...Descuento" (esa es para bonificaciones posteriores
+# a la venta, un caso distinto). codigoDocumentoSector=24 confirmado
+# fijo en ese XSD -- no 47, que corresponde a la variante Descuento.
+# Se envia con el MISMO recepcionFactura de siempre, no existe
+# operacion SOAP separada.
+TIPO_FACTURA_DOCUMENTO_AJUSTE = 3
+CODIGO_DOCUMENTO_SECTOR_NCD = 24
 CODIGO_TIPO_DOC_CI = 1
 CODIGO_TIPO_DOC_NIT = 5
 LEYENDA_DEFAULT = (
@@ -158,14 +203,47 @@ def _obtener_empresa_y_sucursal(codigo_sucursal=0):
     return empresa, sucursal
 
 
-def _pedir_cufd(client_codigos, empresa, sucursal, codigo_punto_venta, codigo_ambiente):
+def _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta):
+    """
+    Cada combinacion Sucursal+PuntoVenta tiene su PROPIO CUIS ante el
+    SIN -- nunca se reutiliza el de la Sucursal (codigo_punto_venta=0)
+    para otro punto de venta. Confirmado con datos reales: mismo NIT/
+    sistema/sucursal, distinto codigoPuntoVenta, el SIN devolvio dos
+    CUIS distintos (31477C6C para 0, 558F4FB7 para 1).
+
+    ANTES de este fix, las tres funciones que hablan con el SIN en
+    este archivo usaban 'sucursal.codigo_cuis' a mano en todos lados,
+    sin mirar codigo_punto_venta -- por eso una emision con
+    codigo_punto_venta=1 mandaba codigoPuntoVenta=1 pero con el CUIS
+    de codigoPuntoVenta=0, una combinacion invalida ante el SIN.
+    """
+    if codigo_punto_venta == 0:
+        return sucursal.codigo_cuis  # ya validado (no vacio) en _obtener_empresa_y_sucursal
+
+    punto_venta = PuntoVenta.objects.filter(
+        sucursal=sucursal, codigo_punto_venta=codigo_punto_venta
+    ).first()
+    if not punto_venta:
+        raise EmisionSinError(
+            f"No existe un PuntoVenta con código {codigo_punto_venta} "
+            "registrado localmente para esta sucursal."
+        )
+    if not punto_venta.codigo_cuis:
+        raise EmisionSinError(
+            f"El PuntoVenta {codigo_punto_venta} ('{punto_venta.nombre}') "
+            "no tiene CUIS propio cargado todavía."
+        )
+    return punto_venta.codigo_cuis
+
+
+def _pedir_cufd(client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente):
     solicitud = {
         "codigoAmbiente": codigo_ambiente,
         "codigoModalidad": CODIGO_MODALIDAD,
         "codigoPuntoVenta": codigo_punto_venta,
         "codigoSistema": empresa.codigo_sistema,
         "codigoSucursal": sucursal.codigo_sucursal,
-        "cuis": sucursal.codigo_cuis,
+        "cuis": cuis,
         "nit": empresa.nit,
     }
     resp = _llamar(
@@ -289,7 +367,8 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     """
     from fac.models import FacturaDet  # import local para evitar acoplar apps al importar el modulo
 
-    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_punto_venta and 0 or 0)
+    empresa, sucursal = _obtener_empresa_y_sucursal(0)  # sucursal siempre casa matriz (0) en este sistema
+    cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
     codigo_ambiente = (
         CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
         else CODIGO_AMBIENTE_PILOTO
@@ -334,11 +413,16 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     # muy cerca del momento de envio (tolerancia de unos pocos minutos).
     fecha_hora = timezone.localtime(timezone.now())
 
-    # --- 1. CUFD fresco ---
+    tiempos = {}
+    t_total = time.time()
+
+    # --- 1. CUFD fresco (con el CUIS correcto para este punto de venta) ---
+    t0 = time.time()
     client_codigos = _cliente_soap(WSDL_CODIGOS, token)
     cufd, codigo_control = _pedir_cufd(
-        client_codigos, empresa, sucursal, codigo_punto_venta, codigo_ambiente
+        client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente
     )
+    tiempos["cufd"] = time.time() - t0
 
     # --- 2. Calcular el CUF ---
     cuf = calcular_cuf(
@@ -355,36 +439,33 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     )
 
     # --- 3. Armar XML ---
+    t0 = time.time()
     cabecera = _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_venta, fecha_hora)
     detalle = _armar_detalle(factura_det_qs)
     xml_sin_firmar = construir_factura_xml(cabecera, detalle)
 
-    # --- 4. Firmar ---
+    # --- 4. Firmar (llave/certificado ya cargados al importar el modulo) ---
     signer = XMLSigner(
         method=methods.enveloped,
         signature_algorithm="rsa-sha256",
         digest_algorithm="sha256",
         c14n_algorithm=CanonicalizationMethod.CANONICAL_XML_1_0_WITH_COMMENTS,
     )
-    with open(ARCHIVO_LLAVE, "rb") as f:
-        llave = f.read()
-    with open(ARCHIVO_CERT, "rb") as f:
-        cert = f.read()
-    xml_firmado = signer.sign(xml_sin_firmar, key=llave, cert=cert)
-    XMLVerifier().verify(xml_firmado, x509_cert=cert)
+    xml_firmado = signer.sign(xml_sin_firmar, key=_LLAVE_PRIVADA, cert=_CERTIFICADO)
+    XMLVerifier().verify(xml_firmado, x509_cert=_CERTIFICADO)
 
-    # --- 5. Validar contra XSD ---
-    xsd_doc = etree.parse(ARCHIVO_XSD)
-    schema = etree.XMLSchema(xsd_doc)
+    # --- 5. Validar contra XSD (ya compilado al importar el modulo) ---
     xml_bytes = etree.tostring(xml_firmado)
-    if not schema.validate(etree.fromstring(xml_bytes)):
-        raise EmisionSinError(f"XML no valido contra XSD: {schema.error_log}")
+    if not _XSD_SCHEMA.validate(etree.fromstring(xml_bytes)):
+        raise EmisionSinError(f"XML no valido contra XSD: {_XSD_SCHEMA.error_log}")
+    tiempos["armar_firmar_validar"] = time.time() - t0
 
     # --- 6. Comprimir + hash ---
     xml_gzip = gzip.compress(xml_bytes)
     hash_archivo = hashlib.sha256(xml_gzip).hexdigest().upper()
 
-    # --- 7. Enviar ---
+    # --- 7. Enviar (con el CUIS correcto para este punto de venta) ---
+    t0 = time.time()
     client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
     solicitud_envio = {
         "codigoAmbiente": codigo_ambiente,
@@ -395,7 +476,7 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
         "codigoSistema": empresa.codigo_sistema,
         "codigoSucursal": sucursal.codigo_sucursal,
         "cufd": cufd,
-        "cuis": sucursal.codigo_cuis,
+        "cuis": cuis,
         "nit": empresa.nit,
         "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO,
         "archivo": xml_gzip,
@@ -407,6 +488,15 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
         lambda: serialize_object(client_facturacion.service.recepcionFactura(
             SolicitudServicioRecepcionFactura=solicitud_envio
         ))
+    )
+    tiempos["envio_sin"] = time.time() - t0
+    tiempos["total"] = time.time() - t_total
+    print(
+        f"[emitir_factura_sin] Factura {factura_enc.id}: "
+        f"CUFD={tiempos['cufd']:.1f}s, "
+        f"armar/firmar/validar={tiempos['armar_firmar_validar']:.1f}s, "
+        f"envio_SIN={tiempos['envio_sin']:.1f}s, "
+        f"TOTAL={tiempos['total']:.1f}s"
     )
 
     # --- 8. Guardar resultado en la factura ---
@@ -436,6 +526,227 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     return factura_enc
 
 
+def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
+    """
+    Emite una Nota de Credito-Debito ante el SIN, para corregir/ajustar
+    una factura ya validada -- unica version soportada por ahora:
+    DEVOLUCION TOTAL (decision del 26/08/2026, ver docstring de
+    NotaCreditoDebito en fac/models.py para el detalle completo).
+
+    Usa el MISMO servicio recepcionFactura que una factura normal --
+    no existe operacion SOAP separada para NCD (confirmado explorando
+    el WSDL el 26/08/2026). Se distingue por tipoFacturaDocumento=3 y
+    codigoDocumentoSector=47 (fijo segun el XSD oficial).
+
+    El detalle reconstruye TODAS las lineas de la factura original
+    (codigoDetalleTransaccion=1) y las repite identicas
+    (codigoDetalleTransaccion=2, la porcion devuelta) -- ya que es
+    devolucion total, ambas versiones de cada linea son iguales. No se
+    persiste un detalle propio para la NCD: se arma en el momento a
+    partir de FacturaDet de la factura original, fuente unica de
+    verdad.
+
+    Actualiza nota_credito_debito con cuf, cufd, estado_sin,
+    codigo_recepcion_sin, mensaje_sin, xml_firmado. Lanza
+    EmisionSinError si falta un prerrequisito, hay un problema de
+    red/timeout, o el SIN rechaza el envio -- mismo patron que
+    emitir_factura_sin.
+    """
+    from fac.models import FacturaDet  # import local, mismo motivo que en emitir_factura_sin
+
+    factura_original = nota_credito_debito.factura_original
+
+    if not factura_original.cuf:
+        raise EmisionSinError(
+            "La factura original no tiene CUF -- nunca fue emitida ante el SIN."
+        )
+
+    detalles_originales = list(
+        FacturaDet.objects.filter(factura=factura_original)
+        .select_related("producto", "producto__unidad_medida")
+    )
+    if not detalles_originales:
+        raise EmisionSinError("La factura original no tiene detalle (ningun producto cargado).")
+
+    empresa, sucursal = _obtener_empresa_y_sucursal(0)
+    cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
+    codigo_ambiente = (
+        CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
+        else CODIGO_AMBIENTE_PILOTO
+    )
+
+    cliente = factura_original.cliente
+    if cliente.nit:
+        codigo_tipo_doc = CODIGO_TIPO_DOC_NIT
+        numero_documento = cliente.nit
+    elif cliente.ci:
+        codigo_tipo_doc = CODIGO_TIPO_DOC_CI
+        numero_documento = cliente.ci
+    else:
+        raise EmisionSinError(f"El cliente '{cliente}' no tiene CI ni NIT cargado.")
+
+    token = _obtener_token()
+    fecha_hora = timezone.localtime(timezone.now())
+
+    # --- 1. CUFD fresco ---
+    client_codigos = _cliente_soap(WSDL_CODIGOS, token)
+    cufd, codigo_control = _pedir_cufd(
+        client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente
+    )
+
+    # --- 2. Calcular el CUF propio de la NCD (documento nuevo, con su
+    # propio numero -- nota_credito_debito.id, mismo patron que
+    # numeroFactura usa factura_enc.id) ---
+    cuf = calcular_cuf(
+        nit=empresa.nit,
+        fecha_hora=fecha_hora,
+        codigo_sucursal=sucursal.codigo_sucursal,
+        codigo_modalidad=CODIGO_MODALIDAD,
+        codigo_tipo_emision=CODIGO_TIPO_EMISION,
+        codigo_tipo_factura=TIPO_FACTURA_DOCUMENTO_AJUSTE,
+        codigo_documento_sector=CODIGO_DOCUMENTO_SECTOR_NCD,
+        numero_factura=nota_credito_debito.id,
+        codigo_punto_venta=codigo_punto_venta,
+        codigo_control=codigo_control,
+    )
+
+    # --- 3. Armar cabecera ---
+    cabecera = {
+        "nitEmisor": str(empresa.nit),
+        "razonSocialEmisor": empresa.razon_social,
+        "municipio": sucursal.municipio,
+        "telefono": None,
+        "numeroNotaCreditoDebito": nota_credito_debito.id,
+        "cuf": cuf,
+        "cufd": cufd,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "direccion": sucursal.direccion,
+        "codigoPuntoVenta": codigo_punto_venta,
+        "fechaEmision": fecha_hora.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
+        "nombreRazonSocial": cliente.razon or f"{cliente.nombres} {cliente.apellidos}",
+        "codigoTipoDocumentoIdentidad": codigo_tipo_doc,
+        "numeroDocumento": numero_documento,
+        "complemento": None,
+        "codigoCliente": str(cliente.id),
+        "numeroFactura": factura_original.id,
+        "numeroAutorizacionCuf": factura_original.cuf,
+        "fechaEmisionFactura": timezone.localtime(factura_original.fecha).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
+        "montoTotalOriginal": factura_original.total,
+        "montoTotalDevuelto": nota_credito_debito.monto_total_devuelto,
+        "montoDescuentoCreditoDebito": None,
+        "montoEfectivoCreditoDebito": nota_credito_debito.monto_efectivo_credito_debito,
+        "codigoExcepcion": None,
+        "leyenda": LEYENDA_DEFAULT,
+        "usuario": "sistema",
+        "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR_NCD,
+    }
+
+    # --- 4. Armar detalle ---
+    #
+    # BLOQUEADO A PROPOSITO al 26/08/2026: todavia no confirmamos como
+    # arma el SIN la relacion entre codigoDetalleTransaccion=1 (operacion
+    # original) y =2 (porcion devuelta) en ESTE documento especifico
+    # (notaFiscalElectronicaCreditoDebito). El ejemplo oficial del SIN
+    # muestra 2 lineas con PRODUCTOS DISTINTOS (no el mismo producto
+    # repetido) y un montoTotalOriginal que no coincide con la suma de
+    # una factura de mas de un item -- no alcanza para inferir con
+    # confianza si hay que reconstruir TODA la factura original linea
+    # por linea (como si hacia la variante Descuento) o si esta version
+    # espera algo mas simple (una linea "resumen" de origen + una de
+    # ajuste). Revisar el Anexo-Instructivo Tecnico del SIN o consultar
+    # directo antes de sacar este bloqueo.
+    raise EmisionSinError(
+        "Emision de Nota de Credito-Debito temporalmente bloqueada: falta "
+        "confirmar la estructura real del detalle (ver comentario en el codigo, "
+        "26/08/2026). No usar en Piloto ni en Produccion todavia."
+    )
+
+    detalle = []
+    for i, det in enumerate(detalles_originales, start=1):
+        prod = det.producto
+        linea_base = {
+            "actividadEconomica": prod.actividad_economica_sin,
+            "codigoProductoSin": prod.codigo_producto_sin,
+            "codigoProducto": prod.codigo,
+            "descripcion": prod.descripcion,
+            "cantidad": det.cantidad,
+            "unidadMedida": prod.unidad_medida.codigo_sin,
+            "precioUnitario": det.precio,
+            "montoDescuento": det.descuento or 0,
+            "subTotal": det.total,
+        }
+        detalle.append({**linea_base, "codigoDetalleTransaccion": 1})
+        detalle.append({**linea_base, "codigoDetalleTransaccion": 2})
+
+    # --- 5. Construir XML ---
+    xml_sin_firmar = construir_nota_credito_debito_xml(cabecera, detalle)
+
+    # --- 6. Firmar ---
+    signer = XMLSigner(
+        method=methods.enveloped,
+        signature_algorithm="rsa-sha256",
+        digest_algorithm="sha256",
+        c14n_algorithm=CanonicalizationMethod.CANONICAL_XML_1_0_WITH_COMMENTS,
+    )
+    xml_firmado = signer.sign(xml_sin_firmar, key=_LLAVE_PRIVADA, cert=_CERTIFICADO)
+    XMLVerifier().verify(xml_firmado, x509_cert=_CERTIFICADO)
+
+    # --- 7. Validar contra el XSD especifico de NCD (no el de factura) ---
+    xml_bytes = etree.tostring(xml_firmado)
+    if not _XSD_SCHEMA_NCD.validate(etree.fromstring(xml_bytes)):
+        raise EmisionSinError(f"XML de NCD no valido contra XSD: {_XSD_SCHEMA_NCD.error_log}")
+
+    # --- 8. Comprimir + hash ---
+    xml_gzip = gzip.compress(xml_bytes)
+    hash_archivo = hashlib.sha256(xml_gzip).hexdigest().upper()
+
+    # --- 9. Enviar (mismo recepcionFactura de siempre) ---
+    client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
+    solicitud_envio = {
+        "codigoAmbiente": codigo_ambiente,
+        "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR_NCD,
+        "codigoEmision": CODIGO_TIPO_EMISION,
+        "codigoModalidad": CODIGO_MODALIDAD,
+        "codigoPuntoVenta": codigo_punto_venta,
+        "codigoSistema": empresa.codigo_sistema,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "cufd": cufd,
+        "cuis": cuis,
+        "nit": empresa.nit,
+        "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO_AJUSTE,
+        "archivo": xml_gzip,
+        "fechaEnvio": timezone.localtime(timezone.now()).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
+        "hashArchivo": hash_archivo,
+    }
+    resp = _llamar(
+        "envío de la Nota de Crédito-Débito",
+        lambda: serialize_object(client_facturacion.service.recepcionFactura(
+            SolicitudServicioRecepcionFactura=solicitud_envio
+        ))
+    )
+
+    # --- 10. Guardar resultado ---
+    nota_credito_debito.cuf = cuf
+    nota_credito_debito.cufd = cufd
+    nota_credito_debito.codigo_recepcion_sin = resp.get("codigoRecepcion")
+    nota_credito_debito.mensaje_sin = str(resp.get("mensajesList") or "")
+    nota_credito_debito.xml_firmado = xml_bytes.decode('utf-8')
+
+    if resp["transaccion"] and resp.get("codigoEstado") == 908:
+        nota_credito_debito.estado_sin = nota_credito_debito.SIN_VALIDADA
+    elif resp["transaccion"] and resp.get("codigoEstado") == 901:
+        nota_credito_debito.estado_sin = nota_credito_debito.SIN_PENDIENTE
+    else:
+        nota_credito_debito.estado_sin = nota_credito_debito.SIN_OBSERVADA
+
+    nota_credito_debito.save()
+
+    if not resp["transaccion"]:
+        raise EmisionSinError(f"El SIN rechazo la Nota de Credito-Debito: {resp['mensajesList']}")
+
+    return nota_credito_debito
+
+
 def anular_factura_sin(factura_enc, codigo_motivo, codigo_punto_venta=0):
     """
     Anula ante el SIN una factura ya validada. Usa el servicio real
@@ -459,7 +770,8 @@ def anular_factura_sin(factura_enc, codigo_motivo, codigo_punto_venta=0):
             "La factura no tiene CUF -- nunca fue emitida ante el SIN, no hay nada que anular."
         )
 
-    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_punto_venta and 0 or 0)
+    empresa, sucursal = _obtener_empresa_y_sucursal(0)
+    cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
     codigo_ambiente = (
         CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
         else CODIGO_AMBIENTE_PILOTO
@@ -469,7 +781,7 @@ def anular_factura_sin(factura_enc, codigo_motivo, codigo_punto_venta=0):
     # CUFD fresco, igual que en la emision -- necesario para autenticar
     # esta operacion puntual ante el SIN.
     client_codigos = _cliente_soap(WSDL_CODIGOS, token)
-    cufd, _ = _pedir_cufd(client_codigos, empresa, sucursal, codigo_punto_venta, codigo_ambiente)
+    cufd, _ = _pedir_cufd(client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente)
 
     client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
     solicitud = {
@@ -481,7 +793,7 @@ def anular_factura_sin(factura_enc, codigo_motivo, codigo_punto_venta=0):
         "codigoSistema": empresa.codigo_sistema,
         "codigoSucursal": sucursal.codigo_sucursal,
         "cufd": cufd,
-        "cuis": sucursal.codigo_cuis,
+        "cuis": cuis,
         "nit": empresa.nit,
         "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO,
         "codigoMotivo": codigo_motivo,
@@ -539,7 +851,8 @@ def revertir_anulacion_sin(factura_enc, codigo_punto_venta=0):
             f"anulada ante el SIN (estado actual: {factura_enc.get_estado_sin_display()})."
         )
 
-    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_punto_venta and 0 or 0)
+    empresa, sucursal = _obtener_empresa_y_sucursal(0)
+    cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
     codigo_ambiente = (
         CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
         else CODIGO_AMBIENTE_PILOTO
@@ -547,7 +860,7 @@ def revertir_anulacion_sin(factura_enc, codigo_punto_venta=0):
     token = _obtener_token()
 
     client_codigos = _cliente_soap(WSDL_CODIGOS, token)
-    cufd, _ = _pedir_cufd(client_codigos, empresa, sucursal, codigo_punto_venta, codigo_ambiente)
+    cufd, _ = _pedir_cufd(client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente)
 
     client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
     solicitud = {
@@ -559,7 +872,7 @@ def revertir_anulacion_sin(factura_enc, codigo_punto_venta=0):
         "codigoSistema": empresa.codigo_sistema,
         "codigoSucursal": sucursal.codigo_sucursal,
         "cufd": cufd,
-        "cuis": sucursal.codigo_cuis,
+        "cuis": cuis,
         "nit": empresa.nit,
         "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO,
         "cuf": factura_enc.cuf,
@@ -581,3 +894,59 @@ def revertir_anulacion_sin(factura_enc, codigo_punto_venta=0):
 
     factura_enc.save()
     raise EmisionSinError(f"El SIN rechazo la reversion: {resp.get('mensajesList')}")
+
+
+def registrar_punto_venta_sin(sucursal, nombre_punto_venta, descripcion, codigo_tipo_punto_venta):
+    """
+    Registra un Punto de Venta ante el SIN (servicio registroPuntoVenta,
+    WSDL FacturacionOperaciones) y devuelve el codigoPuntoVenta que
+    ASIGNA el SIN como respuesta -- nunca se elige a mano, coincide con
+    lo que ya advertia el help_text del modelo desde antes.
+
+    Requiere que la Sucursal ya tenga CUIS cargado (el punto de venta
+    se registra DENTRO de una sucursal ya autorizada).
+    """
+    empresa = Empresa.objects.first()
+    if not empresa:
+        raise EmisionSinError("No hay configuracion de Empresa cargada (completar en /fe/).")
+    if not empresa.nit:
+        raise EmisionSinError("La Empresa no tiene NIT cargado.")
+    if not empresa.codigo_sistema:
+        raise EmisionSinError("La Empresa no tiene codigo_sistema cargado "
+                               "(Autorizacion de Sistemas pendiente ante el SIN).")
+    if not sucursal.codigo_cuis:
+        raise EmisionSinError(
+            f"La Sucursal '{sucursal}' no tiene CUIS cargado -- "
+            "necesario para registrar un punto de venta dentro de ella."
+        )
+
+    codigo_ambiente = (
+        CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
+        else CODIGO_AMBIENTE_PILOTO
+    )
+    token = _obtener_token()
+    client = _cliente_soap(WSDL_OPERACIONES, token)
+
+    solicitud = {
+        "codigoAmbiente": codigo_ambiente,
+        "codigoModalidad": CODIGO_MODALIDAD,
+        "codigoSistema": empresa.codigo_sistema,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "codigoTipoPuntoVenta": codigo_tipo_punto_venta,
+        "cuis": sucursal.codigo_cuis,
+        "descripcion": descripcion,
+        "nit": empresa.nit,
+        "nombrePuntoVenta": nombre_punto_venta,
+    }
+
+    resp = _llamar(
+        "registro de punto de venta",
+        lambda: serialize_object(client.service.registroPuntoVenta(
+            SolicitudRegistroPuntoVenta=solicitud
+        ))
+    )
+
+    if not resp.get("transaccion"):
+        raise EmisionSinError(f"El SIN rechazo el registro del punto de venta: {resp.get('mensajesList')}")
+
+    return resp.get("codigoPuntoVenta")

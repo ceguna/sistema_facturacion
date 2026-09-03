@@ -164,16 +164,33 @@ class PuntoVenta(ClaseModelo2):
         Sucursal, on_delete=models.CASCADE, related_name="puntos_venta"
     )
     codigo_punto_venta = models.PositiveIntegerField(
-        help_text="Codigo de punto de venta. IMPORTANTE: en la integracion real "
-                   "este codigo lo ASIGNA el SIN como respuesta del servicio "
-                   "registroPuntoVenta, no se elige a mano. Mientras tanto se "
-                   "carga manualmente para poder armar la configuracion local."
+        help_text="Codigo de punto de venta que ASIGNA el SIN como respuesta "
+                   "del servicio registroPuntoVenta -- se completa solo al "
+                   "guardar un punto de venta nuevo, no se elige a mano."
     )
     codigo_tipo_punto_venta = models.PositiveSmallIntegerField(
         choices=TIPO_PUNTO_VENTA, default=MOVILES,
         help_text="Tipo de punto de venta exigido por el servicio registroPuntoVenta del SIN."
     )
     nombre = models.CharField(max_length=100)
+    descripcion = models.CharField(
+        max_length=250, null=True, blank=True,
+        help_text="Descripcion del punto de venta -- campo 'descripcion' "
+                   "exigido por separado del nombre en registroPuntoVenta."
+    )
+
+    # Cada combinacion Sucursal+PuntoVenta tiene su PROPIO CUIS -- no se
+    # puede reutilizar el de la Sucursal (codigo_punto_venta=0) para
+    # ningun otro punto de venta. Confirmado con datos reales: mismo
+    # NIT/sistema/sucursal, distinto codigoPuntoVenta, el SIN devolvio
+    # dos CUIS distintos (31477C6C para 0, 558F4FB7 para 1).
+    codigo_cuis = models.CharField(max_length=50, null=True, blank=True)
+    fecha_autorizacion_cuis = models.DateTimeField(null=True, blank=True)
+    fecha_vigencia_cuis = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Fecha de vencimiento del CUIS de este punto de venta (dato 'fechaVigencia' "
+                   "que devuelve el SIN). Renovable desde 5 dias antes de esta fecha."
+    )
 
     def __str__(self):
         return '{} (Cod. {})'.format(self.nombre, self.codigo_punto_venta)

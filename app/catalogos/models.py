@@ -67,6 +67,45 @@ class CatalogoSIN(models.Model):
         return f"[{self.get_tipo_catalogo_display()}] {self.codigo} - {self.descripcion}"
 
 
+class ActividadDocumentoSector(models.Model):
+    """
+    Relación Actividad <-> Documento Sector que exige el SIN (servicio
+    sincronizarListaActividadesDocumentoSector). Es una tabla de
+    RELACIÓN entre dos catálogos (Actividades y Tipo Documento Sector),
+    sin descripción propia -- por eso no encaja en el modelo genérico
+    CatalogoSIN (que asume código+descripción) y tiene su propio modelo.
+
+    Confirmado en vivo (22/08/2026): la respuesta trae la lista bajo la
+    clave 'listaActividadesDocumentoSector', con items de la forma
+    {codigoActividad: '476000', codigoDocumentoSector: 1,
+    tipoDocumentoSector: 'FCV'} -- una misma actividad puede combinarse
+    con varios documentos de sector distintos (por eso la clave única
+    es el PAR actividad+documento-sector, no cada campo por separado).
+    """
+    codigo_actividad = models.CharField(max_length=20, db_index=True)
+    codigo_documento_sector = models.PositiveIntegerField()
+    tipo_documento_sector = models.CharField(
+        max_length=20,
+        help_text="Código corto que identifica el tipo (ej. 'FCV', 'FAC_SEG') -- "
+                   "no es una descripción larga, el SIN no entrega una para este catálogo."
+    )
+    vigente = models.BooleanField(
+        default=True,
+        help_text="Se marca False si una sincronización posterior ya no trae esta "
+                   "combinación (baja lógica, mismo criterio que CatalogoSIN)."
+    )
+    fecha_sincronizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Actividad ↔ Documento Sector"
+        verbose_name_plural = "Actividades ↔ Documento Sector"
+        unique_together = ("codigo_actividad", "codigo_documento_sector")
+        ordering = ["codigo_actividad", "codigo_documento_sector"]
+
+    def __str__(self):
+        return f"Actividad {self.codigo_actividad} - Doc.Sector {self.codigo_documento_sector} ({self.tipo_documento_sector})"
+
+
 class SincronizacionLog(models.Model):
     """
     Registro de cada corrida de sincronización diaria de catálogos.

@@ -1,0 +1,5 @@
+<soap-env:Envelope xmlns:soap-env="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap-env:Body>
+    <ns0:verificarComunicacion xmlns:ns0="https://siat.impuestos.gob.bo/"/>
+  </soap-env:Body>
+</soap-env:Envelope>

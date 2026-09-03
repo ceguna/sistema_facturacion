@@ -13,6 +13,7 @@ la misma construccion de credenciales.
 Uso:
     python manage.py generar_volumen_catalogos --veces 20
     python manage.py generar_volumen_catalogos --veces 50 --pausa 5
+    python manage.py generar_volumen_catalogos --veces 20 --codigo-punto-venta 1
 """
 import time
 
@@ -20,7 +21,7 @@ from decouple import config
 from django.core.management.base import BaseCommand, CommandError
 
 from catalogos.services import sincronizar_todos_los_catalogos, SOAPClienteSIN
-from fe.models import Empresa, Sucursal
+from fe.models import Empresa, Sucursal, PuntoVenta
 
 
 class Command(BaseCommand):
@@ -35,10 +36,18 @@ class Command(BaseCommand):
                              help='Cuantas veces correr la sincronizacion completa.')
         parser.add_argument('--pausa', type=float, default=5.0,
                              help='Segundos de espera entre cada corrida completa.')
+        parser.add_argument(
+            '--codigo-punto-venta', type=int, default=0,
+            help='Punto de venta a usar. 0 (default) = casa matriz implicito, '
+                 'usa el CUIS de la Sucursal. Cualquier otro valor busca el '
+                 'PuntoVenta correspondiente (ya registrado localmente) y usa '
+                 'SU PROPIO CUIS.'
+        )
 
     def handle(self, *args, **options):
         veces = options['veces']
         pausa = options['pausa']
+        codigo_punto_venta = options['codigo_punto_venta']
 
         # Misma validacion y armado de credenciales que sincronizar_catalogos.py
         empresa = Empresa.objects.first()
@@ -46,8 +55,32 @@ class Command(BaseCommand):
             raise CommandError("Empresa sin NIT o codigo_sistema cargado.")
 
         sucursal_matriz = Sucursal.objects.filter(empresa=empresa, codigo_sucursal=0).first()
-        if not sucursal_matriz or not sucursal_matriz.codigo_cuis:
-            raise CommandError("Sucursal casa matriz sin CUIS cargado.")
+        if not sucursal_matriz:
+            raise CommandError("No existe la Sucursal casa matriz (codigo_sucursal=0).")
+
+        # Mismo criterio que en sincronizar_catalogos.py: 0 usa el CUIS de
+        # la Sucursal, cualquier otro valor usa el CUIS PROPIO de ese
+        # PuntoVenta -- nunca se reutiliza un CUIS entre combinaciones
+        # distintas de Sucursal+PuntoVenta.
+        if codigo_punto_venta == 0:
+            if not sucursal_matriz.codigo_cuis:
+                raise CommandError("Sucursal casa matriz sin CUIS cargado.")
+            cuis = sucursal_matriz.codigo_cuis
+        else:
+            punto_venta = PuntoVenta.objects.filter(
+                sucursal=sucursal_matriz, codigo_punto_venta=codigo_punto_venta
+            ).first()
+            if not punto_venta:
+                raise CommandError(
+                    f"No existe un PuntoVenta con código {codigo_punto_venta} "
+                    "registrado localmente para la sucursal casa matriz."
+                )
+            if not punto_venta.codigo_cuis:
+                raise CommandError(
+                    f"El PuntoVenta {codigo_punto_venta} ('{punto_venta.nombre}') "
+                    "no tiene CUIS propio cargado todavía."
+                )
+            cuis = punto_venta.codigo_cuis
 
         try:
             token = config("SIN_TOKEN_DELEGADO")
@@ -57,7 +90,8 @@ class Command(BaseCommand):
         codigo_ambiente = 1 if empresa.ambiente == Empresa.PRODUCCION else 2
 
         self.stdout.write(self.style.WARNING(
-            f"Corriendo sincronizacion de catalogos {veces} veces, con {pausa}s de pausa entre corridas."
+            f"Corriendo sincronizacion de catalogos {veces} veces (punto de venta "
+            f"{codigo_punto_venta}), con {pausa}s de pausa entre corridas."
         ))
 
         exitosas = 0
@@ -68,9 +102,9 @@ class Command(BaseCommand):
                 token=token,
                 nit=empresa.nit,
                 codigo_sistema=empresa.codigo_sistema,
-                cuis=sucursal_matriz.codigo_cuis,
+                cuis=cuis,
                 codigo_sucursal=sucursal_matriz.codigo_sucursal,
-                codigo_punto_venta=0,
+                codigo_punto_venta=codigo_punto_venta,
                 codigo_ambiente=codigo_ambiente,
             )
 

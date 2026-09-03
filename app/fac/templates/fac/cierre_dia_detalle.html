@@ -16,6 +16,24 @@
       <div class="col-md-4"><b>Pendientes ante el SIN:</b> {{ sin_resolver.count }}</div>
     </div>
 
+    {% if sin_resolver.count > 0 %}
+    <div class="mb-3">
+      <button type="button" class="btn btn-warning" id="btnEmitirTodas">
+        <i class="fas fa-paper-plane mr-1"></i>Emitir Todas las Pendientes al SIN ({{ sin_resolver.count }})
+      </button>
+      <button type="button" class="btn btn-warning" id="btnReintentarFallidas" style="display:none;">
+        <i class="fas fa-redo mr-1"></i>Reintentar las que Fallaron
+      </button>
+      <div id="progresoLoteContenedor" style="display:none;" class="mt-2">
+        <div class="progress" style="height: 22px;">
+          <div id="barraProgresoLote" class="progress-bar progress-bar-striped progress-bar-animated"
+               role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <small id="progresoLoteTexto" class="text-muted"></small>
+      </div>
+    </div>
+    {% endif %}
+
     <table class="table" id="tablaCierre">
       <thead>
         <tr>
@@ -32,7 +50,7 @@
           <td>{{ item.id }}</td>
           <td>{{ item.cliente }}</td>
           <td>{{ item.total }}</td>
-          <td>
+          <td class="celda-estado">
             {% if item.anulado %}
               <span class="badge badge-dark">Anulada</span>
             {% elif item.estado_sin == 'revertida' %}
@@ -47,7 +65,7 @@
               <span class="badge badge-secondary">Sin Emitir al SIN</span>
             {% endif %}
           </td>
-          <td>
+          <td class="celda-accion">
             {% if not item.anulado and item.estado_sin == 'no_enviada' or item.estado_sin == 'observada' %}
               {% if not item.anulado %}
               <button type="button" class="btn btn-primary btn-sm btn-reintentar" data-id="{{ item.id }}">
@@ -79,11 +97,11 @@
           arriba, o resuélvalas (edición/eliminación) antes de cerrar el día.
         </div>
 
-        {% if es_supervisor %}
+        {% if puede_forzar_cierre %}
         <div class="form-check mb-2">
           <input class="form-check-input" type="checkbox" name="forzar" value="1" id="chkForzar">
           <label class="form-check-label" for="chkForzar">
-            Cerrar de todas formas, dejando estas facturas como pendientes (solo superusuario)
+            Cerrar de todas formas, dejando estas facturas como pendientes
           </label>
         </div>
         <div class="form-group">
@@ -95,7 +113,7 @@
         </button>
         <a href="{% url 'fac:cierre_dia_pendientes' %}" class="btn btn-secondary ml-2">Volver sin cerrar</a>
         {% else %}
-        <p class="text-muted">Solo un supervisor puede forzar el cierre del día con facturas pendientes.</p>
+        <p class="text-muted">No tiene permisos para forzar el cierre del día con facturas pendientes.</p>
         <a href="{% url 'fac:cierre_dia_pendientes' %}" class="btn btn-secondary">Volver</a>
         {% endif %}
       {% endif %}
@@ -143,6 +161,102 @@ $(function(){
                 btn.prop("disabled", false).text("Reintentar Envío");
             }
         });
+    });
+
+    // --- Envio masivo: reutiliza el MISMO endpoint /fac/facturas/emitir/<id>
+    // que ya usa el boton individual de arriba -- una llamada AJAX por
+    // factura, en cadena (nunca en paralelo: cada una espera a que la
+    // anterior termine, para no saturar el SIN de golpe), actualizando
+    // la fila correspondiente en vivo. No se recarga la pagina hasta
+    // el final del lote completo -- recargar despues de cada una
+    // rompería la cadena.
+    function actualizarProgreso(hechas, total) {
+        var pct = Math.round((hechas / total) * 100);
+        $("#barraProgresoLote").css("width", pct + "%").attr("aria-valuenow", pct);
+        $("#progresoLoteTexto").text("Procesando " + hechas + " de " + total + "...");
+    }
+
+    function emitirPendientesEnLote(ids) {
+        var total = ids.length;
+        var procesadas = 0;
+        var exitosas = 0;
+        var fallidas = [];
+        var token = '{{ csrf_token }}';
+
+        function procesarSiguiente() {
+            if (procesadas >= total) {
+                $("#progresoLoteTexto").text(
+                    "Terminado: " + exitosas + " emitida(s) correctamente, " +
+                    fallidas.length + " con error, de " + total + " intentada(s)."
+                );
+                $("#btnEmitirTodas").hide();
+                if (fallidas.length > 0) {
+                    $("#btnReintentarFallidas").show().data("ids", fallidas);
+                }
+                // Recarga UNA sola vez, al terminar todo el lote -- asi
+                // el bloque de "Cerrar Dia" (puede_cerrar_limpio, que se
+                // calcula del lado del servidor) se vuelve a evaluar
+                // con el resultado final.
+                setTimeout(function () { location.reload(true); }, 2500);
+                return;
+            }
+
+            var id = ids[procesadas];
+            var fila = $("#fila-factura-" + id);
+            fila.find("td.celda-estado").html('<span class="badge badge-secondary">Enviando...</span>');
+
+            $.ajax({
+                headers: { "X-CSRFToken": token },
+                type: "POST",
+                url: "/fac/facturas/emitir/" + id,
+                success: function (r) {
+                    procesadas++;
+                    if (r.ok) {
+                        exitosas++;
+                        fila.find("td.celda-estado").html('<span class="badge badge-success">Emitida al SIN</span>');
+                    } else {
+                        fallidas.push(id);
+                        fila.find("td.celda-estado").html(
+                            '<span class="badge badge-warning">Error</span><br><small class="text-danger celda-error-msg"></small>'
+                        );
+                        fila.find("small.celda-error-msg").text(r.error);
+                    }
+                    fila.find("td.celda-accion").html('<span class="text-muted small">—</span>');
+                    actualizarProgreso(procesadas, total);
+                    procesarSiguiente();
+                },
+                error: function () {
+                    procesadas++;
+                    fallidas.push(id);
+                    fila.find("td.celda-estado").html('<span class="badge badge-danger">Error de conexión</span>');
+                    actualizarProgreso(procesadas, total);
+                    procesarSiguiente();
+                }
+            });
+        }
+
+        procesarSiguiente();
+    }
+
+    $("#btnEmitirTodas").click(function () {
+        var ids = $('.btn-reintentar').map(function () { return $(this).data('id'); }).get();
+        if (ids.length === 0) return;
+
+        $(".btn-reintentar").prop("disabled", true);
+        $(this).prop("disabled", true).text("Emitiendo...");
+        $("#progresoLoteContenedor").show();
+        actualizarProgreso(0, ids.length);
+
+        emitirPendientesEnLote(ids);
+    });
+
+    $("#btnReintentarFallidas").click(function () {
+        var ids = $(this).data("ids") || [];
+        if (ids.length === 0) return;
+        $(this).hide();
+        $("#progresoLoteContenedor").show();
+        actualizarProgreso(0, ids.length);
+        emitirPendientesEnLote(ids);
     });
 });
 </script>

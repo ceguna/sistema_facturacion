@@ -14,7 +14,7 @@ TOKEN = config("SIN_TOKEN_DELEGADO")
 
 NIT = 3852849010
 CODIGO_SISTEMA = "373A0EA0FBA931B62586"
-CUIS = "31477C6C"
+CUIS = "558F4FB7"
 
 session = Session()
 session.headers.update({"apikey": f"TokenApi {TOKEN}"})
@@ -26,11 +26,11 @@ client = Client(wsdl=WSDL, transport=transport)
 print("=== Firma de cufd ===")
 print(client.service.cufd)
 
-print("\n=== Probando cufd (codigoPuntoVenta=0, sin registro previo) ===")
+print("\n=== Probando cufd (codigoPuntoVenta=1, sin registro previo) ===")
 solicitud = {
     "codigoAmbiente": 2,
     "codigoModalidad": 1,
-    "codigoPuntoVenta": 0,
+    "codigoPuntoVenta": 1,
     "codigoSistema": CODIGO_SISTEMA,
     "codigoSucursal": 0,
     "cuis": CUIS,

@@ -11,6 +11,7 @@ Uso:
     python manage.py generar_volumen_sin --cantidad 10
     python manage.py generar_volumen_sin --cantidad 500 --pausa 3
     python manage.py generar_volumen_sin --cantidad 50 --sin-anular
+    python manage.py generar_volumen_sin --cantidad 50 --codigo-punto-venta 1
 """
 import time
 
@@ -20,6 +21,7 @@ from django.contrib.auth.models import User
 from fac.models import Cliente, FacturaEnc, FacturaDet
 from inv.models import Producto
 from catalogos.models import CatalogoSIN
+from fe.models import Sucursal, PuntoVenta
 from fe.services import emitir_factura_sin, anular_factura_sin, revertir_anulacion_sin, EmisionSinError
 
 
@@ -40,11 +42,18 @@ class Command(BaseCommand):
                              help='Solo emitir, sin anular ni revertir (para sumar volumen de la Etapa IV nada mas).')
         parser.add_argument('--usuario', type=str, default=None,
                              help='Username a usar para uc/usuario_anulacion. Por defecto, el primer superusuario.')
+        parser.add_argument(
+            '--codigo-punto-venta', type=int, default=0,
+            help='Punto de venta a usar en emision/anulacion/reversion. 0 (default) = '
+                 'casa matriz implicito. Cualquier otro valor requiere que ese PuntoVenta '
+                 'ya este registrado localmente con su propio CUIS cargado.'
+        )
 
     def handle(self, *args, **options):
         cantidad = options['cantidad']
         pausa = options['pausa']
         con_anulacion = not options['sin_anular']
+        codigo_punto_venta = options['codigo_punto_venta']
 
         usuario = None
         if options['usuario']:
@@ -66,6 +75,27 @@ class Command(BaseCommand):
                 "No hay ningun Producto homologado (actividad + codigo SIN + unidad con codigo_sin). "
                 "Homologue al menos uno desde /inv/productos/ antes de correr este comando."
             )
+
+        # Validacion temprana del punto de venta -- falla ANTES de crear
+        # ninguna factura de prueba, en vez de que el primer ciclo la
+        # cree y recien ahi explote al llamar a emitir_factura_sin (que
+        # ya valida esto internamente, pero mas vale avisar antes de
+        # generar facturas huerfanas sin emitir).
+        if codigo_punto_venta != 0:
+            sucursal = Sucursal.objects.filter(codigo_sucursal=0).first()
+            punto_venta = PuntoVenta.objects.filter(
+                sucursal=sucursal, codigo_punto_venta=codigo_punto_venta
+            ).first() if sucursal else None
+            if not punto_venta:
+                raise CommandError(
+                    f"No existe un PuntoVenta con código {codigo_punto_venta} registrado localmente."
+                )
+            if not punto_venta.codigo_cuis:
+                raise CommandError(
+                    f"El PuntoVenta {codigo_punto_venta} ('{punto_venta.nombre}') "
+                    "no tiene CUIS propio cargado todavía."
+                )
+
         # Colchon de stock: cada ciclo completo (emitir+anular+revertir)
         # descuenta 1 unidad neta (no 0 -- el flujo real es -1/+1/-1).
         # Se sube la existencia lo suficiente para que nunca cruce a
@@ -88,7 +118,8 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.WARNING(
             f"Generando {cantidad} ciclo(s) — cliente: {cliente}, producto: {producto.descripcion}, "
-            f"pausa: {pausa}s entre llamadas, anulacion+reversion: {con_anulacion}"
+            f"punto de venta: {codigo_punto_venta}, pausa: {pausa}s entre llamadas, "
+            f"anulacion+reversion: {con_anulacion}"
         ))
 
         emitidas_ok = 0
@@ -112,7 +143,7 @@ class Command(BaseCommand):
 
             # --- 2. Emitir ---
             try:
-                emitir_factura_sin(enc)
+                emitir_factura_sin(enc, codigo_punto_venta=codigo_punto_venta)
                 self.stdout.write(self.style.SUCCESS(
                     f"  Emitida: factura {enc.id}, estado {enc.estado_sin}"
                 ))
@@ -135,7 +166,7 @@ class Command(BaseCommand):
 
             # --- 3. Anular ---
             try:
-                anular_factura_sin(enc, int(motivo.codigo))
+                anular_factura_sin(enc, int(motivo.codigo), codigo_punto_venta=codigo_punto_venta)
                 detalles = FacturaDet.objects.filter(factura=enc)
                 for det in detalles:
                     prod = det.producto
@@ -156,7 +187,7 @@ class Command(BaseCommand):
 
             # --- 4. Revertir la anulacion ---
             try:
-                revertir_anulacion_sin(enc)
+                revertir_anulacion_sin(enc, codigo_punto_venta=codigo_punto_venta)
                 detalles = FacturaDet.objects.filter(factura=enc)
                 for det in detalles:
                     prod = det.producto

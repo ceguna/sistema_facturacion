@@ -1,0 +1,87 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Recibo de Abono</title>
+    <link rel="stylesheet" href="{% static 'base/css/recibo.css' %}">
+    <style type="text/css">
+        @page {
+            width: 58mm; 
+            size: auto;   
+            margin: 0mm;
+            }
+        .aviso-pago {
+            text-align: center;
+            margin: 10px 0;
+            padding: 6px 0;
+            border-top: 1px dashed #000;
+            border-bottom: 1px dashed #000;
+        }
+    </style>
+</head>
+<body onload="window.print()" class="receipt">
+    <div class="col-md-1 col-sm-1 col-xs-1 col-xl-1">
+        <center>
+            <b class="text-center">{{ empresa.razon_social|default:"Sistema de Facturación" }}</b><br>
+            {% if empresa.nit %}<small>NIT: {{ empresa.nit }}</small><br>{% endif %}
+            <br>
+            <b>RECIBO DE ABONO</b>
+        </center>
+        <small>
+            <br>
+            <b>Recibo No.:</b>&nbsp;&nbsp;{{ pago.id }}&nbsp;&nbsp;
+            <b>Fecha:</b>&nbsp;&nbsp;{{ pago.fecha|date:'d/m/Y H:i' }}<br>
+            <b>Cliente:</b>&nbsp;&nbsp;{{ factura.cliente }}<br>
+            <b>Factura N°:</b>&nbsp;&nbsp;{{ factura.id }}<br>
+            <b>Forma de pago del abono:</b>&nbsp;&nbsp;{{ pago.get_forma_pago_display }}<br>
+            {% if pago.observacion %}<b>Observación:</b>&nbsp;&nbsp;{{ pago.observacion }}<br>{% endif %}
+            <br>
+        </small>
+
+        <table class="table table-condensed table-sm" width="100%">
+            <tbody>
+                <tr>
+                    <td>Total de la factura:</td>
+                    <td align="right">Bs {{ factura.total }}</td>
+                </tr>
+                <tr>
+                    <td>Saldo antes de este abono:</td>
+                    <td align="right">Bs {{ saldo_antes }}</td>
+                </tr>
+                <tr>
+                    <td><b>Monto de este abono:</b></td>
+                    <td align="right"><b>Bs {{ pago.monto }}</b></td>
+                </tr>
+                <tr>
+                    <td>Saldo después de este abono:</td>
+                    <td align="right">Bs {{ saldo_despues }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="aviso-pago">
+            {% if saldo_despues <= 0 %}
+                <b style="font-size: 1.2em;">*** PAGO TOTAL ***</b><br>
+                <b>Cuenta saldada</b>
+            {% else %}
+                <b>PAGO PARCIAL</b><br>
+                <b>Saldo pendiente: Bs {{ saldo_despues }}</b>
+            {% endif %}
+        </div>
+
+        <div class="row">
+        <small class="pie">
+            <br><br>
+            <center>
+                Registrado por: {{ pago.uc }} - Fecha: {{ pago.fc }}
+                <br>
+                <i>&copy; &reg; <b>CSG Sistemas</b></i>
+            </center>
+        </small>
+        </div>
+    </div>
+</body>
+</html>

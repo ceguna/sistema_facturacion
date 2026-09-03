@@ -547,3 +547,24 @@ form.form-inline label:not([for="id_estado"]) {
     text-align: left;
     width: 100%;
 }
+
+/* Resalta en naranja el campo de formulario que tiene el foco en este
+   momento -- ayuda visual para que el usuario sepa donde esta
+   escribiendo, en toda la aplicacion (cualquier <input>/<select>/
+   <textarea> con las clases estandar de Bootstrap que ya usan todos
+   los formularios del sistema). Reemplaza el foco azul por defecto
+   de Bootstrap 4 por naranja. */
+.form-control:focus,
+.custom-select:focus {
+    border-color: #fd7e14 !important;
+    box-shadow: 0 0 0 0.2rem rgba(253, 126, 20, 0.25) !important;
+}
+
+/* Select2 (usado para el combo de Cliente en Facturas, y otros) no es
+   un <select> nativo -- no lo agarra la regla de arriba, necesita su
+   propio selector para el estado "abierto/con foco". */
+.select2-container--default.select2-container--focus .select2-selection,
+.select2-container--default .select2-selection:focus {
+    border-color: #fd7e14 !important;
+    box-shadow: 0 0 0 0.2rem rgba(253, 126, 20, 0.25) !important;
+}

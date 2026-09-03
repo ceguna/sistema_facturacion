@@ -71,16 +71,23 @@ class SucursalForm(forms.ModelForm):
 
 
 class PuntoVentaForm(forms.ModelForm):
+    """
+    NO incluye 'codigo_punto_venta' -- ese valor lo asigna el SIN como
+    respuesta de registroPuntoVenta (ver PuntoVentaNew.form_valid en
+    views.py), nunca se elige a mano desde este formulario. 'descripcion'
+    es un campo nuevo, exigido por separado del nombre en ese mismo
+    servicio.
+    """
     class Meta:
         model = PuntoVenta
-        fields = ['codigo_punto_venta', 'codigo_tipo_punto_venta', 'nombre']
+        fields = ['nombre', 'descripcion', 'codigo_tipo_punto_venta']
         widgets = {
-            'codigo_punto_venta': forms.NumberInput(attrs={'class': 'form-control'}),
-            'codigo_tipo_punto_venta': forms.Select(attrs={'class': 'form-control'}),
             'nombre': forms.TextInput(attrs={'class': 'form-control'}),
+            'descripcion': forms.TextInput(attrs={'class': 'form-control'}),
+            'codigo_tipo_punto_venta': forms.Select(attrs={'class': 'form-control'}),
         }
         labels = {
-            'codigo_punto_venta': 'Código de Punto de Venta (SIN)',
-            'codigo_tipo_punto_venta': 'Tipo de Punto de Venta',
             'nombre': 'Nombre',
+            'descripcion': 'Descripción',
+            'codigo_tipo_punto_venta': 'Tipo de Punto de Venta',
         }

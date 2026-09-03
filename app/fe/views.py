@@ -7,6 +7,7 @@ from bases.views import SinPrivilegios
 
 from .models import Empresa, Sucursal, PuntoVenta
 from .forms import EmpresaForm, SucursalForm, PuntoVentaForm
+from .services import registrar_punto_venta_sin, EmisionSinError
 
 
 class EmpresaConfigView(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
@@ -81,14 +82,31 @@ class PuntoVentaNew(SuccessMessageMixin, SinPrivilegios, generic.CreateView):
     form_class = PuntoVentaForm
     template_name = "fe/puntoventa_form.html"
     context_object_name = "obj"
-    success_message = "Punto de venta agregado satisfactoriamente"
+    success_message = "Punto de venta registrado ante el SIN satisfactoriamente"
 
     def dispatch(self, request, *args, **kwargs):
         self.sucursal = get_object_or_404(Sucursal, pk=kwargs["sucursal_id"])
         return super().dispatch(request, *args, **kwargs)
 
     def form_valid(self, form):
+        # El codigo_punto_venta NO se pone a mano -- se consigue del
+        # SIN antes de guardar nada. Si el SIN lo rechaza, no se crea
+        # ningun registro local a medias (mismo principio que ya
+        # aplicamos en facturas: nunca dejar un registro huerfano si
+        # una validacion externa puede fallar).
+        try:
+            codigo_asignado = registrar_punto_venta_sin(
+                sucursal=self.sucursal,
+                nombre_punto_venta=form.cleaned_data['nombre'],
+                descripcion=form.cleaned_data['descripcion'],
+                codigo_tipo_punto_venta=form.cleaned_data['codigo_tipo_punto_venta'],
+            )
+        except EmisionSinError as e:
+            form.add_error(None, str(e))
+            return self.form_invalid(form)
+
         form.instance.sucursal = self.sucursal
+        form.instance.codigo_punto_venta = codigo_asignado
         return super().form_valid(form)
 
     def get_context_data(self, **kwargs):
@@ -101,6 +119,14 @@ class PuntoVentaNew(SuccessMessageMixin, SinPrivilegios, generic.CreateView):
 
 
 class PuntoVentaEdit(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
+    """
+    Solo permite editar nombre/descripcion/tipo localmente -- NO
+    vuelve a llamar a registroPuntoVenta (ya se registro una vez al
+    crearlo; volver a registrar el mismo punto de venta no tiene
+    sentido y probablemente el SIN lo rechace o cree uno duplicado).
+    codigo_punto_venta no forma parte de PuntoVentaForm, asi que queda
+    intacto sin hacer nada especial aca.
+    """
     permission_required = "fe.change_puntoventa"
     model = PuntoVenta
     form_class = PuntoVentaForm

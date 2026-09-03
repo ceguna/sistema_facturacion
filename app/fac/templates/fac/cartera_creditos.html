@@ -11,14 +11,19 @@
   <div class="card-body">
 
     <div class="row mb-3">
-      <div class="col-md-6">
+      <div class="col-md-4">
         <div class="alert alert-danger mb-0">
           <b>Vencido:</b> Bs {{ total_vencido }}
         </div>
       </div>
-      <div class="col-md-6">
-        <div class="alert alert-info mb-0">
-          <b>Vigente (no vencido):</b> Bs {{ total_vigente }}
+      <div class="col-md-4">
+        <div class="alert alert-warning mb-0">
+          <b>Por Vencer:</b> Bs {{ total_por_vencer }}
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="alert alert-success mb-0">
+          <b>Vigente:</b> Bs {{ total_vigente }}
         </div>
       </div>
     </div>
@@ -31,8 +36,10 @@
           <th>Factura</th>
           <th>Cliente</th>
           <th>Celular</th>
+          <th>Fecha Emisión</th>
           <th>Vencimiento</th>
-          <th>Días de Mora</th>
+          <th>Días de Vencimiento</th>
+          <th>Estado</th>
           <th>Saldo Pendiente</th>
           <th>Acción</th>
         </tr>
@@ -43,8 +50,46 @@
           <td>{{ fila.factura.id }}</td>
           <td>{{ fila.factura.cliente }}</td>
           <td>{{ fila.factura.cliente.celular }}</td>
+          <td>{{ fila.factura.fecha|date:"d/m/Y" }}</td>
           <td>{{ fila.factura.fecha_vencimiento|date:"d/m/Y" }}</td>
-          <td>{{ fila.dias_mora }}</td>
+          <td>{{ fila.dias_para_vencer }}</td>
+          <td><span class="badge badge-danger">Vencido</span></td>
+          <td>Bs {{ fila.factura.saldo_pendiente }}</td>
+          <td>
+            <button class="btn btn-primary btn-sm" onclick="return abrir_modal('{% url 'fac:registrar_pago' fila.factura.id %}')">
+              Registrar Pago
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if por_vencer %}
+    <h6 class="text-warning mt-4">Créditos Próximos a Vencer</h6>
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Factura</th>
+          <th>Cliente</th>
+          <th>Fecha Emisión</th>
+          <th>Vencimiento</th>
+          <th>Días de Vencimiento</th>
+          <th>Estado</th>
+          <th>Saldo Pendiente</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in por_vencer %}
+        <tr class="table-warning">
+          <td>{{ fila.factura.id }}</td>
+          <td>{{ fila.factura.cliente }}</td>
+          <td>{{ fila.factura.fecha|date:"d/m/Y" }}</td>
+          <td>{{ fila.factura.fecha_vencimiento|date:"d/m/Y" }}</td>
+          <td>{{ fila.dias_para_vencer }}</td>
+          <td><span class="badge badge-warning">Por Vencer</span></td>
           <td>Bs {{ fila.factura.saldo_pendiente }}</td>
           <td>
             <button class="btn btn-primary btn-sm" onclick="return abrir_modal('{% url 'fac:registrar_pago' fila.factura.id %}')">
@@ -58,13 +103,16 @@
     {% endif %}
 
     {% if vigentes %}
-    <h6 class="mt-4">Créditos Vigentes (aún no vencen)</h6>
+    <h6 class="mt-4">Créditos Vigentes</h6>
     <table class="table table-striped">
       <thead>
         <tr>
           <th>Factura</th>
           <th>Cliente</th>
+          <th>Fecha Emisión</th>
           <th>Vencimiento</th>
+          <th>Días de Vencimiento</th>
+          <th>Estado</th>
           <th>Saldo Pendiente</th>
           <th>Acción</th>
         </tr>
@@ -74,7 +122,10 @@
         <tr>
           <td>{{ fila.factura.id }}</td>
           <td>{{ fila.factura.cliente }}</td>
+          <td>{{ fila.factura.fecha|date:"d/m/Y" }}</td>
           <td>{{ fila.factura.fecha_vencimiento|date:"d/m/Y" }}</td>
+          <td>{{ fila.dias_para_vencer }}</td>
+          <td><span class="badge badge-success">Vigente</span></td>
           <td>Bs {{ fila.factura.saldo_pendiente }}</td>
           <td>
             <button class="btn btn-primary btn-sm" onclick="return abrir_modal('{% url 'fac:registrar_pago' fila.factura.id %}')">
@@ -87,7 +138,7 @@
     </table>
     {% endif %}
 
-    {% if not vencidas and not vigentes %}
+    {% if not vencidas and not por_vencer and not vigentes %}
     <div class="alert alert-success">No hay créditos pendientes de cobro. ¡Cartera al día!</div>
     {% endif %}
 

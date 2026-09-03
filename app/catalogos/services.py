@@ -12,7 +12,7 @@ from zeep.transports import Transport
 from zeep.helpers import serialize_object
 from requests import Session
 
-from .models import CatalogoSIN, SincronizacionLog
+from .models import CatalogoSIN, ActividadDocumentoSector, SincronizacionLog
 
 WSDL_SINCRONIZACION = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionSincronizacion?wsdl"
 
@@ -59,12 +59,15 @@ CATALOGOS_FAMILIA_PARAMETRICA = {
     CatalogoSIN.TipoCatalogo.MENSAJES,
 }
 
-# ACTIVIDADES_DOC_SECTOR: confirmado en vivo (02/08/2026), pero es una
-# tabla de relacion actividad<->tipo de documento (codigoActividad +
-# codigoDocumentoSector + tipoDocumentoSector), sin campo de
-# descripcion real -- no encaja en el modelo generico codigo/descripcion
-# de CatalogoSIN. Se deja fuera de la sincronizacion por ahora; si mas
-# adelante hace falta, requiere un modelo propio, no forzarlo aca.
+# ACTIVIDADES_DOC_SECTOR: es una tabla de relacion actividad<->tipo de
+# documento (codigoActividad + codigoDocumentoSector + tipoDocumentoSector),
+# sin campo de descripcion real -- no encaja en el modelo generico
+# codigo/descripcion de CatalogoSIN. Por eso se excluye del loop
+# generico en sincronizar_todos_los_catalogos() y se sincroniza aparte,
+# contra su propio modelo (ActividadDocumentoSector), con
+# sincronizar_actividades_documento_sector() mas abajo. Confirmado en
+# vivo 22/08/2026 el nombre real del campo de lista y sus atributos
+# (ver obtener_actividades_documento_sector).
 CATALOGOS_SIN_MODELO_GENERICO = {
     CatalogoSIN.TipoCatalogo.ACTIVIDADES_DOC_SECTOR,
 }
@@ -108,14 +111,6 @@ class SOAPClienteSIN:
         }
 
     def obtener_catalogo(self, tipo_catalogo, nombre_operacion):
-        if tipo_catalogo in CATALOGOS_SIN_MODELO_GENERICO:
-            raise CatalogoSyncError(
-                f"'{tipo_catalogo}' no encaja en el modelo genérico "
-                f"código/descripción de CatalogoSIN (es una tabla de "
-                f"relación actividad↔documento sector). No se sincroniza "
-                f"por acá -- requiere modelo propio si hace falta más adelante."
-            )
-
         operacion = getattr(self.client.service, nombre_operacion)
         respuesta = operacion(SolicitudSincronizacion=self._solicitud())
         respuesta = serialize_object(respuesta)
@@ -174,16 +169,49 @@ class SOAPClienteSIN:
             f"de respuesta -- agregar su mapeo de campos explícitamente."
         )
 
+    def obtener_actividades_documento_sector(self):
+        """
+        Caso especial: sincronizarListaActividadesDocumentoSector no
+        devuelve el formato generico codigo/descripcion, sino una
+        tabla de relacion. Confirmado en vivo (22/08/2026): la lista
+        viene bajo la clave 'listaActividadesDocumentoSector', con
+        items {codigoActividad: '476000', codigoDocumentoSector: 1,
+        tipoDocumentoSector: 'FCV'}.
+        """
+        operacion = self.client.service.sincronizarListaActividadesDocumentoSector
+        respuesta = operacion(SolicitudSincronizacion=self._solicitud())
+        respuesta = serialize_object(respuesta)
+
+        if not respuesta.get("transaccion"):
+            mensajes = respuesta.get("mensajesList") or []
+            raise CatalogoSyncError(
+                f"sincronizarListaActividadesDocumentoSector falló: {mensajes}"
+            )
+
+        items = respuesta.get("listaActividadesDocumentoSector", [])
+        return [
+            {
+                "codigo_actividad": str(item["codigoActividad"]),
+                "codigo_documento_sector": int(item["codigoDocumentoSector"]),
+                "tipo_documento_sector": str(item["tipoDocumentoSector"]),
+            }
+            for item in items
+        ]
+
 
 @transaction.atomic
 def sincronizar_catalogo(tipo_catalogo, cliente_soap):
     """
-    Sincroniza un único catálogo: trae la lista de códigos vigentes
-    del SIN, da de alta los nuevos / actualiza descripciones, y marca
-    como no vigentes (vigente=False) los que ya no vienen en la
-    respuesta -- sin borrarlos nunca, para conservar el histórico
-    (por ejemplo, una factura vieja puede referenciar un código de
-    moneda que el SIN ya dio de baja, y necesitamos poder mostrarlo).
+    Sincroniza un único catálogo (de los que usan el modelo genérico
+    CatalogoSIN): trae la lista de códigos vigentes del SIN, da de
+    alta los nuevos / actualiza descripciones, y marca como no
+    vigentes (vigente=False) los que ya no vienen en la respuesta --
+    sin borrarlos nunca, para conservar el histórico (por ejemplo, una
+    factura vieja puede referenciar un código de moneda que el SIN ya
+    dio de baja, y necesitamos poder mostrarlo).
+
+    No aplica a ACTIVIDADES_DOC_SECTOR -- ver
+    sincronizar_actividades_documento_sector() para ese caso.
 
     Devuelve la cantidad de códigos creados o actualizados.
     """
@@ -220,6 +248,45 @@ def sincronizar_catalogo(tipo_catalogo, cliente_soap):
     return actualizados
 
 
+@transaction.atomic
+def sincronizar_actividades_documento_sector(cliente_soap):
+    """
+    Sincroniza la relación Actividad<->Documento Sector -- mismo
+    principio de alta/actualización + baja lógica que
+    sincronizar_catalogo(), pero contra el modelo dedicado
+    ActividadDocumentoSector (clave única = par actividad+documento
+    sector, no encaja en la clave simple de CatalogoSIN).
+
+    El dataset es chico (12 combinaciones confirmadas en vivo para
+    este NIT), asi que la baja logica se resuelve con un loop simple
+    en Python en vez de una query compuesta -- no vale la pena la
+    complejidad extra para este volumen.
+    """
+    items = cliente_soap.obtener_actividades_documento_sector()
+    claves_recibidas = {
+        (item["codigo_actividad"], item["codigo_documento_sector"]) for item in items
+    }
+    actualizados = 0
+
+    for item in items:
+        ActividadDocumentoSector.objects.update_or_create(
+            codigo_actividad=item["codigo_actividad"],
+            codigo_documento_sector=item["codigo_documento_sector"],
+            defaults={
+                "tipo_documento_sector": item["tipo_documento_sector"],
+                "vigente": True,
+            },
+        )
+        actualizados += 1
+
+    for obj in ActividadDocumentoSector.objects.filter(vigente=True):
+        if (obj.codigo_actividad, obj.codigo_documento_sector) not in claves_recibidas:
+            obj.vigente = False
+            obj.save(update_fields=["vigente"])
+
+    return actualizados
+
+
 def sincronizar_todos_los_catalogos(cliente_soap):
     """
     Corre la sincronización diaria completa. Registra el resultado en
@@ -227,9 +294,10 @@ def sincronizar_todos_los_catalogos(cliente_soap):
     poder auditar más adelante (incluso útil de mostrar si el SIN pide
     evidencia en una certificación).
 
-    ACTIVIDADES_DOC_SECTOR se salta intencionalmente (ver
-    CATALOGOS_SIN_MODELO_GENERICO) -- queda registrado como error en
-    el log, no oculto.
+    ACTIVIDADES_DOC_SECTOR se sincroniza aparte del loop genérico (no
+    encaja en el modelo código/descripción de CatalogoSIN), contra su
+    propio modelo -- ver sincronizar_actividades_documento_sector().
+    Ya NO se salta ni cuenta como error: es el catálogo 17 de 17.
 
     cliente_soap es OBLIGATORIO -- ya no hay fallback mock en el flujo real.
     """
@@ -238,12 +306,21 @@ def sincronizar_todos_los_catalogos(cliente_soap):
     errores = []
 
     for tipo_catalogo, _ in CatalogoSIN.TipoCatalogo.choices:
+        if tipo_catalogo in CATALOGOS_SIN_MODELO_GENERICO:
+            continue  # se sincroniza aparte, ver mas abajo
         try:
             actualizados = sincronizar_catalogo(tipo_catalogo, cliente_soap)
             catalogos_ok += 1
             total_codigos += actualizados
         except Exception as exc:
             errores.append(f"{tipo_catalogo}: {exc}")
+
+    try:
+        actualizados = sincronizar_actividades_documento_sector(cliente_soap)
+        catalogos_ok += 1
+        total_codigos += actualizados
+    except Exception as exc:
+        errores.append(f"{CatalogoSIN.TipoCatalogo.ACTIVIDADES_DOC_SECTOR}: {exc}")
 
     exitosa = len(errores) == 0
     total_catalogos = len(CatalogoSIN.TipoCatalogo.choices)

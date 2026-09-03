@@ -1,0 +1,13 @@
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ns2:verificarComunicacionResponse xmlns:ns2="https://siat.impuestos.gob.bo/">
+      <RespuestaComunicacion>
+        <mensajesList>
+          <codigo>926</codigo>
+          <descripcion>COMUNICACION EXITOSA</descripcion>
+        </mensajesList>
+        <transaccion>true</transaccion>
+      </RespuestaComunicacion>
+    </ns2:verificarComunicacionResponse>
+  </soap:Body>
+</soap:Envelope>

@@ -1,0 +1,32 @@
+{% extends 'base/base.html' %}
+{% block page_content %}
+<div class="card shadow mb-4">
+    <div class="card-header py-3">
+        <h4 class="m-0 font-weight-bold text-success">
+            <i class="fas fa-check-circle mr-2"></i>Abono Registrado
+        </h4>
+    </div>
+    <div class="card-body">
+        <p><b>Factura N°:</b> {{ factura.id }} — {{ factura.cliente }}</p>
+        <p><b>Monto abonado:</b> Bs {{ pago.monto }}</p>
+        <p><b>Forma de pago del abono:</b> {{ pago.get_forma_pago_display }}</p>
+
+        {% if factura.saldo_pendiente <= 0 %}
+        <div class="alert alert-success">
+            <b>PAGO TOTAL — la factura quedó saldada.</b>
+        </div>
+        {% else %}
+        <div class="alert alert-warning">
+            <b>Saldo pendiente: Bs {{ factura.saldo_pendiente }}</b>
+        </div>
+        {% endif %}
+
+        <a href="{% url 'fac:recibo_pago' pago.id %}" target="_blank" class="btn btn-primary">
+            <i class="fas fa-print mr-1"></i>Imprimir Recibo
+        </a>
+        <a href="{% url 'fac:cartera_creditos' %}" class="btn btn-info">
+            <i class="fas fa-arrow-left mr-1"></i>Volver a Cartera de Créditos
+        </a>
+    </div>
+</div>
+{% endblock %}

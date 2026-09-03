@@ -1,49 +1,66 @@
 {% extends 'base/base.html' %}
 
 {% block page_content %}
-<form method="POST">
-    {% csrf_token %}
-    <div class="col-xl-5 col-md-6 mb-4">
-        <div class="card border-left-primary shadow h-100 py-2">
-            <div class="card-body">
-                <div class="csg-form-title">
-                    {% if obj %} Editar {% else %} Nuevo {% endif %} Punto de Venta
-                </div>
-                <div class="text-muted small mb-2">
-                    Sucursal: <b>{{ sucursal|default:obj.sucursal }}</b>
-                </div>
-                <div class="dropdown-divider"></div>
-
-                {% if form.errors %}
-                <div class="alert alert-danger">
-                    Revisa los datos ingresados, hay errores en el formulario.
-                </div>
-                {% endif %}
-
-                <div class="row">
-                    <div class="col-md-6 form-group">
-                        <label>{{ form.codigo_punto_venta.label }}</label>
-                        {{ form.codigo_punto_venta }}
+<div class="row">
+    <div class="col-xl-6 col-md-8 mb-4">
+        <form method="POST">
+            {% csrf_token %}
+            <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="csg-form-title">
+                        {% if obj %} Editar {% else %} Nuevo {% endif %} Punto de Venta
                     </div>
-                    <div class="col-md-6 form-group">
-                        <label>{{ form.nombre.label }}</label>
-                        {{ form.nombre }}
+                    <div class="text-muted small mb-2">
+                        Sucursal: <b>{{ sucursal|default:obj.sucursal }}</b>
                     </div>
-                </div>
-                <div class="row">
-                    <div class="col-md-8 form-group">
-                        <label>{{ form.codigo_tipo_punto_venta.label }}</label>
-                        {{ form.codigo_tipo_punto_venta }}
-                    </div>
-                </div>
+                    <div class="dropdown-divider"></div>
 
-                <div class="dropdown-divider"></div>
-                <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
-                <a href="{% url 'fe:sucursal_edit' sucursal.id|default:obj.sucursal.id %}" class="btn btn-outline-secondary"><span class="fa fa-undo"></span> Cancelar</a>
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger">
+                        {{ form.non_field_errors }}
+                    </div>
+                    {% elif form.errors %}
+                    <div class="alert alert-danger">
+                        Revisa los datos ingresados, hay errores en el formulario.
+                    </div>
+                    {% endif %}
+
+                    {% if obj.codigo_punto_venta %}
+                    <div class="alert alert-secondary">
+                        <b>Código de Punto de Venta (SIN):</b> {{ obj.codigo_punto_venta }}
+                        <br><span class="text-muted small">Asignado por el SIN al registrarlo — no se puede editar.</span>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info small">
+                        El código de punto de venta lo asigna el SIN automáticamente al guardar — no hace falta ingresarlo.
+                    </div>
+                    {% endif %}
+
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.nombre.label }}</label>
+                            {{ form.nombre }}
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.codigo_tipo_punto_venta.label }}</label>
+                            {{ form.codigo_tipo_punto_venta }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-12 form-group">
+                            <label>{{ form.descripcion.label }}</label>
+                            {{ form.descripcion }}
+                        </div>
+                    </div>
+
+                    <div class="dropdown-divider"></div>
+                    <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
+                    <a href="{% url 'fe:sucursal_edit' sucursal.id|default:obj.sucursal.id %}" class="btn btn-outline-secondary"><span class="fa fa-undo"></span> Cancelar</a>
+                </div>
             </div>
-        </div>
+        </form>
     </div>
-</form>
+</div>
 {% endblock %}
 
 {% block js_page %}

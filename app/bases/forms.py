@@ -38,7 +38,7 @@ class UsuarioForm(forms.ModelForm):
                   'groups', 'is_active', 'is_superuser']
         widgets = {
             'username': forms.TextInput(attrs={
-                'class': 'form-control', 'placeholder': 'usuario.login'}),
+                'class': 'form-control no-uppercase', 'placeholder': 'usuario.login'}),
             'first_name': forms.TextInput(attrs={
                 'class': 'form-control', 'placeholder': 'Nombres'}),
             'last_name': forms.TextInput(attrs={
@@ -101,8 +101,13 @@ class GrupoForm(forms.ModelForm):
         model = Group
         fields = ['name', 'permissions']
         widgets = {
+            # 'no-uppercase' agregado 02/09/2026: el nombre del rol debe
+            # aceptar mayusculas y minusculas normales, como el campo
+            # Usuario del login -- mismo mecanismo de excepcion que ya
+            # usa ese campo (ver el JS global en base.html), sin tocar
+            # nada de JS.
             'name': forms.TextInput(attrs={
-                'class': 'form-control', 'placeholder': 'Nombre del rol'}),
+                'class': 'form-control no-uppercase', 'placeholder': 'Nombre del rol'}),
         }
         labels = {
             'name': 'Nombre del Rol',

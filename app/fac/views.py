@@ -18,12 +18,13 @@ from django.db.models import Sum
 
 from bases.views import SinPrivilegios
 
-from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, Pago
+from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, Pago, NotaCreditoDebito
 from .forms import ClienteForm
 import inv.views as inv
 from inv.models import Producto
 
-from fe.services import emitir_factura_sin, anular_factura_sin, revertir_anulacion_sin, EmisionSinError
+from fe.services import emitir_factura_sin, anular_factura_sin, revertir_anulacion_sin, \
+    emitir_nota_credito_debito_sin, EmisionSinError
 from catalogos.models import CatalogoSIN
 
 class ClienteView(SinPrivilegios, generic.ListView):
@@ -83,11 +84,24 @@ class FacturaView(SinPrivilegios, generic.ListView):
     context_object_name = "obj"
     permission_required="fac.view_facturaenc"
 
+    def get_queryset(self):
+        # 'estado=False' es el soft-delete de eliminar_factura -- no
+        # debe aparecer en el listado normal. Orden descendente por id
+        # (equivale a la mas reciente primero, ya que id es
+        # autoincremental y nunca se reutiliza) -- antes no tenia
+        # order_by, asi que el orden dependia del orden natural de la
+        # base, sin garantia.
+        return FacturaEnc.objects.filter(estado=True).order_by('-id')
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         fechas_cerradas = set(CierreDia.objects.values_list('fecha', flat=True))
         for item in context['obj']:
             item.dia_cerrado = timezone.localtime(item.fecha).date() in fechas_cerradas
+            item.tiene_ncd = _tiene_ncd_validada(item)
+        # _es_supervisor esta definida mas abajo en este mismo modulo --
+        # se resuelve en tiempo de ejecucion, no hay problema de orden.
+        context['es_supervisor'] = _es_supervisor(self.request.user)
         return context
 
 @login_required(login_url='/login/')
@@ -423,6 +437,10 @@ def borrar_detalle_factura(request, id):
             det.sub_total = (-1 * det.sub_total)
             det.descuento = (-1 * det.descuento)
             det.total = (-1 * det.total)
+            # 'uc' (automatico) va a guardar al cajero de la sesion
+            # activa, no a este supervisor -- se guarda aca explicito
+            # quien realmente autorizo la reversion.
+            det.usuario_reversion = user
             det.save()
 
             return HttpResponse("ok")
@@ -489,37 +507,81 @@ def _es_supervisor_cierre(user):
     return user.is_superuser or user.has_perm('fac.gestionar_cierre_dia')
 
 
+def _tiene_ncd_validada(enc):
+    """
+    True si esta factura ya tiene una Nota de Credito-Debito aceptada
+    por el SIN -- a partir de ahi queda fiscalmente cerrada: no se
+    puede anular, eliminar, ni registrarle nuevos abonos (decision
+    tomada el 26/08/2026 al disenar NotaCreditoDebito).
+    """
+    return enc.notas_credito_debito.filter(estado_sin=NotaCreditoDebito.SIN_VALIDADA).exists()
+
+
+def _modal_error(request, mensaje):
+    """
+    Respuesta chica y autocontenida para cuando una vista pensada para
+    abrirse dentro del popup (via abrir_modal/$.load()) rechaza el
+    acceso ANTES de llegar a mostrar el formulario real -- permiso,
+    regla de negocio, etc.
+
+    ANTES: estos casos hacian messages.error(...) + redirect(...). El
+    problema es que abrir_modal() carga el contenido con $.load(), que
+    SIGUE los redirects -- eso metia la pagina COMPLETA de destino
+    (ej. la factura entera) adentro del popup chico, dando la
+    impresion de haber "entrado" a la factura en vez de quedarse en el
+    listado. Esta respuesta es un modal minimo, autocontenido, que se
+    cierra sin haber navegado a ningun lado -- el usuario nunca deja
+    el listado de facturas.
+    """
+    return render(request, 'fac/_modal_error.html', {'mensaje': mensaje})
+
+
 @login_required(login_url='/login/')
 def anular_factura(request, id):
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
-        messages.error(request, 'Factura No Existe')
-        return redirect('fac:factura_list')
+        return _modal_error(request, 'Factura no existe.')
 
     if not _es_supervisor(request.user):
-        messages.error(request, 'No tiene permisos para anular facturas')
-        return redirect('fac:factura_edit', id=id)
+        return _modal_error(request, 'No tiene permisos para anular facturas.')
 
     if enc.anulado:
-        messages.error(request, 'Esta factura ya se encuentra anulada')
-        return redirect('fac:factura_edit', id=id)
+        return _modal_error(request, 'Esta factura ya se encuentra anulada.')
+
+    if _tiene_ncd_validada(enc):
+        return _modal_error(
+            request,
+            'Esta factura ya tiene una Nota de Crédito-Débito emitida — '
+            'queda cerrada fiscalmente, no se puede anular por separado.'
+        )
 
     if not enc.reportada_ante_sin:
-        messages.error(
+        return _modal_error(
             request,
             'Solo se pueden anular facturas que ya fueron aceptadas por el SIN. '
             'Esta factura no fue reportada — puede editarla o eliminarla en su lugar.'
         )
-        return redirect('fac:factura_edit', id=id)
 
     ahora = timezone.now()
     if not _dentro_plazo_anulacion(enc.fecha, ahora):
-        messages.error(
+        return _modal_error(
             request,
             'Fuera del plazo permitido para anular esta factura '
-            '(hasta el dia 9 del mes siguiente a su emision, segun normativa del SIN)'
+            '(hasta el dia 9 del mes siguiente a su emision, segun normativa del SIN).'
         )
-        return redirect('fac:factura_edit', id=id)
+
+    # Regla de negocio: no se puede anular una factura a credito que ya
+    # tenga algun abono (parcial o total) registrado -- evita la
+    # complicacion de que plata ya cobrada quede asociada a un
+    # documento anulado sin un flujo explicito para resolverlo. Si no
+    # tiene ningun abono, la anulacion tambien "cierra" la cuenta a
+    # credito (ver mas abajo, saldo_pendiente se limpia a 0).
+    if enc.forma_pago == FacturaEnc.FORMA_PAGO_CREDITO and Pago.objects.filter(factura=enc, revertido=False).exists():
+        return _modal_error(
+            request,
+            'No se puede anular: esta factura a crédito ya tiene abonos registrados. '
+            'Contacte al administrador para resolver los abonos antes de anularla.'
+        )
 
     motivos = CatalogoSIN.objects.filter(
         tipo_catalogo=CatalogoSIN.TipoCatalogo.MOTIVOS_ANULACION, vigente=True
@@ -554,6 +616,12 @@ def anular_factura(request, id):
         enc.fecha_anulacion = ahora
         enc.motivo_anulacion = texto_motivo
         enc.usuario_anulacion = request.user
+        # La factura a credito ya paso el chequeo de arriba (sin ningun
+        # abono), asi que anularla tambien cierra la cuenta a credito:
+        # no debe quedar un saldo pendiente fantasma sobre un documento
+        # que ya no es valido.
+        if enc.forma_pago == FacturaEnc.FORMA_PAGO_CREDITO:
+            enc.saldo_pendiente = 0
         enc.save()
 
         messages.success(
@@ -569,25 +637,21 @@ def anular_factura(request, id):
 def revertir_anulacion(request, id):
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
-        messages.error(request, 'Factura No Existe')
-        return redirect('fac:factura_list')
+        return _modal_error(request, 'Factura no existe.')
 
     if not _es_supervisor(request.user):
-        messages.error(request, 'No tiene permisos para revertir anulaciones')
-        return redirect('fac:factura_edit', id=id)
+        return _modal_error(request, 'No tiene permisos para revertir anulaciones.')
 
     if not enc.anulado or enc.estado_sin != FacturaEnc.SIN_ANULADA:
-        messages.error(request, 'Esta factura no está anulada ante el SIN, no hay nada que revertir.')
-        return redirect('fac:factura_edit', id=id)
+        return _modal_error(request, 'Esta factura no está anulada ante el SIN, no hay nada que revertir.')
 
     ahora = timezone.now()
     if not _dentro_plazo_anulacion(enc.fecha, ahora):
-        messages.error(
+        return _modal_error(
             request,
             'Fuera del plazo permitido para revertir la anulación de esta factura '
-            '(hasta el dia 9 del mes siguiente a su emision, segun normativa del SIN)'
+            '(hasta el dia 9 del mes siguiente a su emision, segun normativa del SIN).'
         )
-        return redirect('fac:factura_edit', id=id)
 
     if request.method == 'POST':
         try:
@@ -603,6 +667,16 @@ def revertir_anulacion(request, id):
             prod.save()
 
         enc.anulado = False
+        # La anulacion solo fue posible porque en ese momento la
+        # factura NO tenia ningun abono (bloqueado en anular_factura),
+        # y no pudo haber recibido ninguno despues -- registrar_pago
+        # bloquea sobre anulado=True. Osea que el saldo vuelve integro
+        # al total, sin necesidad de reconstruir nada mas complejo.
+        # ANTES de este fix, la reversion dejaba anulado=False pero
+        # saldo_pendiente en 0 -- la factura volvia a estar "activa"
+        # pero con el credito del cliente sin reactivar.
+        if enc.forma_pago == FacturaEnc.FORMA_PAGO_CREDITO:
+            enc.saldo_pendiente = enc.total
         enc.save()
 
         messages.success(
@@ -615,14 +689,94 @@ def revertir_anulacion(request, id):
 
 
 @login_required(login_url='/login/')
+def emitir_ncd(request, id):
+    """
+    Emite una Nota de Credito-Debito sobre una factura ya validada --
+    devolucion TOTAL (unica version soportada, decision del 26/08/2026).
+    Mismo nivel de autorizacion que Anular/Revertir (_es_supervisor,
+    checkea la sesion actual directo -- no re-autenticacion inline
+    como borrar_detalle_factura/revertir_pago). Carlos ya anticipo que
+    mas adelante van a definir roles mas especificos para esto, sin
+    recargar todo en Supervisor -- pendiente de conversacion aparte.
+
+    Una vez validada por el SIN, la factura_original queda marcada y
+    bloqueada para cualquier otra operacion (ver _tiene_ncd_validada,
+    ya aplicado en anular_factura y registrar_pago).
+    """
+    enc = FacturaEnc.objects.filter(pk=id).first()
+    if not enc:
+        return _modal_error(request, 'Factura no existe.')
+
+    if not _es_supervisor(request.user):
+        return _modal_error(request, 'No tiene permisos para emitir una Nota de Crédito-Débito.')
+
+    if not enc.reportada_ante_sin:
+        return _modal_error(
+            request,
+            'Solo se puede emitir una Nota de Crédito-Débito sobre una factura ya '
+            'aceptada por el SIN.'
+        )
+
+    if enc.anulado:
+        return _modal_error(
+            request,
+            'Esta factura está anulada -- no corresponde una Nota de Crédito-Débito.'
+        )
+
+    if _tiene_ncd_validada(enc):
+        return _modal_error(request, 'Esta factura ya tiene una Nota de Crédito-Débito emitida.')
+
+    if request.method == 'POST':
+        motivo = request.POST.get('motivo', '').strip()
+        if not motivo:
+            return _modal_error(request, 'Debe indicar el motivo de la corrección.')
+
+        monto_efectivo = round(enc.total * 0.13, 2)
+        ncd = NotaCreditoDebito.objects.create(
+            factura_original=enc,
+            motivo=motivo,
+            monto_total_original=enc.total,
+            monto_total_devuelto=enc.total,
+            monto_descuento_credito_debito=0,
+            monto_efectivo_credito_debito=monto_efectivo,
+            usuario_autorizacion=request.user,
+            uc=request.user,
+        )
+
+        try:
+            emitir_nota_credito_debito_sin(ncd)
+        except EmisionSinError as e:
+            messages.error(request, f'El SIN rechazó la Nota de Crédito-Débito: {e}')
+            return redirect('fac:factura_edit', id=id)
+
+        messages.success(
+            request,
+            f'Nota de Crédito-Débito N° {ncd.id} emitida correctamente ante el SIN '
+            f'(estado: {ncd.get_estado_sin_display()}).'
+        )
+        return redirect('fac:factura_edit', id=id)
+
+    return render(request, 'fac/factura_emitir_ncd.html', {'enc': enc})
+
+
+@login_required(login_url='/login/')
 def eliminar_factura(request, id):
-    if not request.user.is_superuser:
-        messages.error(request, 'Solo el superusuario puede eliminar facturas')
+    # Antes exigia is_superuser directo -- ahora usa un permiso real
+    # (fac.eliminar_facturaenc), asignable por rol sin necesitar que la
+    # persona sea superusuario tecnico de Django. has_perm() ya
+    # devuelve True automaticamente para cualquier superusuario, asi
+    # que no hace falta chequear ambas cosas por separado.
+    if not request.user.has_perm('fac.eliminar_facturaenc'):
+        messages.error(request, 'No tiene permisos para eliminar facturas')
         return redirect('fac:factura_edit', id=id)
 
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
         messages.error(request, 'Factura No Existe')
+        return redirect('fac:factura_list')
+
+    if not enc.estado:
+        messages.error(request, 'Esta factura ya fue eliminada.')
         return redirect('fac:factura_list')
 
     if enc.reportada_ante_sin:
@@ -633,9 +787,59 @@ def eliminar_factura(request, id):
         )
         return redirect('fac:factura_edit', id=id)
 
+    # No se puede eliminar una factura de un dia YA CERRADO -- cambiar
+    # sus totales en silencio invalidaria un Cierre de Dia que ya se
+    # dio por definitivo.
+    fecha_factura = timezone.localtime(enc.fecha).date()
+    if CierreDia.objects.filter(fecha=fecha_factura).exists():
+        messages.error(
+            request,
+            f'No se puede eliminar: el día {fecha_factura.strftime("%d/%m/%Y")} '
+            'ya fue cerrado (Cierre de Día). Eliminar esta factura cambiaría '
+            'totales ya reportados como definitivos.'
+        )
+        return redirect('fac:factura_edit', id=id)
+
+    # Si ya tiene algun abono registrado, no se puede eliminar sin mas
+    # -- es plata que genuinamente se cobro. Antes, con delete() real,
+    # los Pago se borraban en cascada tambien (perdiendo ese registro
+    # sin dejar rastro); con soft-delete no se borran, asi que
+    # quedarian huerfanos apuntando a una factura "eliminada" si se
+    # permitiera seguir.
+    if Pago.objects.filter(factura=enc, revertido=False).exists():
+        messages.error(
+            request,
+            'No se puede eliminar: esta factura ya tiene abonos registrados. '
+            'Contacte al administrador para resolver los abonos antes de eliminarla.'
+        )
+        return redirect('fac:factura_edit', id=id)
+
     if request.method == 'POST':
-        enc.delete()
-        messages.success(request, 'Factura eliminada correctamente')
+        # Antes, enc.delete() hacia un CASCADE real que borraba cada
+        # FacturaDet, disparando detalle_factura_borrar (que devuelve
+        # el stock). Con soft-delete nada se borra de verdad, asi que
+        # el stock se devuelve aca a mano -- mismo patron que ya usa
+        # anular_factura.
+        detalles = FacturaDet.objects.filter(factura=enc)
+        for det in detalles:
+            prod = det.producto
+            prod.existencia = int(prod.existencia) + int(det.cantidad)
+            prod.save()
+
+        # La factura a credito ya paso el chequeo de arriba (sin ningun
+        # abono), asi que eliminarla tambien cierra la cuenta a credito
+        # -- mismo tratamiento que anular_factura, para no dejar un
+        # saldo pendiente fantasma sobre un documento ya eliminado.
+        if enc.forma_pago == FacturaEnc.FORMA_PAGO_CREDITO:
+            enc.saldo_pendiente = 0
+
+        enc.estado = False
+        enc.save()
+
+        messages.success(
+            request,
+            'Factura eliminada correctamente (queda registrada en la base para auditoría, oculta del uso normal).'
+        )
         return redirect('fac:factura_list')
 
     return render(request, 'fac/factura_eliminar.html', {'enc': enc})
@@ -647,6 +851,9 @@ def factura_emitir_sin(request, id):
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
         return JsonResponse({"ok": False, "error": "Factura no existe"}, status=404)
+
+    if not enc.estado:
+        return JsonResponse({"ok": False, "error": "Esta factura fue eliminada"})
 
     if enc.anulado:
         return JsonResponse({"ok": False, "error": "La factura ya esta anulada"})
@@ -677,7 +884,7 @@ def cierre_dia_pendientes(request):
     pendientes = dias_pendientes_de_cierre()
     dias = []
     for fecha in pendientes:
-        facturas_dia = FacturaEnc.objects.filter(fecha__date=fecha)
+        facturas_dia = FacturaEnc.objects.filter(fecha__date=fecha, estado=True)
         sin_resolver = facturas_dia.filter(
             estado_sin__in=[FacturaEnc.SIN_NO_ENVIADA, FacturaEnc.SIN_OBSERVADA],
             anulado=False,
@@ -710,7 +917,7 @@ def cierre_dia_detalle(request, fecha):
         )
         return redirect('fac:cierre_dia_pendientes')
 
-    facturas_dia = FacturaEnc.objects.filter(fecha__date=fecha_parsed).order_by('id')
+    facturas_dia = FacturaEnc.objects.filter(fecha__date=fecha_parsed, estado=True).order_by('id')
     sin_resolver = facturas_dia.filter(
         estado_sin__in=[FacturaEnc.SIN_NO_ENVIADA, FacturaEnc.SIN_OBSERVADA],
         anulado=False,
@@ -733,8 +940,8 @@ def cierre_dia_detalle(request, fecha):
             )
             return redirect('fac:cierre_dia_detalle', fecha=fecha_parsed)
 
-        if cantidad_pendientes > 0 and forzar and not request.user.is_superuser:
-            messages.error(request, 'Solo un superusuario puede forzar el cierre con facturas pendientes.')
+        if cantidad_pendientes > 0 and forzar and not request.user.has_perm('fac.forzar_cierre_dia'):
+            messages.error(request, 'No tiene permisos para forzar el cierre con facturas pendientes.')
             return redirect('fac:cierre_dia_detalle', fecha=fecha_parsed)
 
         if cantidad_pendientes > 0 and forzar and not observaciones:
@@ -762,6 +969,13 @@ def cierre_dia_detalle(request, fecha):
         'total_facturado': round(facturas_dia.aggregate(t=Sum('total'))['t'] or 0, 2),
         'puede_cerrar_limpio': sin_resolver.count() == 0,
         'es_supervisor': _es_supervisor_cierre(request.user),
+        # Distinto de 'es_supervisor' (que habilita el cierre NORMAL) --
+        # antes, el template mostraba el checkbox/boton de "Forzar" segun
+        # es_supervisor, pero el backend protegia esa accion con
+        # is_superuser. Alguien con gestionar_cierre_dia pero sin este
+        # permiso nuevo veia la opcion en pantalla y le fallaba al
+        # enviarla. Ver 'puede_forzar_cierre' en la plantilla.
+        'puede_forzar_cierre': request.user.has_perm('fac.forzar_cierre_dia'),
     })
 
 
@@ -838,16 +1052,18 @@ def cierre_caja_selector(request):
 
 
 @login_required(login_url='/login/')
-@permission_required('fac.gestionar_creditos', login_url='bases:sin_privilegios')
+@permission_required('fac.ver_creditos', login_url='bases:sin_privilegios')
 def cartera_creditos(request):
     """
     Cartera de creditos: lista todas las facturas a credito activas
-    (con saldo pendiente > 0), con dias de mora si estan vencidas.
-    Sirve como reporte de recordatorio de cobranza -- el cajero/cobrador
-    usa esta lista para llamar/escribir manualmente a cada cliente.
+    (con saldo pendiente > 0), agrupadas en tres estados: vencido,
+    por_vencer (dentro de FacturaEnc.UMBRAL_PROXIMO_VENCIMIENTO_DIAS
+    dias) y vigente. Sirve como reporte de recordatorio de cobranza --
+    el cajero/cobrador usa esta lista para llamar/escribir manualmente
+    a cada cliente, priorizando por urgencia.
     """
     facturas = FacturaEnc.objects.filter(
-        forma_pago=FacturaEnc.FORMA_PAGO_CREDITO, anulado=False, saldo_pendiente__gt=0
+        forma_pago=FacturaEnc.FORMA_PAGO_CREDITO, anulado=False, estado=True, saldo_pendiente__gt=0
     ).select_related('cliente').order_by('fecha_vencimiento')
 
     filas = []
@@ -856,15 +1072,19 @@ def cartera_creditos(request):
             'factura': f,
             'estado_credito': f.estado_credito,
             'dias_mora': f.dias_mora,
+            'dias_para_vencer': f.dias_para_vencer,
         })
 
     vencidas = [f for f in filas if f['estado_credito'] == 'vencido']
+    por_vencer = [f for f in filas if f['estado_credito'] == 'por_vencer']
     vigentes = [f for f in filas if f['estado_credito'] == 'vigente']
 
     return render(request, 'fac/cartera_creditos.html', {
         'vencidas': vencidas,
+        'por_vencer': por_vencer,
         'vigentes': vigentes,
         'total_vencido': round(sum(f['factura'].saldo_pendiente for f in vencidas), 2),
+        'total_por_vencer': round(sum(f['factura'].saldo_pendiente for f in por_vencer), 2),
         'total_vigente': round(sum(f['factura'].saldo_pendiente for f in vigentes), 2),
     })
 
@@ -876,6 +1096,31 @@ def registrar_pago(request, id):
     enc = FacturaEnc.objects.filter(pk=id, forma_pago=FacturaEnc.FORMA_PAGO_CREDITO).first()
     if not enc:
         messages.error(request, 'Factura a crédito no encontrada.')
+        return redirect('fac:cartera_creditos')
+
+    # No tiene sentido cobrar un abono sobre una factura que todavia no
+    # es un documento fiscal real (no validada por el SIN), ni sobre
+    # una que ya dejo de serlo (anulada o eliminada).
+    if not enc.estado:
+        messages.error(request, 'Esta factura fue eliminada, no se puede registrar un abono.')
+        return redirect('fac:cartera_creditos')
+    if enc.anulado:
+        messages.error(request, 'Esta factura está anulada, no se puede registrar un abono.')
+        return redirect('fac:cartera_creditos')
+    if _tiene_ncd_validada(enc):
+        messages.error(
+            request,
+            'Esta factura ya tiene una Nota de Crédito-Débito emitida — '
+            'queda cerrada fiscalmente, no se pueden registrar más abonos.'
+        )
+        return redirect('fac:cartera_creditos')
+    if enc.estado_sin != FacturaEnc.SIN_VALIDADA:
+        messages.error(
+            request,
+            'Esta factura todavía no fue validada por el SIN '
+            f'(estado actual: {enc.get_estado_sin_display()}). No se pueden registrar abonos '
+            'hasta que sea un documento fiscal válido.'
+        )
         return redirect('fac:cartera_creditos')
 
     if request.method == 'POST':
@@ -900,12 +1145,92 @@ def registrar_pago(request, id):
             )
             return redirect('fac:cartera_creditos')
 
-        Pago.objects.create(
+        pago = Pago.objects.create(
             factura=enc, monto=monto, forma_pago=forma_pago_abono,
             observacion=observacion or None, uc=request.user,
         )
 
         messages.success(request, f'Abono de Bs {monto} registrado para la factura {enc.id}.')
-        return redirect('fac:cartera_creditos')
+        return redirect('fac:pago_confirmacion', pago_id=pago.id)
 
     return render(request, 'fac/registrar_pago.html', {'enc': enc})
+
+
+@login_required(login_url='/login/')
+@permission_required('fac.ver_creditos', login_url='bases:sin_privilegios')
+def pago_confirmacion(request, pago_id):
+    """
+    Pantalla intermedia tras registrar un abono: confirma el monto y el
+    saldo resultante, y ofrece el link para imprimir el recibo (se abre
+    en pestaña nueva, mismo patron que el resto de impresiones del
+    sistema). No usa AJAX a proposito -- asi el link al recibo puede
+    ser un <a target="_blank"> simple, sin depender de JS para abrirlo.
+    """
+    pago = get_object_or_404(Pago, pk=pago_id)
+    return render(request, 'fac/pago_confirmacion.html', {
+        'pago': pago,
+        'factura': pago.factura,
+    })
+
+
+def revertir_pago(request, id):
+    """
+    Revierte (soft-delete) un abono cargado por error -- Caso 1 de la
+    politica de anulacion con abono: NO es una devolucion real de
+    mercaderia (eso es terreno de la Nota de Credito-Debito, pendiente
+    de construir), es corregir un dato mal cargado. Mismo patron de
+    autenticacion inline que borrar_detalle_factura: cualquier usuario
+    logueado puede abrir esta pantalla, pero necesita las credenciales
+    de un supervisor real para ejecutarla -- no alcanza con que la
+    sesion actual ya sea de supervisor.
+
+    NUNCA se borra el registro del Pago -- se marca revertido=True,
+    con quien lo autorizo, cuando, y por que (mismo criterio de
+    auditoria que el resto del sistema). El recalculo de
+    saldo_pendiente lo hace la señal pago_registrado (dispara en
+    cualquier post_save de Pago, no solo al crear).
+    """
+    template_name = "fac/revertir_pago.html"
+
+    pago = get_object_or_404(Pago, pk=id)
+
+    if pago.revertido:
+        return HttpResponse("Este abono ya fue revertido anteriormente.")
+
+    if not pago.factura.estado:
+        return HttpResponse("No se puede revertir: la factura fue eliminada.")
+
+    if pago.factura.anulado:
+        return HttpResponse("No se puede revertir: la factura ya está anulada.")
+
+    if request.method == "GET":
+        context = {"pago": pago}
+
+    if request.method == "POST":
+        usr = request.POST.get("usuario")
+        pas = request.POST.get("pass")
+        motivo = request.POST.get("motivo", "").strip()
+
+        if not motivo:
+            return HttpResponse("Debe indicar el motivo de la reversión.")
+
+        user = authenticate(username=usr, password=pas)
+
+        if not user:
+            return HttpResponse("Usuario o Clave Incorrecta")
+
+        if not user.is_active:
+            return HttpResponse("Usuario Inactivo")
+
+        if user.is_superuser or user.has_perm("fac.anular_facturaenc"):
+            pago.revertido = True
+            pago.fecha_reversion = timezone.now()
+            pago.usuario_reversion = user
+            pago.motivo_reversion = motivo
+            pago.save()
+
+            return HttpResponse("ok")
+
+        return HttpResponse("Usuario no autorizado")
+
+    return render(request, template_name, context)

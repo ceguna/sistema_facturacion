@@ -2,14 +2,15 @@ from django.urls import path, include
 
 from .views import ClienteView,ClienteNew,ClienteEdit,clienteInactivar, \
     FacturaView, facturas, factura_actualizar_datos, ProductoView, borrar_detalle_factura, FacturaDetDelete, \
-    anular_factura, revertir_anulacion, eliminar_factura, factura_emitir_sin, \
+    anular_factura, revertir_anulacion, eliminar_factura, factura_emitir_sin, emitir_ncd, \
     cierre_dia_pendientes, cierre_dia_detalle, cierre_ventas_selector, \
     factura_descargar_xml, facturas_descargar_xml_rango, factura_mostrar_qr, \
-    cierre_caja_selector, cartera_creditos, registrar_pago
+    cierre_caja_selector, cartera_creditos, registrar_pago, pago_confirmacion, revertir_pago
 
 from .reportes import imprimir_factura_recibo, imprimir_factura_list, imprimir_factura_list_pdf, \
     imprimir_factura_list_excel, reporte_cierre_ventas, reporte_cierre_ventas_pdf, \
-    cierre_caja_resumen, cierre_caja_resumen_pdf, cierre_caja_detallado, cierre_caja_detallado_pdf
+    cierre_caja_resumen, cierre_caja_resumen_pdf, cierre_caja_detallado, cierre_caja_detallado_pdf, \
+    kardex_cliente_selector, kardex_cliente, kardex_cliente_pdf, recibo_pago
 
 urlpatterns = [
     path('clientes/', ClienteView.as_view(), name='cliente_list'),
@@ -29,6 +30,7 @@ urlpatterns = [
 
     path('facturas/anular/<int:id>', anular_factura, name="factura_anular"),
     path('facturas/revertir-anulacion/<int:id>', revertir_anulacion, name="factura_revertir_anulacion"),
+    path('facturas/emitir-ncd/<int:id>', emitir_ncd, name="factura_emitir_ncd"),
     path('facturas/eliminar/<int:id>', eliminar_factura, name="factura_eliminar"),
     path('facturas/emitir/<int:id>', factura_emitir_sin, name="factura_emitir_sin"),
     path('facturas/mostrar-qr/<int:id>', factura_mostrar_qr, name="factura_mostrar_qr"),
@@ -57,4 +59,12 @@ urlpatterns = [
 
     path('creditos/cartera/', cartera_creditos, name='cartera_creditos'),
     path('creditos/registrar-pago/<int:id>/', registrar_pago, name='registrar_pago'),
+
+    path('creditos/kardex/', kardex_cliente_selector, name='kardex_cliente_selector'),
+    path('creditos/kardex/<int:cliente_id>/', kardex_cliente, name='kardex_cliente'),
+    path('creditos/kardex/<int:cliente_id>/pdf/', kardex_cliente_pdf, name='kardex_cliente_pdf'),
+
+    path('creditos/pago-confirmacion/<int:pago_id>/', pago_confirmacion, name='pago_confirmacion'),
+    path('creditos/recibo-pago/<int:pago_id>/', recibo_pago, name='recibo_pago'),
+    path('creditos/revertir-pago/<int:id>/', revertir_pago, name='revertir_pago'),
 ]
