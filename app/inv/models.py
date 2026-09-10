@@ -114,6 +114,28 @@ class Producto(ClaseModelo):
     existencia = models.IntegerField(default=0)
     ultima_compra = models.DateField(null=True, blank=True)
 
+    # Costo Promedio Ponderado (agregado 08/09/2026): se recalcula
+    # SOLO con las entradas (compras nuevas, ver
+    # cmp.models.detalle_compra_guardar) -- las ventas nunca lo tocan,
+    # es como funciona este metodo de costeo en la practica. Arranca
+    # en 0 para productos sin ninguna compra registrada todavia (o
+    # cargados antes de este campo existir).
+    #
+    # LIMITACION CONOCIDA: si se elimina una linea de compra vieja
+    # (soft-delete de ComprasEnc/ComprasDet), este campo NO se
+    # recalcula hacia atras -- reconstruir el costo exacto que habia
+    # antes de esa compra exigiria rehacer todo el historial de
+    # movimientos en orden cronologico (compras Y ventas mezcladas),
+    # no solo las compras. Se acepta un desvio menor y transitorio en
+    # ese caso raro, hasta que la proxima compra real lo vuelva a
+    # ajustar -- decision tomada el 08/09/2026 para no construir algo
+    # mucho mas grande para un caso poco frecuente.
+    costo_promedio = models.FloatField(
+        default=0,
+        help_text="Costo Promedio Ponderado, calculado automáticamente con "
+                   "cada compra registrada. No editable a mano."
+    )
+
     marca = models.ForeignKey(Marca, on_delete=models.CASCADE)
     unidad_medida = models.ForeignKey(UnidadMedida, on_delete=models.CASCADE)
     subcategoria = models.ForeignKey(SubCategoria, on_delete=models.CASCADE)
@@ -263,4 +285,3 @@ class HistorialPrecioProducto(ClaseModelo2):
         verbose_name = "Historial de Precio"
         verbose_name_plural = "Historial de Precios"
         ordering = ["-fc"]
-

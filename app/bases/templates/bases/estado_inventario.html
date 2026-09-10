@@ -1,0 +1,96 @@
+{% extends 'base/base.html' %}
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3">
+    <h4 class="m-0 font-weight-bold text-primary">Estado de Inventario</h4>
+  </div>
+  <div class="card-body">
+    <form method="get" class="row">
+      <div class="col-md-3">
+        <label for="categoria_id">Categoría:</label>
+        <select name="categoria_id" id="categoria_id" class="form-control">
+          <option value="">-- Todas --</option>
+          {% for cat in categorias %}
+          <option value="{{ cat.id }}" {% if categoria_id == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.descripcion }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label for="buscar">Buscar por descripción:</label>
+        <input type="text" class="form-control" name="buscar" id="buscar" value="{{ buscar }}">
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-primary mb-1"><i class="fas fa-filter mr-1"></i>Filtrar</button>
+      </div>
+    </form>
+    <hr>
+
+    <div class="row mb-3">
+      <div class="col-md-4">
+        <div class="card border-left-info shadow h-100 py-2">
+          <div class="card-body">
+            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Valor a Precio de Venta</div>
+            <div class="h5 mb-0 font-weight-bold text-gray-800">Bs {{ total_valor_venta }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card border-left-warning shadow h-100 py-2">
+          <div class="card-body">
+            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Valor a Costo Promedio</div>
+            <div class="h5 mb-0 font-weight-bold text-gray-800">Bs {{ total_valor_costo }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="buttons-toolbar"></div>
+
+    <table
+      id="tablaEstadoInventario"
+      data-toggle="table"
+      data-pagination="true"
+      data-search="true"
+      data-show-columns="true"
+      data-show-fullscreen="true"
+      data-toolbar=".buttons-toolbar"
+      data-locale="es-NI"
+    >
+      <thead>
+        <th data-sortable="true" data-field="codigo">Código</th>
+        <th data-sortable="true" data-field="descripcion">Descripción</th>
+        <th data-sortable="true" data-field="categoria">Categoría</th>
+        <th data-sortable="true" data-field="existencia">Existencia</th>
+        <th data-sortable="true" data-field="precio">Precio Venta</th>
+        <th data-sortable="true" data-field="costo">Costo Promedio</th>
+        <th data-sortable="true" data-field="valor_venta">Valor (Venta)</th>
+        <th data-sortable="true" data-field="valor_costo">Valor (Costo)</th>
+        <th class="all">Estado</th>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr>
+          <td>{{ fila.producto.codigo }}</td>
+          <td>{{ fila.producto.descripcion }}</td>
+          <td>{{ fila.categoria }}</td>
+          <td>{{ fila.producto.existencia }}</td>
+          <td>{{ fila.producto.precio }}</td>
+          <td>{{ fila.producto.costo_promedio }}</td>
+          <td>{{ fila.valor_venta }}</td>
+          <td>{{ fila.valor_costo }}</td>
+          <td>
+            {% if fila.producto.existencia <= 0 %}
+              <span class="badge badge-danger">Agotado</span>
+            {% elif fila.producto.existencia <= 5 %}
+              <span class="badge badge-warning">Stock Bajo</span>
+            {% else %}
+              <span class="badge badge-success">Normal</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

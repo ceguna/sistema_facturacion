@@ -8,16 +8,28 @@
   </div>
   <!-- Card Body -->
   <div class="card-body">
-    <div class="row">
+    <!-- CORREGIDO 07/09/2026 -- hallazgo de carga lenta: antes f1/f2
+         solo se usaban para los botones de descarga (Ver en Pantalla/
+         PDF/Excel/XML), la tabla de abajo traia TODAS las facturas sin
+         filtro. Ahora este formulario filtra la CONSULTA real
+         (FacturaView.get_queryset) -- mes actual por defecto, o el
+         rango que se envie por aca. Es un GET normal (recarga la
+         pagina), no AJAX. -->
+    <form method="get" class="row">
       <div class="col-md-3">
         <label for="f1">Fecha Inicio:</label>
-        <input type="text" class="form-class" name="f1" id="f1" readonly>
+        <input type="text" class="form-control" name="f1" id="f1" value="{{ f1|date:'Y-m-d' }}" readonly>
       </div>
       <div class="col-md-3">
         <label for="f2">Fecha Fin:</label>
-        <input type="text" class="form-class" name="f2" id="f2" readonly>
+        <input type="text" class="form-control" name="f2" id="f2" value="{{ f2|date:'Y-m-d' }}" readonly>
       </div>
-      <div class="col-md-6 d-flex align-items-end flex-wrap">
+      <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-primary mb-1"><i class="fas fa-filter mr-1"></i>Filtrar</button>
+      </div>
+    </form>
+    <div class="row mt-2">
+      <div class="col-md-12 d-flex align-items-end flex-wrap">
         <button class="btn btn-warning mb-1" type="button" id="btnPrint">Ver en Pantalla</button>
         <button class="btn btn-danger ml-2 mb-1" type="button" id="btnPrintPdf">Descargar PDF</button>
         <button class="btn btn-success ml-2 mb-1" type="button" id="btnDescargarExcel">
@@ -31,7 +43,7 @@
     <hr>
  
     {% if not obj %}
-    <div class="alert alert-info"><i class="fas fa-file-invoice mr-2"></i>Todavía no registraste ninguna factura. Usa el botón <b>Nuevo</b> para comenzar.</div>
+    <div class="alert alert-info"><i class="fas fa-file-invoice mr-2"></i>No hay facturas en el rango {{ f1|date:'d/m/Y' }} al {{ f2|date:'d/m/Y' }}. Probá ampliar el rango de fechas de arriba, o usá el botón <b>Nuevo</b> para comenzar.</div>
     {% endif %}
     <div class="buttons-toolbar">
         <a class="btn btn-success" href="{% url 'fac:factura_new' %}"><i class="far fa-calendar-plus"></i> Nuevo</a>
@@ -147,28 +159,12 @@ $(function(){
       timepicker:false
   });
 
-  function _formatearFecha(d){
-    var mes = ("0" + (d.getMonth() + 1)).slice(-2);
-    var dia = ("0" + d.getDate()).slice(-2);
-    return d.getFullYear() + "-" + mes + "-" + dia;
-  }
-
-  var hoy = new Date();
-  var primerDiaDelMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-
-  $("#f1").val(_formatearFecha(primerDiaDelMes));
-  $("#f2").val(_formatearFecha(hoy));
-
+  // CORREGIDO 07/09/2026: f1/f2 ya vienen prellenados desde el
+  // servidor (mes actual por defecto, o el rango que ya se filtro) --
+  // antes esto se recalculaba en JS de cero, lo cual podia
+  // desincronizarse del filtro real que aplica la consulta.
   function _rangoFechas() {
-    var f1 = $("#f1").val();
-    var f2 = $("#f2").val();
-    if(f1=="" || f1==null){
-      f1 = _formatearFecha(primerDiaDelMes);
-    }
-    if(f2=="" || f2==null){
-      f2 = _formatearFecha(hoy);
-    }
-    return {f1: f1, f2: f2};
+    return {f1: $("#f1").val(), f2: $("#f2").val()};
   }
 
   $("#btnPrint").click(function(e){

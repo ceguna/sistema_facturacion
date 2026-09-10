@@ -102,18 +102,57 @@ class ProductoForm(forms.ModelForm):
             })
         self.fields['ultima_compra'].widget.attrs['readonly'] = True
         self.fields['existencia'].widget.attrs['readonly'] = True
+        # CORREGIDO 07/09/2026: ninguno de los dos tenia el 'required'
+        # anulado, asi que Django lo calculaba solo desde el modelo (que
+        # no tiene blank=True en ninguno) -- por eso llevaban asterisco
+        # sin corresponder. Existencia es de solo lectura (el sistema la
+        # calcula, el usuario nunca la tipea) y Descuento Promocional es
+        # opcional (un producto puede no tener ninguna promocion).
+        self.fields['existencia'].required = False
+        self.fields['descuento_promocional_pct'].required = False
         self.fields['descuento_vigencia_desde'].required = False
         self.fields['descuento_vigencia_hasta'].required = False
         self.fields['descuento_vigencia_desde'].input_formats = ['%Y-%m-%d']
         self.fields['descuento_vigencia_hasta'].input_formats = ['%Y-%m-%d']
-        self.fields['costo_referencia_usd'].required = False
-        self.fields['margen_deseado_pct'].required = False
+        # CORREGIDO 06/09/2026: Costo Referencia y Margen Deseado pasan
+        # a ser OBLIGATORIOS -- con el dolar fluctuando tanto al alza,
+        # sin estos dos datos no se puede calcular un precio de venta
+        # sugerido confiable en "Revision de Precios".
+        self.fields['costo_referencia_usd'].required = True
+        self.fields['margen_deseado_pct'].required = True
+
+        # Asterisco automatico en la etiqueta de cada campo obligatorio
+        # de este formulario -- se calcula DESPUES de fijar los
+        # required de arriba, para que refleje el estado real (los de
+        # vigencia de descuento no lo llevan, costo/margen si). No
+        # hace falta tocar la plantilla para los campos ligados al
+        # form (usan {{form.CAMPO.label}}) -- Categoria y Sub Categoria
+        # son excepciones armadas a mano en el HTML, ver plantilla.
+        for field in iter(self.fields):
+            if self.fields[field].required:
+                self.fields[field].label = f"{self.fields[field].label} *"
 
     def clean(self):
         cleaned = super().clean()
         pct = cleaned.get('descuento_promocional_pct') or 0
         desde = cleaned.get('descuento_vigencia_desde')
         hasta = cleaned.get('descuento_vigencia_hasta')
+
+        # CORREGIDO 07/09/2026: 'required=True' por si solo no alcanza
+        # aca -- si el modelo tiene un valor por defecto (ej. 0) para
+        # estos dos campos, el formulario llega precargado con "0", y
+        # Django considera que eso YA es un valor presente (no vacio),
+        # asi que la validacion de "obligatorio" se cumple aunque el
+        # usuario nunca haya escrito nada a proposito. Se valida
+        # explicitamente que sean mayores a 0, ligado a cada campo con
+        # add_error() (no un error generico) para que se muestre en el
+        # lugar correcto.
+        costo = cleaned.get('costo_referencia_usd')
+        margen = cleaned.get('margen_deseado_pct')
+        if not costo or costo <= 0:
+            self.add_error('costo_referencia_usd', 'Debe ingresar un Costo de Referencia mayor a 0.')
+        if not margen or margen <= 0:
+            self.add_error('margen_deseado_pct', 'Debe ingresar un Margen Deseado mayor a 0.')
 
         if pct > 0:
             if not desde or not hasta:

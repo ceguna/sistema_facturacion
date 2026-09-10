@@ -1,0 +1,20 @@
+<soap-env:Envelope xmlns:soap-env="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap-env:Body>
+    <ns0:validacionRecepcionPaqueteFactura xmlns:ns0="https://siat.impuestos.gob.bo/">
+      <SolicitudServicioValidacionRecepcionPaquete>
+        <codigoAmbiente>2</codigoAmbiente>
+        <codigoDocumentoSector>1</codigoDocumentoSector>
+        <codigoEmision>2</codigoEmision>
+        <codigoModalidad>1</codigoModalidad>
+        <codigoPuntoVenta>1</codigoPuntoVenta>
+        <codigoSistema>373A0EA0FBA931B62586</codigoSistema>
+        <codigoSucursal>0</codigoSucursal>
+        <cufd>VCQUFBQnhjLkRBE5MzFCNjI1ODY=QlXCoVNEVEpKYVMzczQTBFQTBGQk</cufd>
+        <cuis>558F4FB7</cuis>
+        <nit>3852849010</nit>
+        <tipoFacturaDocumento>1</tipoFacturaDocumento>
+        <codigoRecepcion>a3819fe1-abd9-11f1-8d0c-51e30ecb41d3</codigoRecepcion>
+      </SolicitudServicioValidacionRecepcionPaquete>
+    </ns0:validacionRecepcionPaqueteFactura>
+  </soap-env:Body>
+</soap-env:Envelope>

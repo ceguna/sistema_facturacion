@@ -1,0 +1,176 @@
+{% extends 'base/base.html' %}
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3">
+    <h4 class="m-0 font-weight-bold text-primary">Kardex de Inventario (con Valorización)</h4>
+  </div>
+  <div class="card-body">
+    <div class="alert alert-secondary">
+      <i class="fas fa-info-circle mr-1"></i>
+      Las <b>entradas</b> se valorizan con el precio real de cada compra. Las <b>salidas</b> y el
+      <b>saldo inicial</b> se valorizan con el Costo Promedio <u>actual</u> del producto (no es un
+      costeo contable estricto por período — ver Producto para el detalle del método).
+    </div>
+
+    <form method="get" class="row">
+      <div class="col-md-3">
+        <label for="producto_id">Producto:</label>
+        <select name="producto_id" id="producto_id" class="form-control">
+          <option value="">-- Todos (resumen) --</option>
+          {% for prod in productos %}
+          <option value="{{ prod.id }}" {% if producto_id == prod.id|stringformat:"s" %}selected{% endif %}>{{ prod.codigo }} - {{ prod.descripcion }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label for="categoria_id">Categoría:</label>
+        <select name="categoria_id" id="categoria_id" class="form-control">
+          <option value="">-- Todas --</option>
+          {% for cat in categorias %}
+          <option value="{{ cat.id }}" {% if categoria_id == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.descripcion }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label for="f1">Desde:</label>
+        <input type="text" class="form-control" name="f1" id="f1" value="{{ f1|date:'Y-m-d' }}" readonly>
+      </div>
+      <div class="col-md-2">
+        <label for="f2">Hasta:</label>
+        <input type="text" class="form-control" name="f2" id="f2" value="{{ f2|date:'Y-m-d' }}" readonly>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-primary mb-1"><i class="fas fa-filter mr-1"></i>Consultar</button>
+      </div>
+    </form>
+    <hr>
+
+    {% if modo == 'resumen' %}
+    <div class="buttons-toolbar"></div>
+    <table
+      id="tablaKardexResumen"
+      data-toggle="table"
+      data-pagination="true"
+      data-search="true"
+      data-show-fullscreen="true"
+      data-toolbar=".buttons-toolbar"
+      data-locale="es-NI"
+    >
+      <thead>
+        <th data-sortable="true" data-field="codigo">Código</th>
+        <th data-sortable="true" data-field="descripcion">Producto</th>
+        <th data-sortable="true" data-field="si_cant">Saldo Inicial (Cant.)</th>
+        <th data-sortable="true" data-field="si_val">Saldo Inicial (Valor)</th>
+        <th data-sortable="true" data-field="entradas">Entradas</th>
+        <th data-sortable="true" data-field="salidas">Salidas</th>
+        <th data-sortable="true" data-field="sf_cant">Saldo Final (Cant.)</th>
+        <th data-sortable="true" data-field="sf_val">Saldo Final (Valor)</th>
+      </thead>
+      <tbody>
+        {% for fila in resumen %}
+        <tr>
+          <td>{{ fila.producto.codigo }}</td>
+          <td>{{ fila.producto.descripcion }}</td>
+          <td>{{ fila.saldo_inicial_cantidad }}</td>
+          <td>{{ fila.saldo_inicial_valor }}</td>
+          <td>{{ fila.total_entradas }}</td>
+          <td>{{ fila.total_salidas }}</td>
+          <td>{{ fila.saldo_final_cantidad }}</td>
+          <td>{{ fila.saldo_final_valor }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <h5>{{ kardex.producto.codigo }} - {{ kardex.producto.descripcion }}</h5>
+    <div class="row mb-3">
+      <div class="col-md-3">
+        <div class="card border-left-secondary shadow h-100 py-2">
+          <div class="card-body">
+            <div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">Saldo Inicial</div>
+            <div class="h6 mb-0 font-weight-bold text-gray-800">{{ kardex.saldo_inicial_cantidad }} un. (Bs {{ kardex.saldo_inicial_valor }})</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card border-left-success shadow h-100 py-2">
+          <div class="card-body">
+            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Entradas del Período</div>
+            <div class="h6 mb-0 font-weight-bold text-gray-800">{{ kardex.total_entradas }} un.</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card border-left-danger shadow h-100 py-2">
+          <div class="card-body">
+            <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">Salidas del Período</div>
+            <div class="h6 mb-0 font-weight-bold text-gray-800">{{ kardex.total_salidas }} un.</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card border-left-primary shadow h-100 py-2">
+          <div class="card-body">
+            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Saldo Final</div>
+            <div class="h6 mb-0 font-weight-bold text-gray-800">{{ kardex.saldo_final_cantidad }} un. (Bs {{ kardex.saldo_final_valor }})</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="buttons-toolbar"></div>
+    <table
+      id="tablaKardexDetalle"
+      data-toggle="table"
+      data-pagination="true"
+      data-show-fullscreen="true"
+      data-toolbar=".buttons-toolbar"
+      data-locale="es-NI"
+    >
+      <thead>
+        <th data-field="fecha">Fecha</th>
+        <th data-field="tipo">Tipo</th>
+        <th data-field="documento">Documento</th>
+        <th data-field="entrada">Entrada</th>
+        <th data-field="salida">Salida</th>
+        <th data-field="saldo">Saldo (Cant.)</th>
+        <th data-field="valor_saldo">Saldo (Valor)</th>
+      </thead>
+      <tbody>
+        <tr class="table-secondary">
+          <td colspan="5"><b>Saldo Inicial</b></td>
+          <td><b>{{ kardex.saldo_inicial_cantidad }}</b></td>
+          <td><b>{{ kardex.saldo_inicial_valor }}</b></td>
+        </tr>
+        {% for mov in kardex.movimientos %}
+        <tr>
+          <td>{{ mov.fecha|date:"d/m/Y" }}</td>
+          <td>{{ mov.tipo }}</td>
+          <td>{{ mov.documento }}</td>
+          <td>{% if mov.entrada %}{{ mov.entrada }}{% endif %}</td>
+          <td>{% if mov.salida %}{{ mov.salida }}{% endif %}</td>
+          <td>{{ mov.saldo_corriente }}</td>
+          <td>{{ mov.valor_saldo_corriente }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="table-primary">
+          <td colspan="5"><b>Saldo Final</b></td>
+          <td><b>{{ kardex.saldo_final_cantidad }}</b></td>
+          <td><b>{{ kardex.saldo_final_valor }}</b></td>
+        </tr>
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block js_page %}
+<script>
+$(function(){
+  $("#f1, #f2").datetimepicker({
+      format: 'Y-m-d',
+      timepicker:false
+  });
+});
+</script>
+{% endblock %}

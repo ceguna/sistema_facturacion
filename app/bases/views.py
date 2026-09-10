@@ -14,6 +14,13 @@ from django.db.models import Sum, Count
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from django.utils.crypto import get_random_string
+from django.contrib.auth.decorators import login_required, permission_required
+
+from django.utils import timezone
+from django.db.models import Sum
+from inv.models import Producto, Categoria, SubCategoria
+from cmp.models import ComprasDet
+from fac.models import FacturaDet
 
 class MixinFormInvalid:
     def form_invalid(self, form):
@@ -612,3 +619,242 @@ class GrupoDel(SinPrivilegios, generic.DeleteView):
     template_name = "bases/grupo_del.html"
     context_object_name = "obj"
     success_url = reverse_lazy("bases:grupo_list")
+
+"""
+AGREGAR a bases/views.py (no reemplaza nada existente -- son dos
+vistas nuevas). Requiere estos imports adicionales al inicio del
+archivo, si no los tiene ya:
+"""
+
+@login_required(login_url='/login/')
+@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
+def estado_inventario(request):
+    """
+    Reporte de Estado de Inventario: una "foto" del momento actual,
+    no un historico -- existencia, precio de venta, costo promedio, y
+    valor total a cada uno. Agregado 08/09/2026, junto con Kardex.
+    """
+    categoria_id = request.GET.get('categoria_id', '').strip()
+    buscar = request.GET.get('buscar', '').strip()
+
+    productos = Producto.objects.filter(estado=True).select_related(
+        'subcategoria', 'subcategoria__categoria', 'marca', 'unidad_medida'
+    ).order_by('descripcion')
+
+    if categoria_id:
+        productos = productos.filter(subcategoria__categoria_id=categoria_id)
+    if buscar:
+        productos = productos.filter(descripcion__icontains=buscar)
+
+    filas = []
+    total_valor_venta = 0
+    total_valor_costo = 0
+    for prod in productos:
+        valor_venta = round(prod.existencia * prod.precio, 2)
+        valor_costo = round(prod.existencia * prod.costo_promedio, 2)
+        total_valor_venta += valor_venta
+        total_valor_costo += valor_costo
+        filas.append({
+            'producto': prod,
+            'categoria': prod.subcategoria.categoria.descripcion,
+            'valor_venta': valor_venta,
+            'valor_costo': valor_costo,
+        })
+
+    return render(request, 'bases/estado_inventario.html', {
+        'filas': filas,
+        'categorias': Categoria.objects.filter(estado=True).order_by('descripcion'),
+        'categoria_id': categoria_id,
+        'buscar': buscar,
+        'total_valor_venta': round(total_valor_venta, 2),
+        'total_valor_costo': round(total_valor_costo, 2),
+    })
+
+
+def _movimientos_producto_qs(producto, fecha_desde=None, fecha_hasta=None):
+    """
+    Devuelve (compras_qs, ventas_qs) para un producto, ya filtrados
+    por rango de fecha si se indica. Excluye compras eliminadas
+    (ComprasEnc.estado=False) y ventas de facturas anuladas o
+    eliminadas -- esos casos revierten el stock por otro camino
+    (actualizacion directa de Producto.existencia, sin dejar una linea
+    de reversion en el detalle), asi que sumarlos aca duplicaria el
+    efecto y desalinearia el Kardex del saldo real.
+    """
+    compras_qs = ComprasDet.objects.filter(producto=producto, compra__estado=True)
+    ventas_qs = FacturaDet.objects.filter(
+        producto=producto, factura__anulado=False, factura__estado=True
+    )
+    if fecha_desde:
+        compras_qs = compras_qs.filter(compra__fecha_compra__gte=fecha_desde)
+        ventas_qs = ventas_qs.filter(factura__fecha__date__gte=fecha_desde)
+    if fecha_hasta:
+        compras_qs = compras_qs.filter(compra__fecha_compra__lte=fecha_hasta)
+        ventas_qs = ventas_qs.filter(factura__fecha__date__lte=fecha_hasta)
+    return compras_qs.select_related('compra'), ventas_qs.select_related('factura')
+
+
+def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
+    """
+    Calcula el Kardex de un producto para el rango [fecha_desde,
+    fecha_hasta]: saldo inicial (cantidad y valor), lista de
+    movimientos dentro del rango (ordenados por fecha, con saldo
+    corriente), y saldo final.
+
+    LIMITACION CONOCIDA (valorizacion): las ENTRADAS se valorizan con
+    el precio de compra REAL de esa linea (precio_prv), dato exacto e
+    historico. Las SALIDAS (ventas) y el SALDO INICIAL se valorizan
+    con el costo_promedio ACTUAL del producto -- una aproximacion, ya
+    que no se guarda una foto historica del costo promedio en cada
+    momento del pasado, solo su valor de hoy. Aceptado como
+    aproximacion razonable (decision 08/09/2026, Carlos conforme con
+    "sin ser un costeo contable estricto").
+    """
+    costo_actual = producto.costo_promedio or 0
+
+    # Saldo inicial: se retrocede desde la existencia ACTUAL,
+    # deshaciendo todo lo que entro/salio desde fecha_desde en
+    # adelante (sin tope superior).
+    compras_desde, ventas_desde = _movimientos_producto_qs(producto, fecha_desde=fecha_desde)
+    total_entradas_desde = sum(c.cantidad for c in compras_desde)
+    total_salidas_desde = sum(v.cantidad for v in ventas_desde)
+    saldo_inicial_cantidad = producto.existencia - total_entradas_desde + total_salidas_desde
+    saldo_inicial_valor = round(saldo_inicial_cantidad * costo_actual, 2)
+
+    # Movimientos dentro del rango elegido, para el detalle.
+    compras_rango, ventas_rango = _movimientos_producto_qs(
+        producto, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta
+    )
+
+    movimientos = []
+    for c in compras_rango:
+        movimientos.append({
+            'fecha': c.compra.fecha_compra,
+            'tipo': 'Compra',
+            'documento': f'Compra #{c.compra.id}',
+            'entrada': c.cantidad,
+            'salida': 0,
+            'valor_entrada': round(c.cantidad * c.precio_prv, 2),
+            'valor_salida': 0,
+        })
+    for v in ventas_rango:
+        es_reversion = v.cantidad < 0
+        cantidad_abs = abs(v.cantidad)
+        valor_abs = round(cantidad_abs * costo_actual, 2)
+        if es_reversion:
+            # Una reversion de venta es una ENTRADA (vuelve al stock).
+            movimientos.append({
+                'fecha': timezone.localtime(v.factura.fecha).date(),
+                'tipo': 'Reversión de venta',
+                'documento': f'Factura #{v.factura.id}',
+                'entrada': cantidad_abs,
+                'salida': 0,
+                'valor_entrada': valor_abs,
+                'valor_salida': 0,
+            })
+        else:
+            movimientos.append({
+                'fecha': timezone.localtime(v.factura.fecha).date(),
+                'tipo': 'Venta',
+                'documento': f'Factura #{v.factura.id}',
+                'entrada': 0,
+                'salida': cantidad_abs,
+                'valor_entrada': 0,
+                'valor_salida': valor_abs,
+            })
+    movimientos.sort(key=lambda m: m['fecha'])
+
+    saldo_corriente = saldo_inicial_cantidad
+    valor_corriente = saldo_inicial_valor
+    for m in movimientos:
+        saldo_corriente += m['entrada'] - m['salida']
+        valor_corriente += m['valor_entrada'] - m['valor_salida']
+        m['saldo_corriente'] = saldo_corriente
+        m['valor_saldo_corriente'] = round(valor_corriente, 2)
+
+    total_entradas_rango = sum(m['entrada'] for m in movimientos)
+    total_salidas_rango = sum(m['salida'] for m in movimientos)
+
+    return {
+        'producto': producto,
+        'saldo_inicial_cantidad': saldo_inicial_cantidad,
+        'saldo_inicial_valor': saldo_inicial_valor,
+        'movimientos': movimientos,
+        'total_entradas': total_entradas_rango,
+        'total_salidas': total_salidas_rango,
+        'saldo_final_cantidad': saldo_corriente,
+        'saldo_final_valor': round(valor_corriente, 2),
+    }
+
+
+@login_required(login_url='/login/')
+@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
+def kardex_inventario(request):
+    """
+    Reporte de Movimiento de Inventario (Kardex), con rango de fechas
+    elegible y valorizacion aproximada (ver docstring de
+    _calcular_kardex_producto). Agregado 08/09/2026 -- generaliza el
+    kardex que ya existia (fijo al mes actual, un producto a la vez,
+    dentro de la pantalla "Tables") a su propio reporte dedicado, con
+    rango de fecha libre.
+
+    Sin producto_id elegido: RESUMEN, un renglon por producto (saldo
+    inicial/entradas/salidas/saldo final, sin el detalle linea por
+    linea -- mostrar el detalle de TODOS los productos a la vez seria
+    ilegible). Con un producto_id elegido: DETALLE completo de ese
+    producto.
+    """
+    hoy = timezone.localdate()
+    f1_raw = request.GET.get('f1')
+    f2_raw = request.GET.get('f2')
+    from django.utils.dateparse import parse_date
+    fecha_desde = parse_date(f1_raw) if f1_raw else hoy.replace(day=1)
+    fecha_hasta = parse_date(f2_raw) if f2_raw else hoy
+
+    producto_id = request.GET.get('producto_id', '').strip()
+    categoria_id = request.GET.get('categoria_id', '').strip()
+
+    if producto_id:
+        producto = Producto.objects.filter(pk=producto_id, estado=True).first()
+        if not producto:
+            messages.error(request, 'Producto no encontrado.')
+            return redirect('bases:kardex_inventario')
+        kardex = _calcular_kardex_producto(producto, fecha_desde, fecha_hasta)
+        return render(request, 'bases/kardex_inventario.html', {
+            'modo': 'detalle',
+            'kardex': kardex,
+            'f1': fecha_desde,
+            'f2': fecha_hasta,
+            'productos': Producto.objects.filter(estado=True).order_by('descripcion'),
+            'categorias': Categoria.objects.filter(estado=True).order_by('descripcion'),
+            'producto_id': producto_id,
+            'categoria_id': categoria_id,
+        })
+
+    productos = Producto.objects.filter(estado=True).order_by('descripcion')
+    if categoria_id:
+        productos = productos.filter(subcategoria__categoria_id=categoria_id)
+
+    resumen = []
+    for prod in productos:
+        k = _calcular_kardex_producto(prod, fecha_desde, fecha_hasta)
+        resumen.append({
+            'producto': prod,
+            'saldo_inicial_cantidad': k['saldo_inicial_cantidad'],
+            'saldo_inicial_valor': k['saldo_inicial_valor'],
+            'total_entradas': k['total_entradas'],
+            'total_salidas': k['total_salidas'],
+            'saldo_final_cantidad': k['saldo_final_cantidad'],
+            'saldo_final_valor': k['saldo_final_valor'],
+        })
+
+    return render(request, 'bases/kardex_inventario.html', {
+        'modo': 'resumen',
+        'resumen': resumen,
+        'f1': fecha_desde,
+        'f2': fecha_hasta,
+        'productos': Producto.objects.filter(estado=True).order_by('descripcion'),
+        'categorias': Categoria.objects.filter(estado=True).order_by('descripcion'),
+        'producto_id': producto_id,
+        'categoria_id': categoria_id,
+    })

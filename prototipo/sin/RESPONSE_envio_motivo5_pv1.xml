@@ -1,0 +1,12 @@
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ns2:recepcionPaqueteFacturaResponse xmlns:ns2="https://siat.impuestos.gob.bo/">
+      <RespuestaServicioFacturacion>
+        <codigoDescripcion>PENDIENTE</codigoDescripcion>
+        <codigoEstado>901</codigoEstado>
+        <codigoRecepcion>96821513-a885-11f1-9a74-117823029f8b</codigoRecepcion>
+        <transaccion>true</transaccion>
+      </RespuestaServicioFacturacion>
+    </ns2:recepcionPaqueteFacturaResponse>
+  </soap:Body>
+</soap:Envelope>

@@ -1,0 +1,10 @@
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ns2:sincronizarFechaHoraResponse xmlns:ns2="https://siat.impuestos.gob.bo/">
+      <RespuestaFechaHora>
+        <transaccion>true</transaccion>
+        <fechaHora>2026-09-04T10:27:06.578</fechaHora>
+      </RespuestaFechaHora>
+    </ns2:sincronizarFechaHoraResponse>
+  </soap:Body>
+</soap:Envelope>

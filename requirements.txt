@@ -24,6 +24,12 @@ pyhanko-certvalidator>=0.31
 svglib>=2.0
 qrcode>=8.2
 
+# Integracion SIN - facturacion electronica (cliente SOAP + firma XMLDSig)
+# Usado por app/fe/services.py y app/catalogos/services.py.
+zeep>=4.3
+lxml>=6.1
+signxml>=5.1
+
 # Utilidades
 requests>=2.34
 PyYAML>=6.0.3

@@ -11,6 +11,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.http import HttpResponse
 import json
 from django.db.models import Sum
+from django.utils import timezone
 
 from .models import Proveedor, ComprasEnc, ComprasDet
 from cmp.forms import ProveedorForm,ComprasEncForm
@@ -114,6 +115,47 @@ class ComprasView(SinPrivilegios, generic.ListView):
         return ComprasEnc.objects.filter(estado=True).order_by('-id')
 
 
+def _tiene_permiso_dia_cerrado(user):
+    """
+    True si este usuario puede crear/editar una compra aunque su fecha
+    ya este cerrada (Cierre de Dia de Facturacion -- Compras nunca
+    tuvo su propio concepto de cierre). Permiso dedicado, mismo
+    criterio que eliminar_comprasenc: is_superuser SIEMPRE puede
+    (has_perm ya lo cubre solo), y ademas cualquiera con el permiso
+    explicito, sin necesitar ser superusuario tecnico de Django.
+    """
+    return user.has_perm('cmp.editar_compra_dia_cerrado')
+
+
+def _puede_eliminar_por_ventana_tiempo(user, fecha_compra):
+    """
+    Ventana de tiempo permitida para ELIMINAR (compra completa o una
+    linea de detalle), escalonada por permiso -- agregado 08/09/2026,
+    mismo patron que usan ERP grandes (Sage: "period locking" con
+    roles escalonados). INDEPENDIENTE del chequeo de dia cerrado
+    (CierreDia): esto aplica siempre, este el dia formalmente cerrado
+    o no -- son dos preguntas distintas ("¿es un dia cerrado del
+    todo?" vs "¿que tan atras en el tiempo puede llegar este rol?").
+
+    - Con 'cmp.editar_compra_dia_cerrado' (Administrador): sin limite,
+      cualquier fecha -- ya tiene el permiso mas amplio de todos.
+    - Con 'cmp.eliminar_compra_mes_vigente' (Supervisor): todo el mes
+      en curso (año y mes iguales a hoy).
+    - Sin ninguno de los dos (Almacenero): solo el dia de hoy.
+    """
+    if not fecha_compra:
+        return True
+
+    if user.has_perm('cmp.editar_compra_dia_cerrado'):
+        return True
+
+    hoy = timezone.localdate()
+    if user.has_perm('cmp.eliminar_compra_mes_vigente'):
+        return fecha_compra.year == hoy.year and fecha_compra.month == hoy.month
+
+    return fecha_compra == hoy
+
+
 @login_required(login_url='/login/')
 @permission_required('cmp.change_comprasenc', login_url='bases:sin_privilegios')
 def compras(request,compra_id=None):
@@ -165,6 +207,30 @@ def compras(request,compra_id=None):
         no_factura = request.POST.get("no_factura")
         fecha_factura = request.POST.get("fecha_factura")
         proveedor = request.POST.get("proveedor")
+
+        # --- NUEVO 07/09/2026: no se puede crear NI editar una compra
+        # en una fecha ya cerrada. Compras nunca tuvo su propio
+        # concepto de "cierre" -- se reusa el mismo CierreDia que ya
+        # usa Facturacion (confirmado con Carlos que no existe uno
+        # separado). Import local para evitar dependencia circular a
+        # nivel de modulo entre cmp y fac. Va ANTES que cualquier otra
+        # validacion -- si el dia esta cerrado, no importa si el resto
+        # de los datos es valido. ---
+        if fecha_compra:
+            from fac.models import CierreDia
+            try:
+                fecha_compra_parsed = datetime.date.fromisoformat(fecha_compra)
+            except ValueError:
+                fecha_compra_parsed = None
+
+            if fecha_compra_parsed and CierreDia.objects.filter(fecha=fecha_compra_parsed).exists() \
+                    and not _tiene_permiso_dia_cerrado(request.user):
+                messages.error(
+                    request,
+                    f'El día {fecha_compra_parsed.strftime("%d/%m/%Y")} ya fue cerrado -- '
+                    'no se pueden crear ni editar compras en esa fecha.'
+                )
+                return redirect("cmp:compras_edit", compra_id=compra_id) if compra_id else redirect("cmp:compras_list")
 
         # --- CORREGIDO 02/09/2026 (hallazgo "encabezado huerfano"):
         # todas las validaciones (proveedor, producto, cantidad,
@@ -286,8 +352,53 @@ def eliminar_compra(request, id):
         messages.error(request, 'Esta compra ya fue eliminada.')
         return redirect('cmp:compras_list')
 
+    # NUEVO 08/09/2026: ventana de tiempo escalonada por rol (ver
+    # _puede_eliminar_por_ventana_tiempo mas arriba) -- Almacenero solo
+    # el mismo dia, Supervisor todo el mes en curso, Administrador sin
+    # limite. Se chequea ANTES de mostrar la pantalla de confirmacion
+    # (esta vista es pagina completa, no modal via abrir_modal, asi que
+    # redirect + messages.error es el patron correcto aca).
+    if not _puede_eliminar_por_ventana_tiempo(request.user, enc.fecha_compra):
+        messages.error(
+            request,
+            f'No tiene permisos para eliminar esta compra: su fecha ({enc.fecha_compra.strftime("%d/%m/%Y")}) '
+            'está fuera de la ventana de tiempo permitida para su rol.'
+        )
+        return redirect('cmp:compras_edit', compra_id=id)
+
     if request.method == 'POST':
         detalles = ComprasDet.objects.filter(compra=enc)
+
+        # NUEVO 07/09/2026: si ya se vendio parte de este stock (via
+        # Factura), revertir la compra completa podria dejar el
+        # producto en existencia NEGATIVA -- fisicamente sin sentido.
+        # Mismo criterio que usan los ERP grandes (SAP Business One,
+        # Dynamics 365 Business Central: "Block Negative Inventory" /
+        # "Prevent Negative Inventory" son funciones de fabrica, no
+        # algo exotico). Se valida TODO antes de tocar nada -- todo o
+        # nada, agregando por producto por si la misma compra tiene
+        # mas de una linea del mismo producto.
+        cantidad_por_producto = {}
+        for det in detalles:
+            cantidad_por_producto[det.producto_id] = cantidad_por_producto.get(det.producto_id, 0) + det.cantidad
+
+        productos_en_negativo = []
+        for producto_id, cantidad_total in cantidad_por_producto.items():
+            prod = Producto.objects.get(pk=producto_id)
+            if prod.existencia - cantidad_total < 0:
+                productos_en_negativo.append(
+                    f'{prod.descripcion} (stock actual: {prod.existencia}, se revertirían {cantidad_total})'
+                )
+
+        if productos_en_negativo:
+            messages.error(
+                request,
+                'No se puede eliminar esta compra: dejaría stock negativo en: ' +
+                '; '.join(productos_en_negativo) +
+                '. Probablemente ya se vendió parte de esta mercadería -- revise antes de continuar.'
+            )
+            return redirect('cmp:compras_edit', compra_id=id)
+
         for det in detalles:
             prod = det.producto
             prod.existencia = int(prod.existencia) - int(det.cantidad)
@@ -305,6 +416,41 @@ def eliminar_compra(request, id):
     return render(request, 'cmp/compras_eliminar.html', {'enc': enc})
 
 
+def _rechazar_envio_modal(request, mensaje):
+    """
+    Para rechazar un POST que llega desde un formulario YA ABIERTO
+    dentro de un popup (abrir_modal ya engancho su submit por AJAX
+    desde que se mostro) -- a diferencia de _modal_error() (pensado
+    para bloquear ANTES de mostrar el formulario, en el GET inicial),
+    un 200 aca lo toma como "exito" el JS generico de abrir_modal, que
+    NO mira el contenido de la respuesta, solo el codigo HTTP.
+    Encontrado 07/09/2026: CompraDetDelete devolvia _modal_error() en
+    sus tres chequeos (dia cerrado, minimo 1 detalle, stock negativo)
+    -- todos silenciosamente ignorados, mostrando "Guardado
+    Satisfactoriamente" con la eliminacion ya rechazada del lado
+    servidor.
+
+    Imita el mismo formato que ya usa MixinFormInvalid
+    (form.errors.as_json(), un 400 con {"errors": "<json>"}) para que
+    el manejador de errores YA EXISTENTE en base.html lo muestre
+    correctamente, sin tocar ese archivo.
+    """
+    errores = {'__all__': [{'message': mensaje, 'code': 'rechazado'}]}
+    return JsonResponse({'errors': json.dumps(errores)}, status=400)
+
+
+def _modal_error(request, mensaje):
+    """
+    Mismo patron que ya usa fac/views.py: abrir_modal() en base.html
+    trata CUALQUIER respuesta 2xx como "exito" (aunque sea un redirect
+    seguido, termina en 200) -- un simple redirect() aca mostraria
+    "Guardado Satisfactoriamente" aunque en realidad se haya
+    rechazado la accion. Se reusa la MISMA plantilla de fac (es
+    generica, no tiene nada especifico de Facturacion en su marcado).
+    """
+    return render(request, 'fac/_modal_error.html', {'mensaje': mensaje})
+
+
 class CompraDetDelete(SinPrivilegios, generic.DeleteView):
     permission_required = "cmp.delete_comprasdet"
     model = ComprasDet
@@ -314,3 +460,75 @@ class CompraDetDelete(SinPrivilegios, generic.DeleteView):
     def get_success_url(self):
           compra_id=self.kwargs['compra_id']
           return reverse_lazy('cmp:compras_edit', kwargs={'compra_id': compra_id})
+
+    def delete(self, request, *args, **kwargs):
+        """
+        CORREGIDO 07/09/2026 -- dos bloqueos que faltaban, confirmados
+        en vivo por Carlos, MAS un bug de fondo en como se rechazaban:
+        1. Esta vista no chequeaba dia cerrado en absoluto -- se podia
+           eliminar una linea de una compra en un dia ya cerrado
+           (mismo CierreDia de Facturacion, mismo criterio que en
+           compras()).
+        2. Nada impedia dejar una compra con CERO lineas de detalle --
+           confirmado en vivo que al borrar la unica linea, la
+           cabecera quedaba guardada vacia, un estado invalido que no
+           deberia poder existir (una compra necesita al menos un
+           producto).
+        3. (bug de fondo, encontrado al investigar por que 1 y 2 no
+           frenaban nada) Los tres chequeos usaban _modal_error(), que
+           devuelve 200 -- pero el formulario de esta vista YA esta
+           abierto y YA fue enganchado por abrir_modal() cuando se
+           mostro el popup. El JS generico de exito no mira el
+           contenido de la respuesta, solo el codigo HTTP: un 200 se
+           toma como "Guardado Satisfactoriamente" sin importar que la
+           eliminacion se haya rechazado del lado servidor. Se
+           reemplazo por _rechazar_envio_modal() (ver mas arriba), que
+           imita el formato de error que ya usa MixinFormInvalid.
+        """
+        self.object = self.get_object()
+        compra = self.object.compra
+
+        from fac.models import CierreDia
+        if compra.fecha_compra and CierreDia.objects.filter(fecha=compra.fecha_compra).exists() \
+                and not request.user.has_perm('cmp.editar_compra_dia_cerrado'):
+            return _rechazar_envio_modal(
+                request,
+                f'El día {compra.fecha_compra.strftime("%d/%m/%Y")} ya fue cerrado -- '
+                'no se pueden eliminar líneas de esa compra.'
+            )
+
+        # NUEVO 08/09/2026: ventana de tiempo escalonada por rol (ver
+        # _puede_eliminar_por_ventana_tiempo) -- independiente del
+        # chequeo de dia cerrado de arriba (son dos preguntas
+        # distintas: "¿esta cerrado del todo?" vs "¿que tan atras
+        # puede llegar este rol?").
+        if not _puede_eliminar_por_ventana_tiempo(request.user, compra.fecha_compra):
+            return _rechazar_envio_modal(
+                request,
+                f'No tiene permisos para eliminar líneas de esta compra: su fecha '
+                f'({compra.fecha_compra.strftime("%d/%m/%Y")}) está fuera de la ventana '
+                'de tiempo permitida para su rol.'
+            )
+
+        # CORREGIDO 07/09/2026 -- decision de Carlos: ya NO se bloquea
+        # llegar a cero detalle aca. En cambio, se permite eliminar la
+        # ultima linea, y es compras.html (boton Cancelar) el que no
+        # deja salir de la pantalla de edicion mientras la compra
+        # tenga cero detalle -- Guardar ya rechazaba esto de por si
+        # (exige producto seleccionado).
+
+        # NUEVO 07/09/2026: mismo criterio que eliminar_compra -- no
+        # dejar el producto en existencia negativa si ya se vendio
+        # parte de lo comprado. Se chequea ANTES de llamar a
+        # super().delete(), que es lo que dispara la señal
+        # detalle_compra_borrar (la que de verdad resta el stock).
+        prod = self.object.producto
+        if prod.existencia - self.object.cantidad < 0:
+            return _rechazar_envio_modal(
+                request,
+                f'No se puede eliminar: "{prod.descripcion}" quedaría con stock negativo '
+                f'(actual: {prod.existencia}, se revertirían {self.object.cantidad}). '
+                'Probablemente ya se vendió parte de esta mercadería.'
+            )
+
+        return super().delete(request, *args, **kwargs)

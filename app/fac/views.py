@@ -85,13 +85,36 @@ class FacturaView(SinPrivilegios, generic.ListView):
     permission_required="fac.view_facturaenc"
 
     def get_queryset(self):
-        # 'estado=False' es el soft-delete de eliminar_factura -- no
-        # debe aparecer en el listado normal. Orden descendente por id
-        # (equivale a la mas reciente primero, ya que id es
-        # autoincremental y nunca se reutiliza) -- antes no tenia
-        # order_by, asi que el orden dependia del orden natural de la
-        # base, sin garantia.
-        return FacturaEnc.objects.filter(estado=True).order_by('-id')
+        # CORREGIDO 07/09/2026 -- hallazgo de carga lenta: esta consulta
+        # traia TODAS las facturas alguna vez creadas (miles, entre
+        # todo el volumen de certificacion generado este mes) sin
+        # ningun filtro. Ahora filtra por rango de fecha ANTES de
+        # tocar la base -- mes actual por defecto (?f1/?f2 ausentes),
+        # o el rango que el usuario haya elegido en la cabecera.
+        from django.utils.dateparse import parse_date
+
+        hoy = timezone.localdate()
+        f1_raw = self.request.GET.get('f1')
+        f2_raw = self.request.GET.get('f2')
+
+        f1 = parse_date(f1_raw) if f1_raw else None
+        f2 = parse_date(f2_raw) if f2_raw else None
+
+        if not f1:
+            f1 = hoy.replace(day=1)
+        if not f2:
+            f2 = hoy
+
+        # Guardados como atributos de instancia -- get_context_data()
+        # los lee despues para reflejar el mismo rango en los campos
+        # de la cabecera (Django llama get_queryset() antes que
+        # get_context_data() en el flujo normal de un ListView).
+        self.f1 = f1
+        self.f2 = f2
+
+        return FacturaEnc.objects.filter(
+            estado=True, fecha__date__gte=f1, fecha__date__lte=f2
+        ).order_by('-id')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -102,6 +125,8 @@ class FacturaView(SinPrivilegios, generic.ListView):
         # _es_supervisor esta definida mas abajo en este mismo modulo --
         # se resuelve en tiempo de ejecucion, no hay problema de orden.
         context['es_supervisor'] = _es_supervisor(self.request.user)
+        context['f1'] = self.f1
+        context['f2'] = self.f2
         return context
 
 @login_required(login_url='/login/')
@@ -517,6 +542,29 @@ def _tiene_ncd_validada(enc):
     return enc.notas_credito_debito.filter(estado_sin=NotaCreditoDebito.SIN_VALIDADA).exists()
 
 
+def _rechazar_envio_modal(request, mensaje):
+    """
+    Para rechazar un POST que llega desde un formulario YA ABIERTO
+    dentro de un popup (a diferencia de _modal_error(), pensado para
+    bloquear ANTES de mostrar el formulario, en el GET inicial). Un
+    200 en un formulario ya enganchado por abrir_modal() se toma como
+    "exito" por el JS generico -- no mira el contenido de la
+    respuesta, solo el codigo HTTP. Encontrado 07/09/2026 en
+    cmp/views.py (CompraDetDelete) y aplicado tambien aca:
+    emitir_ncd() usaba _modal_error() para "falta el motivo" DENTRO
+    del bloque POST del mismo formulario que ya se mostro -- quedaba
+    silenciosamente ignorado, mostrando "Guardado Satisfactoriamente"
+    sin haber emitido ninguna NCD.
+
+    Imita el mismo formato que ya usa MixinFormInvalid
+    (form.errors.as_json()) para que el manejador de errores YA
+    EXISTENTE en base.html lo muestre correctamente.
+    """
+    import json
+    errores = {'__all__': [{'message': mensaje, 'code': 'rechazado'}]}
+    return JsonResponse({'errors': json.dumps(errores)}, status=400)
+
+
 def _modal_error(request, mensaje):
     """
     Respuesta chica y autocontenida para cuando una vista pensada para
@@ -729,7 +777,7 @@ def emitir_ncd(request, id):
     if request.method == 'POST':
         motivo = request.POST.get('motivo', '').strip()
         if not motivo:
-            return _modal_error(request, 'Debe indicar el motivo de la corrección.')
+            return _rechazar_envio_modal(request, 'Debe indicar el motivo de la corrección.')
 
         monto_efectivo = round(enc.total * 0.13, 2)
         ncd = NotaCreditoDebito.objects.create(

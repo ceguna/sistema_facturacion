@@ -1,3 +1,15 @@
+<style>
+    /* El <form> tiene class="form-inline" (Bootstrap) -- en pantallas
+       medianas para arriba eso le pone width:auto a TODOS los
+       .form-control, sin importar en que columna esten. Por eso
+       Descripcion, aunque este en un col-md-12, no se estiraba para
+       llenar ese espacio. Se fuerza el ancho SOLO en este campo
+       puntual, sin tocar el resto (que si se beneficia de lo compacto
+       que deja form-inline a los demas campos). */
+    #id_descripcion {
+        width: 95% !important;
+    }
+</style>
 <div class="modal-dialog modal-xl">
     <div class="modal-content">
         {% if obj %}
@@ -94,7 +106,7 @@
                                 {{form.unidad_medida}}
                             </div>
                             <div class="col-md-4">
-                                <label class="small mb-0">Categoría</label>
+                                <label class="small mb-0">Categoría *</label>
                                 <select name="categoria" id="id_categoria" class="form-control from-control-sm">
                                     <option value="0">-------</option>
                                     {% for item in categorias %}
@@ -107,7 +119,11 @@
                         <!-- Fila 5: Sub Categoria -->
                         <div class="row mt-2">
                             <div class="col-md-4">
-                                <label class="small mb-0">Sub Categoría</label>
+                                <!-- No ligado a {{form.subcategoria.label}} -- este select se
+                                     arma a mano por el "chained" con Categoria, asi que el
+                                     asterisco se pone aca directo (subcategoria SI es
+                                     obligatoria a nivel de modelo). -->
+                                <label class="small mb-0">Sub Categoría *</label>
                                 <select name="subcategoria" id="id_subcategoria" class="form-control from-control-sm">
                                     <option value="0">-------</option>
                                     {% for item in subcategorias %}
@@ -157,12 +173,17 @@
                                 {{form.margen_deseado_pct}}
                             </div>
                             <div class="col-md-6 d-flex align-items-end">
-                                <small class="text-muted">Opcional. Habilita este producto en "Revisión de Precios" (Catálogos).</small>
+                                <small class="text-muted">Habilita este producto en "Revisión de Precios" (Catálogos).</small>
                             </div>
                         </div>
 
                         <div class="dropdown-divider mt-2"></div>
                         <div class="row">
+                            <div class="col-md-12">
+                                <small class="text-muted">* Campo obligatorio</small>
+                            </div>
+                        </div>
+                        <div class="row mt-2">
                             <div class="col">
                                 <button type="submit" class="btn btn-primary"><span class="fa fa-save"></span> Guardar</button>
                                 <button type="button" class="btn btn-outline-secondary" onclick="return cerrar_modal()">

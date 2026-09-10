@@ -5,7 +5,7 @@ from bases.views import Home, HomeSinPrivilegios, ChartsView, TablesView, \
     LibroVentasView, LibroComprasView, FacturasAnuladasView, \
     UsuarioListView, UsuarioNew, UsuarioEdit, UsuarioResetPassword, \
     UsuarioToggleActivo, GrupoListView, GrupoNew, GrupoEdit, GrupoDel, \
-    MiPerfilView, MiCambiarPasswordView
+    MiPerfilView, MiCambiarPasswordView, estado_inventario, kardex_inventario
 
 urlpatterns = [
     path('',Home.as_view(), name='home'),
@@ -17,6 +17,8 @@ urlpatterns = [
     path('reportes/libro-ventas/', LibroVentasView.as_view(), name='libro_ventas'),
     path('reportes/libro-compras/', LibroComprasView.as_view(), name='libro_compras'),
     path('reportes/facturas-anuladas/', FacturasAnuladasView.as_view(), name='facturas_anuladas'),
+    path('reportes/estado-inventario', estado_inventario, name='estado_inventario'),
+    path('reportes/kardex-inventario', kardex_inventario, name='kardex_inventario'),
 
     # Mi Perfil (cualquier usuario logueado)
     path('mi-perfil/', MiPerfilView.as_view(), name='mi_perfil'),

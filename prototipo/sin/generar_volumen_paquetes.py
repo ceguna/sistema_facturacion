@@ -12,37 +12,56 @@ dashboard (confirmado 23/08/2026):
       * Punto de venta 0: exige cantidadFacturas < 500 (se usa un
         paquete chico, 3 facturas, para no cargar de mas sin necesidad).
   - Filas 15-16: validacionRecepcionPaqueteFactura, una por punto de
-    venta, 70 casos correctos cada una. cantidadFacturas "no aplica"
-    para estas filas -- se valida el MISMO codigoRecepcion que ya
-    devolvio cada envio exitoso de las filas 1-14, sin generar
-    paquetes nuevos aparte. Como cada punto de venta necesita
-    exactamente 70 envios exitosos en las filas 1-14 (7 motivos x 10),
-    y las filas 15/16 tambien piden 70 cada una, un envio exitoso +
-    su validacion inmediata cubren las dos certificaciones a la vez.
+    venta, 70 casos correctos cada una.
 
-OJO -- ESCALA REAL: un paquete de punto de venta 1 significa firmar y
-validar 500 facturas EN LOCAL antes de enviarlas. Sin llamadas de red
-por cada una, pero con costo real de computo: calcular unos 2-4
-minutos solo para firmar, mas el envio en si. Con hasta 7 motivos x
-varios intentos cada uno, la parte de punto de venta 1 puede llevar
-VARIAS HORAS en total. El lado de punto de venta 0 es mucho mas
-liviano y rapido.
+=====================================================================
+CAFC (motivos 5, 6 y 7)
+=====================================================================
+CAFC real: 1016EBC6A6D4E -- Rango asignado: 1 al 1000 (Sector 1,
+Electronica en Linea). Se asume que el rango son los NUMEROS DE
+FACTURA autorizados bajo este CAFC.
 
-RECOMENDADO: correr primero con --solo-pv 0 (rapido) para confirmar
-que todo el mecanismo funciona de punta a punta, y recien despues
---solo-pv 1 por separado, sabiendo que va a tardar mucho mas.
+El contador se PERSISTE en cafc_estado.json, sobrevive entre corridas
+distintas del script, y nunca repite un numero -- salvo que se use
+--numero-cafc-fijo (ver mas abajo), pensado especificamente para un
+test controlado.
+
+=====================================================================
+INVESTIGACION EN CURSO 07/09/2026 -- ¿se puede reusar el rango?
+=====================================================================
+El soporte del SIN respondio, ante la consulta de que el rango de
+1000 no alcanza para los 3 motivos pendientes en punto de venta 1
+(se necesitan 14.000 numeros): "es posible utilizar el mismo CAFC
+para los distintos escenarios de prueba, asegurandose de controlar y
+respetar el rango numerico correspondiente en cada empaquetado y
+envio". Respuesta ambigua -- podria significar que los numeros SI se
+pueden reusar entre motivos distintos (cada envio es un documento
+legal distinto por su fecha/hora + control, no por el numero solo), o
+podria seguir significando que el rango es una bolsa fija ya agotada.
+
+Se agrego --numero-cafc-fijo N para un test CONTROLADO: fuerza un
+numero especifico (bypasea el contador persistido por completo, no lo
+lee ni lo modifica) -- pensado para probar motivo 6 con el numero 1
+(ya usado en motivo 5), y ver si el SIN lo acepta o lo rechaza como
+duplicado. NO usar este flag para volumen real hasta confirmar el
+resultado de esta prueba.
 
 Uso:
-    python generar_volumen_paquetes.py --solo-pv 0 --intentos 3   # prueba chica, liviana
-    python generar_volumen_paquetes.py --solo-pv 0 --intentos 15  # pv=0 completo
-    python generar_volumen_paquetes.py --solo-pv 1 --intentos 2   # prueba chica de pv=1 (igual tarda varios minutos)
-    python generar_volumen_paquetes.py --solo-pv 1 --intentos 15  # pv=1 completo -- HORAS
+    python generar_volumen_paquetes.py --solo-pv 0 --intentos 3
+    python generar_volumen_paquetes.py --solo-pv 1 --solo-motivo 5 --intentos 1
+    python generar_volumen_paquetes.py --solo-pv 1 --solo-motivo 5 --intentos 1 --guardar-evidencia
+    python generar_volumen_paquetes.py --solo-pv 1 --solo-motivo 6 --intentos 1 --numero-cafc-fijo 1 --guardar-evidencia
+        # TEST CONTROLADO: motivo nuevo (6), reusando el numero 1 ya
+        # usado en motivo 5 -- confirma si el SIN acepta reusar
+        # numeros del rango entre motivos distintos.
 """
 import argparse
 import datetime
 import gzip
 import hashlib
 import io
+import json
+import os
 import tarfile
 import time
 
@@ -52,6 +71,7 @@ from signxml import XMLSigner, XMLVerifier, methods
 from signxml.algorithms import CanonicalizationMethod
 from zeep import Client
 from zeep.transports import Transport
+from zeep.plugins import HistoryPlugin
 from zeep.helpers import serialize_object
 from requests import Session
 
@@ -67,14 +87,18 @@ CODIGO_EMISION_OFFLINE = 2
 CODIGO_DOCUMENTO_SECTOR = 1
 TIPO_FACTURA_DOCUMENTO = 1
 
-# Cada punto de venta tiene su PROPIO CUIS (mismo principio de siempre
-# esta sesion: nunca reutilizar el de uno para el otro).
+CODIGO_CAFC = "1016EBC6A6D4E"
+MOTIVOS_QUE_REQUIEREN_CAFC = {5, 6, 7}
+RANGO_CAFC_MIN = 1
+RANGO_CAFC_MAX = 1000
+VALOR_INICIAL_SI_NO_EXISTE_ARCHIVO = 0
+ARCHIVO_ESTADO_CAFC = "cafc_estado.json"
+
 CUIS_POR_PUNTO_VENTA = {
     0: "31477C6C",
     1: "558F4FB7",
 }
 
-# cantidadFacturas exigida por el dashboard, por punto de venta.
 CANTIDAD_FACTURAS_POR_PUNTO_VENTA = {
     0: 3,     # "menor a 500"
     1: 500,   # "igual a 500" -- literal
@@ -90,8 +114,8 @@ MOTIVOS = {
     7: "Corte de suministro de energia electrica",
 }
 
-CASOS_ENVIO_NECESARIOS = 10        # por combinacion motivo x punto de venta (filas 1-14)
-CASOS_VALIDACION_NECESARIOS = 70   # por punto de venta (filas 15-16)
+CASOS_ENVIO_NECESARIOS = 10
+CASOS_VALIDACION_NECESARIOS = 70
 
 ARCHIVO_LLAVE = "certificado_real/clave_privada_real.pem"
 ARCHIVO_CERT = "certificado_real/certificado_real.pem"
@@ -104,11 +128,10 @@ WSDL_FACTURACION = "https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFact
 PAUSA_DURACION_EVENTO = 10
 PAUSA_ENTRE_INTENTOS = 5
 PAUSA_ANTES_DE_VALIDAR = 5
-# Un paquete de 500 facturas es un payload mucho mas grande que una
-# factura sola -- mas margen que el resto del sistema (que usa 45s).
 TIMEOUT_OPERACION_PAQUETE = 120
 
-_contador_numero_factura = [900000]  # numeracion alta a proposito, para no chocar con facturas reales
+_contador_numero_factura = [900000]
+_numero_cafc_fijo = [None]  # seteado desde main() si se pasa --numero-cafc-fijo
 
 
 def _siguiente_numero_factura():
@@ -116,11 +139,46 @@ def _siguiente_numero_factura():
     return _contador_numero_factura[0]
 
 
-def _cliente(wsdl, timeout_operacion=45):
+def _leer_estado_cafc():
+    if not os.path.exists(ARCHIVO_ESTADO_CAFC):
+        return {"ultimo_numero_usado": VALOR_INICIAL_SI_NO_EXISTE_ARCHIVO}
+    with open(ARCHIVO_ESTADO_CAFC, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _guardar_estado_cafc(estado):
+    with open(ARCHIVO_ESTADO_CAFC, "w", encoding="utf-8") as f:
+        json.dump(estado, f)
+
+
+def _siguiente_numero_factura_cafc():
+    """
+    Contador PROTEGIDO y PERSISTIDO en disco (cafc_estado.json) para
+    motivos 5/6/7 -- nunca repite un numero, salvo que se use
+    --numero-cafc-fijo (test controlado, ver docstring del modulo),
+    en cuyo caso este contador ni se lee ni se toca.
+    """
+    if _numero_cafc_fijo[0] is not None:
+        return _numero_cafc_fijo[0]
+
+    estado = _leer_estado_cafc()
+    siguiente = estado["ultimo_numero_usado"] + 1
+    if siguiente > RANGO_CAFC_MAX:
+        raise RuntimeError(
+            f"Se agoto el rango del CAFC ({RANGO_CAFC_MIN}-{RANGO_CAFC_MAX}). "
+            f"Numeros ya usados: {estado['ultimo_numero_usado']} (ver {ARCHIVO_ESTADO_CAFC})."
+        )
+    estado["ultimo_numero_usado"] = siguiente
+    _guardar_estado_cafc(estado)
+    return siguiente
+
+
+def _cliente(wsdl, timeout_operacion=45, history=None):
     session = Session()
     session.headers.update({"apikey": f"TokenApi {TOKEN}"})
     transport = Transport(session=session, timeout=15, operation_timeout=timeout_operacion)
-    return Client(wsdl=wsdl, transport=transport)
+    plugins = [history] if history else []
+    return Client(wsdl=wsdl, transport=transport, plugins=plugins)
 
 
 def _pedir_cufd(client_codigos, codigo_punto_venta):
@@ -140,13 +198,7 @@ def _pedir_cufd(client_codigos, codigo_punto_venta):
 
 
 def _armar_y_firmar_factura(numero_factura, fecha_hora, codigo_control, cufd,
-                             codigo_punto_venta, llave, cert, schema):
-    """
-    llave/cert/schema se cargan UNA SOLA VEZ en main() y se pasan aca --
-    releerlos de disco y reconstruir el validador XSD en cada llamada
-    (como hacia el script original de 2 facturas) es innecesario y, a
-    escala de 500 facturas por paquete, suma un costo evitable.
-    """
+                             codigo_punto_venta, llave, cert, schema, cafc=None):
     cuf = calcular_cuf(
         nit=NIT, fecha_hora=fecha_hora, codigo_sucursal=CODIGO_SUCURSAL,
         codigo_modalidad=CODIGO_MODALIDAD, codigo_tipo_emision=CODIGO_EMISION_OFFLINE,
@@ -163,6 +215,7 @@ def _armar_y_firmar_factura(numero_factura, fecha_hora, codigo_control, cufd,
         "codigoTipoDocumentoIdentidad": 1, "numeroDocumento": "1234567", "codigoCliente": "1",
         "codigoMetodoPago": 1, "montoTotal": 100.00, "montoTotalSujetoIva": 100.00,
         "codigoMoneda": 1, "tipoCambio": 1, "montoTotalMoneda": 100.00, "descuentoAdicional": 0,
+        "cafc": cafc,
         "leyenda": "Ley N 453: Tienes derecho a recibir informacion sobre las "
                    "caracteristicas y contenidos de los servicios que utilices.",
         "usuario": "pruebas", "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR,
@@ -185,13 +238,37 @@ def _armar_y_firmar_factura(numero_factura, fecha_hora, codigo_control, cufd,
     return xml_bytes
 
 
+def _guardar_evidencia(history, etiqueta):
+    if not history or not history._buffer:
+        print(f"      (sin evidencia capturada para {etiqueta})")
+        return
+    ultimo_envio = history.last_sent
+    ultimo_recibido = history.last_received
+    if ultimo_envio:
+        xml = etree.tostring(ultimo_envio["envelope"], pretty_print=True).decode()
+        with open(f"REQUEST_{etiqueta}.xml", "w", encoding="utf-8") as f:
+            f.write(xml)
+        print(f"      REQUEST guardado en REQUEST_{etiqueta}.xml")
+    if ultimo_recibido:
+        xml = etree.tostring(ultimo_recibido["envelope"], pretty_print=True).decode()
+        with open(f"RESPONSE_{etiqueta}.xml", "w", encoding="utf-8") as f:
+            f.write(xml)
+        print(f"      RESPONSE guardado en RESPONSE_{etiqueta}.xml")
+
+
 def intentar_un_paquete(client_codigos, client_operaciones, client_facturacion,
-                         codigo_motivo, codigo_punto_venta, intento, llave, cert, schema):
+                         codigo_motivo, codigo_punto_venta, intento, llave, cert, schema,
+                         guardar_evidencia=False):
     cantidad_facturas = CANTIDAD_FACTURAS_POR_PUNTO_VENTA[codigo_punto_venta]
     cuis = CUIS_POR_PUNTO_VENTA[codigo_punto_venta]
 
+    requiere_cafc = codigo_motivo in MOTIVOS_QUE_REQUIEREN_CAFC
+    cafc_valor = CODIGO_CAFC if requiere_cafc else None
+
     print(f"\n--- Motivo {codigo_motivo} ({MOTIVOS[codigo_motivo]}) / PV {codigo_punto_venta} "
-          f"({cantidad_facturas} facturas) -- intento {intento} ---")
+          f"({cantidad_facturas} facturas) -- intento {intento}"
+          f"{' -- CON CAFC ' + CODIGO_CAFC if requiere_cafc else ''}"
+          f"{' -- NUMERO FIJO ' + str(_numero_cafc_fijo[0]) if _numero_cafc_fijo[0] is not None else ''} ---")
 
     print("  [1] CUFD del evento...")
     cufd_evento, codigo_control = _pedir_cufd(client_codigos, codigo_punto_venta)
@@ -204,10 +281,11 @@ def intentar_un_paquete(client_codigos, client_operaciones, client_facturacion,
     t0 = time.time()
     facturas_xml = []
     for _ in range(cantidad_facturas):
-        numero = _siguiente_numero_factura()
+        numero = _siguiente_numero_factura_cafc() if requiere_cafc else _siguiente_numero_factura()
         fecha_factura = datetime.datetime.now()
         xml_bytes = _armar_y_firmar_factura(
-            numero, fecha_factura, codigo_control, cufd_evento, codigo_punto_venta, llave, cert, schema
+            numero, fecha_factura, codigo_control, cufd_evento, codigo_punto_venta,
+            llave, cert, schema, cafc=cafc_valor,
         )
         facturas_xml.append((f"factura_{numero}.xml", xml_bytes))
     print(f"      {cantidad_facturas} facturas firmadas en {time.time() - t0:.1f}s.")
@@ -245,6 +323,13 @@ def intentar_un_paquete(client_codigos, client_operaciones, client_facturacion,
     hash_archivo = hashlib.sha256(tar_gzip).hexdigest().upper()
     print(f"      Empaquetado: {len(tar_gzip)} bytes.")
 
+    history_envio = HistoryPlugin() if guardar_evidencia else None
+    client_facturacion_local = client_facturacion
+    if guardar_evidencia:
+        client_facturacion_local = _cliente(
+            WSDL_FACTURACION, timeout_operacion=TIMEOUT_OPERACION_PAQUETE, history=history_envio
+        )
+
     print("  [7] Enviando el paquete...")
     solicitud_paquete = {
         "codigoAmbiente": 2, "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR,
@@ -255,20 +340,19 @@ def intentar_un_paquete(client_codigos, client_operaciones, client_facturacion,
         "fechaEnvio": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
         "hashArchivo": hash_archivo, "cantidadFacturas": cantidad_facturas,
         "codigoEvento": codigo_evento,
-        # cafc NO se manda -- se probo con "" (string vacio) y el SIN
-        # empezo a rechazar con "Cafc no encontrado" despues de varios
-        # envios exitosos (motivo 5 en adelante, 23/08/2026). El
-        # mensaje sugiere que intenta BUSCAR un cafc real, no que
-        # rechaza un campo vacio -- omitir el campo del todo es la
-        # forma mas limpia de decir "no aplica" y la primera hipotesis
-        # a descartar antes de asumir que es degradacion del SIN.
     }
+    if requiere_cafc:
+        solicitud_paquete["cafc"] = cafc_valor
     try:
-        resp_paquete = serialize_object(client_facturacion.service.recepcionPaqueteFactura(
+        resp_paquete = serialize_object(client_facturacion_local.service.recepcionPaqueteFactura(
             SolicitudServicioRecepcionPaquete=solicitud_paquete
         ))
     except Exception as e:
         return {"envio_ok": False, "motivo_falla": f"error de red en envio: {e}"}
+
+    if guardar_evidencia:
+        _guardar_evidencia(history_envio, f"envio_motivo{codigo_motivo}_pv{codigo_punto_venta}")
+
     if not resp_paquete.get("transaccion"):
         return {"envio_ok": False, "motivo_falla": f"paquete rechazado: {resp_paquete.get('mensajesList')}"}
 
@@ -277,6 +361,14 @@ def intentar_un_paquete(client_codigos, client_operaciones, client_facturacion,
 
     print(f"  [8] Esperando {PAUSA_ANTES_DE_VALIDAR}s antes de validar...")
     time.sleep(PAUSA_ANTES_DE_VALIDAR)
+
+    history_validacion = HistoryPlugin() if guardar_evidencia else None
+    client_facturacion_val = client_facturacion
+    if guardar_evidencia:
+        client_facturacion_val = _cliente(
+            WSDL_FACTURACION, timeout_operacion=TIMEOUT_OPERACION_PAQUETE, history=history_validacion
+        )
+
     solicitud_validacion = {
         "codigoAmbiente": 2, "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR,
         "codigoEmision": CODIGO_EMISION_OFFLINE, "codigoModalidad": CODIGO_MODALIDAD,
@@ -285,7 +377,7 @@ def intentar_un_paquete(client_codigos, client_operaciones, client_facturacion,
         "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO, "codigoRecepcion": codigo_recepcion,
     }
     try:
-        resp_validacion = serialize_object(client_facturacion.service.validacionRecepcionPaqueteFactura(
+        resp_validacion = serialize_object(client_facturacion_val.service.validacionRecepcionPaqueteFactura(
             SolicitudServicioValidacionRecepcionPaquete=solicitud_validacion
         ))
         validacion_ok = bool(resp_validacion.get("transaccion"))
@@ -295,20 +387,30 @@ def intentar_un_paquete(client_codigos, client_operaciones, client_facturacion,
         validacion_ok = False
         print(f"      ERROR en validacion: {e}")
 
+    if guardar_evidencia:
+        _guardar_evidencia(history_validacion, f"validacion_motivo{codigo_motivo}_pv{codigo_punto_venta}")
+
     return {"envio_ok": True, "validacion_ok": validacion_ok, "codigo_recepcion": codigo_recepcion}
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--intentos", type=int, default=3,
-                         help="Intentos maximos por combinacion motivo x punto de venta (default 3, EMPEZAR CHICO).")
-    parser.add_argument("--solo-pv", type=int, default=None, choices=[0, 1],
-                         help="Correr solo un punto de venta (0 = liviano, 1 = 500 facturas). "
-                              "Por defecto corre los dos -- NO RECOMENDADO sin probar antes por separado.")
-    parser.add_argument("--solo-motivo", type=int, default=None, choices=list(MOTIVOS.keys()),
-                         help="Correr solo un motivo especifico (1-7), para cerrar un caso puntual "
-                              "sin repetir combinaciones que ya llegaron a su tope.")
+    parser.add_argument("--intentos", type=int, default=3)
+    parser.add_argument("--solo-pv", type=int, default=None, choices=[0, 1])
+    parser.add_argument("--solo-motivo", type=int, default=None, choices=list(MOTIVOS.keys()))
+    parser.add_argument("--guardar-evidencia", action="store_true")
+    parser.add_argument("--numero-cafc-fijo", type=int, default=None,
+                         help="TEST CONTROLADO: fuerza este numero exacto para las facturas con "
+                              "CAFC, sin leer ni modificar el contador persistido. Pensado para "
+                              "probar si el SIN acepta reusar un numero ya usado en otro motivo.")
     args = parser.parse_args()
+
+    if args.numero_cafc_fijo is not None:
+        _numero_cafc_fijo[0] = args.numero_cafc_fijo
+        print(f"{'!' * 70}")
+        print(f"MODO TEST CONTROLADO: forzando numero {args.numero_cafc_fijo} para todas las "
+              f"facturas con CAFC de esta corrida -- NO actualiza cafc_estado.json.")
+        print(f"{'!' * 70}\n")
 
     puntos_venta = [args.solo_pv] if args.solo_pv is not None else [0, 1]
     motivos_a_correr = {args.solo_motivo: MOTIVOS[args.solo_motivo]} if args.solo_motivo is not None else MOTIVOS
@@ -340,7 +442,8 @@ def main():
                 try:
                     resultado = intentar_un_paquete(
                         client_codigos, client_operaciones, client_facturacion,
-                        codigo_motivo, codigo_punto_venta, intento, llave, cert, schema
+                        codigo_motivo, codigo_punto_venta, intento, llave, cert, schema,
+                        guardar_evidencia=args.guardar_evidencia,
                     )
                     if resultado["envio_ok"]:
                         envios_ok += 1
@@ -350,6 +453,11 @@ def main():
                     else:
                         envios_fallidos += 1
                         print(f"  RESULTADO: envio fallido -- {resultado.get('motivo_falla')}")
+                except RuntimeError as e:
+                    print(f"\n{'!' * 70}\nDETENIDO: {e}\n{'!' * 70}")
+                    resumen[(codigo_motivo, codigo_punto_venta)] = (envios_ok, envios_fallidos)
+                    _imprimir_resumen(resumen, validaciones_por_pv, puntos_venta)
+                    return
                 except Exception as e:
                     envios_fallidos += 1
                     print(f"  ERROR INESPERADO: {e}")
@@ -359,6 +467,10 @@ def main():
 
             resumen[(codigo_motivo, codigo_punto_venta)] = (envios_ok, envios_fallidos)
 
+    _imprimir_resumen(resumen, validaciones_por_pv, puntos_venta)
+
+
+def _imprimir_resumen(resumen, validaciones_por_pv, puntos_venta):
     print("\n" + "=" * 70)
     print("RESUMEN DE ENVIOS POR COMBINACION (filas 1-14):")
     for (codigo_motivo, codigo_punto_venta), (ok, fallidos) in resumen.items():
@@ -369,6 +481,15 @@ def main():
     print("\nVALIDACIONES EXITOSAS ACUMULADAS EN ESTA CORRIDA (filas 15-16, meta 70 cada una):")
     for pv in puntos_venta:
         print(f"  Punto de venta {pv}: {validaciones_por_pv[pv]}/{CASOS_VALIDACION_NECESARIOS}")
+
+    if _numero_cafc_fijo[0] is None:
+        estado_cafc = _leer_estado_cafc()
+        restantes = RANGO_CAFC_MAX - estado_cafc["ultimo_numero_usado"]
+        print(f"\nEstado del CAFC: {estado_cafc['ultimo_numero_usado']} de {RANGO_CAFC_MAX} usados "
+              f"({restantes} restantes).")
+    else:
+        print(f"\n(Corrida en modo test controlado -- numero fijo {_numero_cafc_fijo[0]}, "
+              f"no se toco cafc_estado.json.)")
 
 
 if __name__ == "__main__":

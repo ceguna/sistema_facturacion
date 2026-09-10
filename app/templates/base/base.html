@@ -100,7 +100,7 @@
                     <i class="fas fa-fw fa-cog"></i>
                     <span>Catálogos</span>
                 </a>
-                <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionSidebar">
+                <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Catálogos de Inventario</h6>
                         {% if perms.inv.view_categoria %}
@@ -125,7 +125,7 @@
 
                         <h6 class="collapse-header">Catálogos de Compras</h6>
 
-                        {% if perms.inv.view_proveedor %}
+                        {% if perms.cmp.view_proveedor %}
                         <a class="collapse-item" href="{% url 'cmp:proveedor_list' %}">Proveedores</a>
                         {% endif %}
 
@@ -149,10 +149,10 @@
                     <i class="fas fa-fw fa-truck"></i>
                     <span>Movimientos</span>
                 </a>
-                <div id="collapseCompras" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionSidebar">
+                <div id="collapseCompras" class="collapse" aria-labelledby="headingTwo">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Entradas</h6>
-                        {% if perms.inv.view_compras %}
+                        {% if perms.cmp.view_comprasenc %}
                         <a class="collapse-item" href="{% url 'cmp:compras_list' %}">Compras</a>
                         {% endif %}
 
@@ -173,21 +173,38 @@
                     <i class="fas fa-fw fa-file-invoice-dollar"></i>
                     <span>Reportes</span>
                 </a>
-                <div id="collapseReportes" class="collapse" aria-labelledby="headingReportes" data-parent="#accordionSidebar">
+                <div id="collapseReportes" class="collapse" aria-labelledby="headingReportes">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Libros IVA</h6>
                         {% if perms.fac.view_facturaenc %}
                         <a class="collapse-item" href="{% url 'bases:libro_ventas' %}">Libro de Ventas</a>
                         {% endif %}
-                        {% if perms.inv.view_compras %}
+                        {% if perms.cmp.view_comprasenc %}
                         <a class="collapse-item" href="{% url 'bases:libro_compras' %}">Libro de Compras</a>
                         {% endif %}
 
-                        <h6 class="collapse-header">Otros</h6>
+                        <h6 class="collapse-header">Ventas</h6>
                         {% if perms.fac.view_facturaenc %}
                         <a class="collapse-item" href="{% url 'bases:facturas_anuladas' %}">Facturas Anuladas</a>
+                        {% endif %}
+                        <!-- La vista real de Cierre de Ventas/Caja ya exige
+                             fac.ver_reportes_financieros, no view_facturaenc (ver
+                             fac/reportes.py) -- antes el menu mostraba el link igual a
+                             cualquiera con view_facturaenc (ej. un Cajero), que despues
+                             rebotaba al hacer clic. -->
+                        {% if perms.fac.ver_reportes_financieros %}
                         <a class="collapse-item" href="{% url 'fac:cierre_ventas_selector' %}">Cierre de Ventas</a>
+                        {% endif %}
+
+                        <h6 class="collapse-header">Caja</h6>
+                        {% if perms.fac.ver_reportes_financieros %}
                         <a class="collapse-item" href="{% url 'fac:cierre_caja_selector' %}">Cierre de Caja</a>
+                        {% endif %}
+
+                        <h6 class="collapse-header">Inventario</h6>
+                        {% if perms.inv.view_producto %}
+                        <a class="collapse-item" href="{% url 'bases:estado_inventario' %}">Estado de Inventario</a>
+                        <a class="collapse-item" href="{% url 'bases:kardex_inventario' %}">Kardex con Valorización</a>
                         {% endif %}
                     </div>
                 </div>
@@ -226,7 +243,7 @@
                     <i class="fas fa-fw fa-user-shield"></i>
                     <span>Usuarios y Roles</span>
                 </a>
-                <div id="collapseAdmin" class="collapse" aria-labelledby="headingAdmin" data-parent="#accordionSidebar">
+                <div id="collapseAdmin" class="collapse" aria-labelledby="headingAdmin">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Acceso Rápido</h6>
                         <a class="collapse-item" href="{% url 'bases:usuario_list' %}">Usuarios</a>
@@ -562,6 +579,57 @@
                     el.setSelectionRange(start, end);
                 }
             });
+
+            // Persistencia de los submenus del sidebar entre paginas --
+            // agregado 06/09/2026: antes, cada clic en un link de un
+            // submenu navegaba a una pagina nueva y el HTML se volvia a
+            // armar desde cero, asi que el submenu volvia a aparecer
+            // cerrado sin que el usuario lo hubiera cerrado. Ahora se
+            // guarda en localStorage cual(es) submenus estan abiertos, y
+            // se restauran al cargar cada pagina -- se cierran SOLO
+            // cuando el usuario hace clic para cerrarlos, nunca solos
+            // (tambien se sacó el data-parent="#accordionSidebar" de
+            // cada .collapse, para que abrir uno ya no cierre a los demas).
+            (function () {
+                var CLAVE_SIDEBAR = 'csg-sidebar-abiertos';
+
+                function leerAbiertos() {
+                    try {
+                        return JSON.parse(localStorage.getItem(CLAVE_SIDEBAR)) || [];
+                    } catch (e) {
+                        return [];
+                    }
+                }
+
+                function guardarAbiertos(lista) {
+                    localStorage.setItem(CLAVE_SIDEBAR, JSON.stringify(lista));
+                }
+
+                $(function () {
+                    // Restaurar al cargar la pagina.
+                    leerAbiertos().forEach(function (idSelector) {
+                        var $collapse = $(idSelector);
+                        if ($collapse.length) {
+                            $collapse.addClass('show');
+                            $collapse.prev('.nav-link').removeClass('collapsed').attr('aria-expanded', 'true');
+                        }
+                    });
+
+                    // Actualizar la lista cuando el usuario abre/cierra uno a mano.
+                    $('#accordionSidebar .collapse').on('shown.bs.collapse', function () {
+                        var idSelector = '#' + this.id;
+                        var lista = leerAbiertos();
+                        if (lista.indexOf(idSelector) === -1) {
+                            lista.push(idSelector);
+                            guardarAbiertos(lista);
+                        }
+                    });
+                    $('#accordionSidebar .collapse').on('hidden.bs.collapse', function () {
+                        var idSelector = '#' + this.id;
+                        guardarAbiertos(leerAbiertos().filter(function (x) { return x !== idSelector; }));
+                    });
+                });
+            })();
         </script>
     {% endblock %}
     

@@ -49,25 +49,9 @@ WSDL_CODIGOS = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionCodig
 WSDL_FACTURACION = "https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionCompraVenta?wsdl"
 WSDL_OPERACIONES = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionOperaciones?wsdl"
 
-# Limites de tiempo para las llamadas al SIN. TIMEOUT_CONEXION es cuanto
-# esperar a que el servidor conteste al establecer la conexion (WSDL,
-# handshake). TIMEOUT_OPERACION es cuanto esperar la respuesta de una
-# operacion SOAP real (cuis, cufd, recepcionFactura, etc.) -- mas alto
-# porque el SIN puede tardar en procesar, sobre todo en Piloto.
-#
-# Confirmado con datos reales (21/08/2026, facturas 557/558/559): con
-# 30s, recepcionFactura daba timeout de forma consistente bajo carga
-# del Piloto; subido a 90s como diagnostico, las tres pasaron bien --
-# osea que es lentitud real del servidor, no un cuelgue. 45s queda como
-# valor definitivo: bastante mas margen que los 30 originales, sin
-# hacer esperar al cajero los 90s completos que solo se usaron para
-# aislar el problema. Revisar de nuevo con datos reales si vuelve a
-# fallar, sobre todo una vez en Produccion (no Piloto).
 TIMEOUT_CONEXION = 15
 TIMEOUT_OPERACION = 45
 
-# Rutas del certificado real. Configurables por variable de entorno para
-# no atar el codigo a la ubicacion actual (prototipo/sin/certificado_real).
 ARCHIVO_LLAVE = config(
     "SIN_ARCHIVO_LLAVE",
     default=os.path.join(os.path.dirname(__file__), "..", "..", "prototipo", "sin",
@@ -83,25 +67,12 @@ ARCHIVO_XSD = config(
     default=os.path.join(os.path.dirname(__file__), "..", "..", "prototipo", "sin",
                           "facturaElectronicaCompraVenta.xsd")
 )
-# XSD especifico de Nota de Credito-Debito -- distinto del de factura
-# normal (estructura de cabecera/detalle diferente). Debe vivir en la
-# MISMA carpeta que ARCHIVO_XSD, ya que importa '../SignatureSchema.xsd'
-# con ruta relativa -- la misma dependencia que ya resuelve el XSD de
-# factura normal. CORREGIDO 26/08/2026: el archivo real se llama
-# notaElectronicaCreditoDebito.xsd (sin "Descuento" -- esa es una
-# variante distinta, para bonificaciones posteriores a la venta).
 ARCHIVO_XSD_NCD = config(
     "SIN_ARCHIVO_XSD_NCD",
     default=os.path.join(os.path.dirname(__file__), "..", "..", "prototipo", "sin",
                           "notaElectronicaCreditoDebito.xsd")
 )
 
-# Se cargan UNA SOLA VEZ al importar este modulo (arranque del servidor),
-# no en cada factura -- releer estos tres archivos de disco y volver a
-# compilar el validador XSD en cada emision es trabajo repetido
-# innecesario (el certificado, la llave y el XSD no cambian entre una
-# factura y la siguiente). Antes de este cambio, emitir_factura_sin
-# hacia las tres cosas de nuevo cada vez que se llamaba.
 with open(ARCHIVO_LLAVE, "rb") as _f:
     _LLAVE_PRIVADA = _f.read()
 with open(ARCHIVO_CERT, "rb") as _f:
@@ -109,22 +80,12 @@ with open(ARCHIVO_CERT, "rb") as _f:
 _XSD_SCHEMA = etree.XMLSchema(etree.parse(ARCHIVO_XSD))
 _XSD_SCHEMA_NCD = etree.XMLSchema(etree.parse(ARCHIVO_XSD_NCD))
 
-# Constantes de negocio confirmadas en la certificacion Piloto -- no
-# cambian de una factura a otra en este sistema (todas Compra-Venta,
-# electronica en linea, con derecho a credito fiscal).
 CODIGO_AMBIENTE_PILOTO = 2
 CODIGO_AMBIENTE_PRODUCCION = 1
 CODIGO_MODALIDAD = 1          # Electronica en Linea
 CODIGO_TIPO_EMISION = 1       # En linea
 CODIGO_DOCUMENTO_SECTOR = 1   # Compra y Venta
 TIPO_FACTURA_DOCUMENTO = 1    # Con derecho a credito fiscal
-# Nota de Credito-Debito: CORREGIDO 26/08/2026 -- el documento real es
-# 'notaFiscalElectronicaCreditoDebito' (XSD notaElectronicaCreditoDebito.xsd),
-# NO la variante "...Descuento" (esa es para bonificaciones posteriores
-# a la venta, un caso distinto). codigoDocumentoSector=24 confirmado
-# fijo en ese XSD -- no 47, que corresponde a la variante Descuento.
-# Se envia con el MISMO recepcionFactura de siempre, no existe
-# operacion SOAP separada.
 TIPO_FACTURA_DOCUMENTO_AJUSTE = 3
 CODIGO_DOCUMENTO_SECTOR_NCD = 24
 CODIGO_TIPO_DOC_CI = 1
@@ -145,8 +106,8 @@ def _cliente_soap(wsdl, token):
     session.headers.update({"apikey": f"TokenApi {token}"})
     transport = Transport(
         session=session,
-        timeout=TIMEOUT_CONEXION,           # timeout para bajar el WSDL/XSD
-        operation_timeout=TIMEOUT_OPERACION,  # timeout para cada llamada SOAP real
+        timeout=TIMEOUT_CONEXION,
+        operation_timeout=TIMEOUT_OPERACION,
     )
     try:
         return Client(wsdl=wsdl, transport=transport)
@@ -157,13 +118,6 @@ def _cliente_soap(wsdl, token):
 
 
 def _llamar(descripcion, funcion, *args, **kwargs):
-    """
-    Envuelve cualquier llamada de red al SIN (via zeep) para que un
-    timeout, corte de conexion, o error de red se convierta en un
-    EmisionSinError con mensaje claro -- en vez de que la operacion
-    quede esperando indefinidamente o lance una excepcion generica
-    que el resto del sistema no sepa interpretar.
-    """
     try:
         return funcion(*args, **kwargs)
     except (RequestException, ZeepError, socket.timeout) as e:
@@ -204,21 +158,8 @@ def _obtener_empresa_y_sucursal(codigo_sucursal=0):
 
 
 def _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta):
-    """
-    Cada combinacion Sucursal+PuntoVenta tiene su PROPIO CUIS ante el
-    SIN -- nunca se reutiliza el de la Sucursal (codigo_punto_venta=0)
-    para otro punto de venta. Confirmado con datos reales: mismo NIT/
-    sistema/sucursal, distinto codigoPuntoVenta, el SIN devolvio dos
-    CUIS distintos (31477C6C para 0, 558F4FB7 para 1).
-
-    ANTES de este fix, las tres funciones que hablan con el SIN en
-    este archivo usaban 'sucursal.codigo_cuis' a mano en todos lados,
-    sin mirar codigo_punto_venta -- por eso una emision con
-    codigo_punto_venta=1 mandaba codigoPuntoVenta=1 pero con el CUIS
-    de codigoPuntoVenta=0, una combinacion invalida ante el SIN.
-    """
     if codigo_punto_venta == 0:
-        return sucursal.codigo_cuis  # ya validado (no vacio) en _obtener_empresa_y_sucursal
+        return sucursal.codigo_cuis
 
     punto_venta = PuntoVenta.objects.filter(
         sucursal=sucursal, codigo_punto_venta=codigo_punto_venta
@@ -256,12 +197,6 @@ def _pedir_cufd(client_codigos, empresa, sucursal, cuis, codigo_punto_venta, cod
 
 
 def _validar_homologacion(factura_det_qs):
-    """
-    Revisa que cada producto de la factura tenga su homologacion SIN
-    completa (actividad economica, codigo de producto, y que su unidad
-    de medida tenga codigo_sin). Si falta algo, error claro indicando
-    exactamente que producto y que campo falta -- no se adivina nada.
-    """
     faltantes = []
     for det in factura_det_qs:
         prod = det.producto
@@ -305,26 +240,12 @@ def _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_vent
         "numeroDocumento": numero_documento,
         "codigoCliente": str(cliente.id),
         "codigoMetodoPago": int(factura_enc.codigo_metodo_pago),
-        # El SIN exige este nodo poblado (no null) cuando el metodo de
-        # pago es con tarjeta -- confirmado con el error real 1012 sobre
-        # la factura 549 ("EL NUMERO DE TARJETA SOLO PUEDE SER ENVIADO
-        # CUANDO EL METODO DE PAGO SEA CON TARJETA"). factura_enc solo
-        # tiene numero_tarjeta cargado cuando forma_pago es Debito o
-        # Credito (ver FacturaEnc.save()), asi que alcanza con este
-        # condicional -- para el resto de metodos queda None (nil).
         "numeroTarjeta": int(factura_enc.numero_tarjeta) if factura_enc.numero_tarjeta else None,
         "montoTotal": factura_enc.total,
         "montoTotalSujetoIva": factura_enc.total,
-        "codigoMoneda": 1,      # Bolivianos -- unica moneda modelada hoy
+        "codigoMoneda": 1,
         "tipoCambio": 1,
         "montoTotalMoneda": factura_enc.total,
-        # El descuento ya esta reflejado en montoTotal/montoTotalSujetoIva
-        # (que usan factura_enc.total, ya neto) -- descuentoAdicional es
-        # para un descuento GLOBAL aparte del de cada linea, no para
-        # repetir el mismo descuento que ya se resto. Mandarlo en 0
-        # evita que el SIN lo reste dos veces (confirmado con el error
-        # real: 86.0 - 8.6 - 8.6 = 68.8, exactamente el "esperado" que
-        # reporto el SIN).
         "descuentoAdicional": 0,
         "leyenda": LEYENDA_DEFAULT,
         "usuario": "sistema",
@@ -345,12 +266,6 @@ def _armar_detalle(factura_det_qs):
             "unidadMedida": prod.unidad_medida.codigo_sin,
             "precioUnitario": det.precio,
             "montoDescuento": det.descuento or 0,
-            # El SIN espera el subtotal NETO (ya restado el descuento de
-            # esa linea), no el bruto -- confirmado con el error real
-            # "EL CALCULO DEL SUBTOTAL ES ERRONEO" en facturas con
-            # descuento (bug detectado 11/08/2026, nunca se manifesto
-            # antes porque todas las facturas de prueba previas tenian
-            # descuento en 0, donde bruto y neto coinciden).
             "subTotal": det.total,
         })
     return detalle
@@ -365,30 +280,20 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     homologacion de productos), si hay un problema de red/timeout, o si
     el SIN rechaza el envio.
     """
-    from fac.models import FacturaDet  # import local para evitar acoplar apps al importar el modulo
+    from fac.models import FacturaDet
 
-    empresa, sucursal = _obtener_empresa_y_sucursal(0)  # sucursal siempre casa matriz (0) en este sistema
+    empresa, sucursal = _obtener_empresa_y_sucursal(0)
     cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
     codigo_ambiente = (
         CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
         else CODIGO_AMBIENTE_PILOTO
     )
 
-    # Se excluyen los pares (linea original + su reversora en negativo)
-    # generados por borrar_detalle_factura: esa funcion no borra
-    # fisicamente una linea, crea un registro nuevo con los mismos
-    # valores en negativo para neutralizarla contablemente en el total
-    # de la factura. El SIN rechaza cualquier cantidad/monto negativo
-    # en el XML, asi que ninguna de las dos lineas de un par compensado
-    # debe llegar al detalle que se envia (es como si ese producto
-    # nunca se hubiera facturado).
     todos_los_detalles = list(FacturaDet.objects.filter(factura=factura_enc)
                                .select_related("producto", "producto__unidad_medida"))
     ids_excluidos = set()
     for det in todos_los_detalles:
         if det.cantidad < 0 and det.id not in ids_excluidos:
-            # Busca la linea original que esta reversora neutraliza:
-            # mismo producto, cantidad exactamente opuesta, creada antes.
             original = next(
                 (d for d in todos_los_detalles
                  if d.id not in ids_excluidos
@@ -407,16 +312,11 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     _validar_homologacion(factura_det_qs)
 
     token = _obtener_token()
-
-    # Momento REAL de la emision -- no el de creacion del registro en BD
-    # (que puede ser mucho mas viejo). El SIN exige que esta fecha este
-    # muy cerca del momento de envio (tolerancia de unos pocos minutos).
     fecha_hora = timezone.localtime(timezone.now())
 
     tiempos = {}
     t_total = time.time()
 
-    # --- 1. CUFD fresco (con el CUIS correcto para este punto de venta) ---
     t0 = time.time()
     client_codigos = _cliente_soap(WSDL_CODIGOS, token)
     cufd, codigo_control = _pedir_cufd(
@@ -424,7 +324,6 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     )
     tiempos["cufd"] = time.time() - t0
 
-    # --- 2. Calcular el CUF ---
     cuf = calcular_cuf(
         nit=empresa.nit,
         fecha_hora=fecha_hora,
@@ -438,13 +337,11 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
         codigo_control=codigo_control,
     )
 
-    # --- 3. Armar XML ---
     t0 = time.time()
     cabecera = _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_venta, fecha_hora)
     detalle = _armar_detalle(factura_det_qs)
     xml_sin_firmar = construir_factura_xml(cabecera, detalle)
 
-    # --- 4. Firmar (llave/certificado ya cargados al importar el modulo) ---
     signer = XMLSigner(
         method=methods.enveloped,
         signature_algorithm="rsa-sha256",
@@ -454,17 +351,14 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     xml_firmado = signer.sign(xml_sin_firmar, key=_LLAVE_PRIVADA, cert=_CERTIFICADO)
     XMLVerifier().verify(xml_firmado, x509_cert=_CERTIFICADO)
 
-    # --- 5. Validar contra XSD (ya compilado al importar el modulo) ---
     xml_bytes = etree.tostring(xml_firmado)
     if not _XSD_SCHEMA.validate(etree.fromstring(xml_bytes)):
         raise EmisionSinError(f"XML no valido contra XSD: {_XSD_SCHEMA.error_log}")
     tiempos["armar_firmar_validar"] = time.time() - t0
 
-    # --- 6. Comprimir + hash ---
     xml_gzip = gzip.compress(xml_bytes)
     hash_archivo = hashlib.sha256(xml_gzip).hexdigest().upper()
 
-    # --- 7. Enviar (con el CUIS correcto para este punto de venta) ---
     t0 = time.time()
     client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
     solicitud_envio = {
@@ -499,16 +393,11 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
         f"TOTAL={tiempos['total']:.1f}s"
     )
 
-    # --- 8. Guardar resultado en la factura ---
     factura_enc.cuf = cuf
     factura_enc.cufd = cufd
     factura_enc.fecha_hora_envio_sin = timezone.now()
     factura_enc.codigo_recepcion_sin = resp.get("codigoRecepcion")
     factura_enc.mensaje_sin = str(resp.get("mensajesList") or "")
-    # Se guarda el XML tal cual se envio (firmado, sin comprimir) para
-    # poder descargarlo despues -- auditoria, pedidos de contadores, etc.
-    # Se guarda independientemente del resultado (tambien util para
-    # depurar una factura observada).
     factura_enc.xml_firmado = xml_bytes.decode('utf-8')
 
     if resp["transaccion"] and resp.get("codigoEstado") == 908:
@@ -534,17 +423,27 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
     NotaCreditoDebito en fac/models.py para el detalle completo).
 
     Usa el MISMO servicio recepcionFactura que una factura normal --
-    no existe operacion SOAP separada para NCD (confirmado explorando
-    el WSDL el 26/08/2026). Se distingue por tipoFacturaDocumento=3 y
-    codigoDocumentoSector=47 (fijo segun el XSD oficial).
+    no existe operacion SOAP separada para NCD. Se distingue por
+    tipoFacturaDocumento=3 y codigoDocumentoSector=24 (fijo segun el
+    XSD oficial notaElectronicaCreditoDebito.xsd).
 
-    El detalle reconstruye TODAS las lineas de la factura original
-    (codigoDetalleTransaccion=1) y las repite identicas
-    (codigoDetalleTransaccion=2, la porcion devuelta) -- ya que es
-    devolucion total, ambas versiones de cada linea son iguales. No se
-    persiste un detalle propio para la NCD: se arma en el momento a
-    partir de FacturaDet de la factura original, fuente unica de
-    verdad.
+    DESBLOQUEADO 07/09/2026: el soporte del SIN confirmo la formula
+    real que valida el servicio --
+        montoTotalOriginal = SUMA(subTotal) donde codigoDetalleTransaccion=1,
+        y "el monto de subtotales con transaccion 1 debe ser igual a
+        los subtotales de la factura original" -- confirma que hay que
+        reconstruir TODAS las lineas de la factura original con
+        codigoDetalleTransaccion=1 (no un resumen, no un item
+        cualquiera). Para devolucion TOTAL (unica version soportada),
+        esas mismas lineas se repiten identicas con
+        codigoDetalleTransaccion=2 (la porcion devuelta = el total).
+        La duda que motivo el bloqueo original (el ejemplo oficial
+        confuso, con productos distintos entre las dos transacciones)
+        queda resuelta: ese ejemplo no representaba la regla real.
+
+    No se persiste un detalle propio para la NCD: se arma en el
+    momento a partir de FacturaDet de la factura original, fuente
+    unica de verdad.
 
     Actualiza nota_credito_debito con cuf, cufd, estado_sin,
     codigo_recepcion_sin, mensaje_sin, xml_firmado. Lanza
@@ -552,7 +451,7 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
     red/timeout, o el SIN rechaza el envio -- mismo patron que
     emitir_factura_sin.
     """
-    from fac.models import FacturaDet  # import local, mismo motivo que en emitir_factura_sin
+    from fac.models import FacturaDet
 
     factura_original = nota_credito_debito.factura_original
 
@@ -588,15 +487,11 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
     token = _obtener_token()
     fecha_hora = timezone.localtime(timezone.now())
 
-    # --- 1. CUFD fresco ---
     client_codigos = _cliente_soap(WSDL_CODIGOS, token)
     cufd, codigo_control = _pedir_cufd(
         client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente
     )
 
-    # --- 2. Calcular el CUF propio de la NCD (documento nuevo, con su
-    # propio numero -- nota_credito_debito.id, mismo patron que
-    # numeroFactura usa factura_enc.id) ---
     cuf = calcular_cuf(
         nit=empresa.nit,
         fecha_hora=fecha_hora,
@@ -610,7 +505,6 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
         codigo_control=codigo_control,
     )
 
-    # --- 3. Armar cabecera ---
     cabecera = {
         "nitEmisor": str(empresa.nit),
         "razonSocialEmisor": empresa.razon_social,
@@ -641,28 +535,14 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
         "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR_NCD,
     }
 
-    # --- 4. Armar detalle ---
-    #
-    # BLOQUEADO A PROPOSITO al 26/08/2026: todavia no confirmamos como
-    # arma el SIN la relacion entre codigoDetalleTransaccion=1 (operacion
-    # original) y =2 (porcion devuelta) en ESTE documento especifico
-    # (notaFiscalElectronicaCreditoDebito). El ejemplo oficial del SIN
-    # muestra 2 lineas con PRODUCTOS DISTINTOS (no el mismo producto
-    # repetido) y un montoTotalOriginal que no coincide con la suma de
-    # una factura de mas de un item -- no alcanza para inferir con
-    # confianza si hay que reconstruir TODA la factura original linea
-    # por linea (como si hacia la variante Descuento) o si esta version
-    # espera algo mas simple (una linea "resumen" de origen + una de
-    # ajuste). Revisar el Anexo-Instructivo Tecnico del SIN o consultar
-    # directo antes de sacar este bloqueo.
-    raise EmisionSinError(
-        "Emision de Nota de Credito-Debito temporalmente bloqueada: falta "
-        "confirmar la estructura real del detalle (ver comentario en el codigo, "
-        "26/08/2026). No usar en Piloto ni en Produccion todavia."
-    )
-
+    # Devolucion TOTAL (unica version soportada): cada linea de la
+    # factura original aparece DOS VECES -- codigoDetalleTransaccion=1
+    # (la operacion original, reconstruida completa -- confirmado por
+    # el SIN que su suma debe igualar montoTotalOriginal) y
+    # codigoDetalleTransaccion=2 (la porcion devuelta -- identica,
+    # porque se devuelve todo).
     detalle = []
-    for i, det in enumerate(detalles_originales, start=1):
+    for det in detalles_originales:
         prod = det.producto
         linea_base = {
             "actividadEconomica": prod.actividad_economica_sin,
@@ -678,10 +558,8 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
         detalle.append({**linea_base, "codigoDetalleTransaccion": 1})
         detalle.append({**linea_base, "codigoDetalleTransaccion": 2})
 
-    # --- 5. Construir XML ---
     xml_sin_firmar = construir_nota_credito_debito_xml(cabecera, detalle)
 
-    # --- 6. Firmar ---
     signer = XMLSigner(
         method=methods.enveloped,
         signature_algorithm="rsa-sha256",
@@ -691,16 +569,13 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
     xml_firmado = signer.sign(xml_sin_firmar, key=_LLAVE_PRIVADA, cert=_CERTIFICADO)
     XMLVerifier().verify(xml_firmado, x509_cert=_CERTIFICADO)
 
-    # --- 7. Validar contra el XSD especifico de NCD (no el de factura) ---
     xml_bytes = etree.tostring(xml_firmado)
     if not _XSD_SCHEMA_NCD.validate(etree.fromstring(xml_bytes)):
         raise EmisionSinError(f"XML de NCD no valido contra XSD: {_XSD_SCHEMA_NCD.error_log}")
 
-    # --- 8. Comprimir + hash ---
     xml_gzip = gzip.compress(xml_bytes)
     hash_archivo = hashlib.sha256(xml_gzip).hexdigest().upper()
 
-    # --- 9. Enviar (mismo recepcionFactura de siempre) ---
     client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
     solicitud_envio = {
         "codigoAmbiente": codigo_ambiente,
@@ -725,7 +600,6 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
         ))
     )
 
-    # --- 10. Guardar resultado ---
     nota_credito_debito.cuf = cuf
     nota_credito_debito.cufd = cufd
     nota_credito_debito.codigo_recepcion_sin = resp.get("codigoRecepcion")
@@ -753,17 +627,6 @@ def anular_factura_sin(factura_enc, codigo_motivo, codigo_punto_venta=0):
     confirmado en la Etapa VII de certificacion
     (prototipo/sin/probar_anulacion_v2.py): anulacionFactura, WSDL
     ServicioFacturacionCompraVenta.
-
-    codigo_motivo: codigo del catalogo MOTIVOS_ANULACION (app.catalogos),
-    1-4. Se pasa explicito desde la vista, NUNCA se adivina/hardcodea
-    aca -- distintas anulaciones pueden tener distinto motivo real.
-
-    Solo aplica a facturas que ya tienen CUF (fueron emitidas). Si el
-    SIN confirma (codigoEstado 905), pasa estado_sin a SIN_ANULADA. Si
-    rechaza (o hay timeout/error de red), lanza EmisionSinError con el
-    detalle -- el campo local 'anulado' de FacturaEnc NO se toca aca,
-    eso lo decide la vista de app.fac despues de confirmar que el SIN
-    acepto.
     """
     if not factura_enc.cuf:
         raise EmisionSinError(
@@ -778,8 +641,6 @@ def anular_factura_sin(factura_enc, codigo_motivo, codigo_punto_venta=0):
     )
     token = _obtener_token()
 
-    # CUFD fresco, igual que en la emision -- necesario para autenticar
-    # esta operacion puntual ante el SIN.
     client_codigos = _cliente_soap(WSDL_CODIGOS, token)
     cufd, _ = _pedir_cufd(client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente)
 
@@ -825,21 +686,6 @@ def revertir_anulacion_sin(factura_enc, codigo_punto_venta=0):
     real confirmado en la Etapa VIII de certificacion
     (prototipo/sin/probar_reversion.py): reversionAnulacionFactura,
     WSDL ServicioFacturacionCompraVenta.
-
-    Reglas de negocio (confirmadas por normativa, ver
-    prototipo/sin/README.md):
-      - Solo se puede revertir UNA VEZ por factura.
-      - Plazo: hasta el dia 9 del mes siguiente a la emision original.
-        Esa validacion de plazo se hace en la vista de app.fac (misma
-        funcion _dentro_plazo_anulacion que ya se usa para anular),
-        no aca -- este servicio solo habla con el SIN.
-      - No aplica a facturas emitidas en modo offline/contingencia.
-
-    Solo aplica a facturas con estado_sin == SIN_ANULADA. Si el SIN
-    confirma (codigoEstado 907), pasa estado_sin a SIN_REVERTIDA. Si
-    rechaza (o hay timeout/error de red), lanza EmisionSinError -- el
-    flag local 'anulado' NO se toca aca, eso lo decide la vista
-    despues de confirmar el exito.
     """
     if not factura_enc.cuf:
         raise EmisionSinError(
@@ -900,11 +746,7 @@ def registrar_punto_venta_sin(sucursal, nombre_punto_venta, descripcion, codigo_
     """
     Registra un Punto de Venta ante el SIN (servicio registroPuntoVenta,
     WSDL FacturacionOperaciones) y devuelve el codigoPuntoVenta que
-    ASIGNA el SIN como respuesta -- nunca se elige a mano, coincide con
-    lo que ya advertia el help_text del modelo desde antes.
-
-    Requiere que la Sucursal ya tenga CUIS cargado (el punto de venta
-    se registra DENTRO de una sucursal ya autorizada).
+    ASIGNA el SIN como respuesta -- nunca se elige a mano.
     """
     empresa = Empresa.objects.first()
     if not empresa:
