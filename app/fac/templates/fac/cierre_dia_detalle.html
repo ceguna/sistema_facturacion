@@ -68,7 +68,7 @@
           <td class="celda-accion">
             {% if not item.anulado and item.estado_sin == 'no_enviada' or item.estado_sin == 'observada' %}
               {% if not item.anulado %}
-              <button type="button" class="btn btn-primary btn-sm btn-reintentar" data-id="{{ item.id }}">
+              <button type="button" class="btn btn-primary btn-sm btn-reintentar" data-id="{{ item.id|stringformat:"d" }}">
                 Reintentar Envío
               </button>
               {% endif %}

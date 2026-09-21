@@ -20,14 +20,16 @@ from django.db.models import Sum, F
 
 from bases.views import SinPrivilegios, obtener_sucursal_actual
 
-from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, Pago, NotaCreditoDebito
+from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, Pago, NotaCreditoDebito, \
+    EventoSignificativo, PaqueteFacturas
 from .forms import ClienteForm
 import inv.views as inv
 from inv.models import Producto, StockSucursal, ajustar_stock_sucursal
 
 from fe.services import emitir_factura_sin, anular_factura_sin, revertir_anulacion_sin, \
     emitir_nota_credito_debito_sin, anular_nota_credito_debito_sin, \
-    revertir_anulacion_nota_credito_debito_sin, EmisionSinError
+    revertir_anulacion_nota_credito_debito_sin, EmisionSinError, \
+    SinConexionError, emitir_factura_offline
 from catalogos.models import CatalogoSIN
 from .reportes import generar_pdf_factura_bytes, nombre_archivo_documento, _ncd_vigente
 from django.core.mail import EmailMessage
@@ -433,10 +435,10 @@ def facturas(request,id=None):
         det = FacturaDet(
             factura = enc,
             producto = prod,
-            cantidad = cantidad,
-            precio = precio,
+            cantidad = int(cantidad_num),
+            precio = precio_num,
             sub_total = s_total,
-            descuento = descuento,
+            descuento = descuento_num,
             total = total
         )
 
@@ -1141,9 +1143,14 @@ def eliminar_factura(request, id):
         return redirect('fac:factura_list')
 
     if enc.reportada_ante_sin:
+        # El mensaje no dice "aceptada por el SIN" a secas: cubre tambien
+        # el caso PENDIENTE de una factura emitida en modo contingencia
+        # (Fase A) -- ahi el SIN todavia no la vio, pero ya tiene un CUF
+        # real asignado, asi que borrarla dejaria un hueco en la
+        # numeracion correlativa igual que si ya estuviera validada.
         messages.error(
             request,
-            'No se puede eliminar: esta factura ya fue aceptada por el SIN '
+            'No se puede eliminar: esta factura ya tiene un CUF asignado '
             f'(estado: {enc.get_estado_sin_display()}). Use "Anular" en su lugar.'
         )
         return redirect('fac:factura_edit', id=id)
@@ -1240,6 +1247,29 @@ def factura_emitir_sin(request, id):
             "estado_sin": enc.get_estado_sin_display(),
             "codigo_recepcion": enc.codigo_recepcion_sin,
         })
+    except SinConexionError:
+        # Fase A (contingencia, 21/09/2026): a diferencia de un rechazo
+        # de datos del SIN (EmisionSinError generico, ver mas abajo),
+        # esto es una falla real de conexion -- la factura se firma
+        # igual en modo offline (CUF ya calculado, CUFD cacheado de una
+        # emision online anterior) y queda en cola para transmitirse
+        # sola cuando vuelva la conexion (Fase B/C, todavia no
+        # construidas). No es un error para el cajero: la venta sigue
+        # adelante con normalidad.
+        try:
+            emitir_factura_offline(enc)
+            return JsonResponse({
+                "ok": True,
+                "offline": True,
+                "estado_sin": enc.get_estado_sin_display(),
+                "mensaje": enc.mensaje_sin,
+            })
+        except EmisionSinError as e2:
+            return JsonResponse({
+                "ok": False,
+                "error": str(e2),
+                "estado_sin": enc.get_estado_sin_display(),
+            })
     except EmisionSinError as e:
         return JsonResponse({
             "ok": False,
@@ -1747,3 +1777,26 @@ def revertir_pago(request, id):
         return HttpResponse("Usuario no autorizado")
 
     return render(request, template_name, context)
+
+
+# =====================================================================
+# Auditoria de Contingencia SIN (Fase D, 21/09/2026) -- pantalla de
+# solo lectura para ver los eventos significativos (cortes de
+# conexion con el SIN) y los paquetes de facturas offline que se
+# armaron y enviaron para cada uno. Util tanto para Carlos como para
+# mostrarle al inspector del SIN como funciona el mecanismo si lo pide
+# en la Inspeccion (checklist Fase II, puntos 8/12/14).
+# =====================================================================
+
+class EventosSignificativosListView(SinPrivilegios, generic.ListView):
+    model = EventoSignificativo
+    template_name = 'fac/eventos_significativos_list.html'
+    context_object_name = 'obj'
+    permission_required = 'fac.view_eventosignificativo'
+
+    def get_queryset(self):
+        return (
+            EventoSignificativo.objects.select_related('sucursal')
+            .prefetch_related('paquetes', 'facturas')
+            .order_by('-fecha_hora_inicio')
+        )

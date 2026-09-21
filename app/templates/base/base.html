@@ -164,11 +164,6 @@
                         {% if perms.fac.view_cliente %}
                         <a class="collapse-item" href="{% url 'fac:cliente_list' %}">Clientes</a>
                         {% endif %}
-                        
-                        {% if perms.fac.gestionar_creditos %}
-                        <a class="collapse-item" href="{% url 'fac:cartera_creditos' %}">Cartera de Créditos</a>
-                        <a class="collapse-item" href="{% url 'fac:kardex_cliente_selector' %}">Kardex de Cliente</a>
-                        {% endif %}
                     </div>
                 </div>
             </li>
@@ -243,6 +238,22 @@
                         {% if perms.inv.view_producto %}
                         <a class="collapse-item" href="{% url 'bases:estado_inventario' %}">Estado de Inventario</a>
                         <a class="collapse-item" href="{% url 'bases:kardex_inventario' %}">Kardex de Inventario</a>
+                        {% endif %}
+
+                        <!-- Fase 4 del instructivo de Inspeccion SIN (21/09/2026):
+                             movido desde "Catálogos de Facturación" -- ni la vista
+                             ni los permisos cambiaron (fac.gestionar_creditos sigue
+                             protegiendo el acceso), solo la ubicacion en el menu. -->
+                        {% if perms.fac.gestionar_creditos %}
+                        <h6 class="collapse-header">Cartera</h6>
+                        <a class="collapse-item" href="{% url 'fac:cartera_creditos' %}">Cartera de Créditos</a>
+                        <a class="collapse-item" href="{% url 'fac:kardex_cliente_selector' %}">Kardex de Cliente</a>
+                        {% endif %}
+
+                        <!-- Fase D, contingencia SIN (21/09/2026) -->
+                        {% if perms.fac.view_eventosignificativo %}
+                        <h6 class="collapse-header">Contingencia SIN</h6>
+                        <a class="collapse-item" href="{% url 'fac:eventos_significativos_list' %}">Eventos y Paquetes</a>
                         {% endif %}
                     </div>
                 </div>

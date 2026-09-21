@@ -297,7 +297,7 @@
             <td class="col-leyendas">
                 <div class="leyenda-legal">ESTA FACTURA CONTRIBUYE AL DESARROLLO DEL PAÍS, EL USO ILÍCITO SERÁ SANCIONADO PENALMENTE DE ACUERDO A LEY</div>
                 <div class="leyenda-legal">{{ enc.leyenda|default:"Ley N° 453: El proveedor deberá entregar el producto en las modalidades y términos ofertados o convenidos." }}</div>
-                <div class="leyenda-legal">Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea.</div>
+                <div class="leyenda-legal">Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación {% if enc.evento_significativo %}fuera de línea{% else %}en línea{% endif %}.</div>
             </td>
             <td class="col-verif">
                 <div class="caja-verificacion">

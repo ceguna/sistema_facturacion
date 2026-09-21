@@ -259,6 +259,22 @@ class FacturaEnc(ClaseModelo2):
     fecha_hora_envio_sin = models.DateTimeField(null=True, blank=True)
     mensaje_sin = models.TextField(null=True, blank=True)
 
+    # Contingencia (Fase A, 21/09/2026): si esta factura se firmo en modo
+    # OFFLINE (el SIN estaba inalcanzable al momento de emitir), queda
+    # vinculada al evento que la origino -- null en el caso normal
+    # (emision en linea, la inmensa mayoria). 'paquete' se completa
+    # recien cuando el evento se cierra y se envia el paquete al SIN
+    # (Fase B, todavia no construida) -- mientras tanto queda null aunque
+    # evento_significativo ya este cargado.
+    evento_significativo = models.ForeignKey(
+        'EventoSignificativo', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='facturas'
+    )
+    paquete = models.ForeignKey(
+        'PaqueteFacturas', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='facturas'
+    )
+
     codigo_motivo_anulacion_sin = models.PositiveSmallIntegerField(null=True, blank=True)
     fecha_anulacion_sin = models.DateTimeField(null=True, blank=True)
     fecha_reversion_sin = models.DateTimeField(null=True, blank=True)
@@ -718,6 +734,95 @@ class CierreDia(ClaseModelo2):
         ]
 
 
+# =====================================================================
+# Contingencia / CAFC (Fase A, 21/09/2026) -- checklist SIN Fase II,
+# puntos 8/12/14. Cuando emitir_factura_sin no puede alcanzar al SIN
+# (SinConexionError, no un rechazo de datos), la factura se firma
+# igual en modo OFFLINE (codigoTipoEmision=2, usando el ultimo CUFD
+# que quedo guardado de una emision online exitosa -- ver
+# fe.models.CUFDVigente) y queda agrupada bajo un EventoSignificativo
+# "abierto". Reportar ese evento ante el SIN y armar/enviar el
+# PaqueteFacturas correspondiente es trabajo de la Fase B (todavia no
+# construida) -- estos modelos ya quedan listos para que esa fase no
+# necesite otra migracion.
+# =====================================================================
+
+class EventoSignificativo(ClaseModelo2):
+    ABIERTO = 'abierto'
+    CERRADO = 'cerrado'
+    ESTADO_EVENTO_CHOICES = [
+        (ABIERTO, 'Abierto (contingencia en curso)'),
+        (CERRADO, 'Cerrado (reportado al SIN)'),
+    ]
+
+    sucursal = models.ForeignKey(
+        'fe.Sucursal', on_delete=models.PROTECT, related_name='eventos_significativos'
+    )
+    codigo_punto_venta = models.PositiveIntegerField(default=0)
+    codigo_motivo = models.PositiveSmallIntegerField(
+        help_text="Código del catálogo SIN EVENTOS_SIGNIFICATIVOS "
+                   "(ej. 2 = Inaccesibilidad al servicio web de la Administración Tributaria)."
+    )
+    descripcion = models.CharField(max_length=250)
+    fecha_hora_inicio = models.DateTimeField(
+        help_text="Momento de la primera factura offline de este evento."
+    )
+    fecha_hora_fin = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Se completa recién al cerrar el evento (Fase B), cuando vuelve la conexión."
+    )
+    # CUFD que ya estaba vigente ANTES/DURANTE la contingencia -- el que
+    # se usó para firmar las facturas offline (CUFDVigente cacheado).
+    # 'cufd_reporte' es un CUFD NUEVO, pedido recién al momento de
+    # REPORTAR el evento (Fase B) -- el SIN exige dos CUFD distintos,
+    # nunca el mismo repetido (confirmado en prototipo/sin/README.md).
+    cufd_evento = models.CharField(max_length=150, null=True, blank=True)
+    cufd_reporte = models.CharField(max_length=150, null=True, blank=True)
+    codigo_recepcion_evento_significativo = models.CharField(max_length=50, null=True, blank=True)
+    estado_evento = models.CharField(max_length=10, choices=ESTADO_EVENTO_CHOICES, default=ABIERTO)
+
+    def __str__(self):
+        return f"Evento #{self.pk} (motivo {self.codigo_motivo}) — {self.get_estado_evento_display()}"
+
+    class Meta:
+        verbose_name = "Evento Significativo"
+        verbose_name_plural = "Eventos Significativos"
+
+
+class PaqueteFacturas(ClaseModelo2):
+    EN_ARMADO = 'en_armado'
+    ENVIADO = 'enviado'
+    VALIDADO = 'validado'
+    RECHAZADO = 'rechazado'
+    ESTADO_PAQUETE_CHOICES = [
+        (EN_ARMADO, 'En armado'),
+        (ENVIADO, 'Enviado, esperando validación'),
+        (VALIDADO, 'Validado por el SIN'),
+        (RECHAZADO, 'Rechazado por el SIN'),
+    ]
+
+    evento = models.ForeignKey(
+        EventoSignificativo, on_delete=models.PROTECT, related_name='paquetes'
+    )
+    cantidad_facturas = models.PositiveIntegerField(default=0)
+    hash_archivo = models.CharField(max_length=100, null=True, blank=True)
+    codigo_recepcion = models.CharField(max_length=50, null=True, blank=True)
+    fecha_envio = models.DateTimeField(null=True, blank=True)
+    fecha_limite_envio = models.DateTimeField(
+        help_text="48 horas desde fecha_hora_fin del evento (checklist SIN Fase II, punto 8)."
+    )
+    fecha_validacion = models.DateTimeField(null=True, blank=True)
+    mensaje_sin = models.TextField(null=True, blank=True)
+    estado_paquete = models.CharField(max_length=15, choices=ESTADO_PAQUETE_CHOICES, default=EN_ARMADO)
+
+    def __str__(self):
+        return f"Paquete #{self.pk} del evento #{self.evento_id} — {self.get_estado_paquete_display()}"
+
+    class Meta:
+        verbose_name = "Paquete de Facturas (contingencia)"
+        verbose_name_plural = "Paquetes de Facturas (contingencia)"
+
+
 def dias_pendientes_de_cierre():
     hoy = timezone.localdate()
     fechas_con_facturas = (
@@ -772,7 +877,7 @@ def detalle_fac_guardar(sender,instance,**kwargs):
     # F() suelto de arriba -- mismo criterio atomico, pero ahora
     # descuenta de la sucursal REAL de esta factura, no de un pozo
     # global compartido entre todas las sucursales.
-    ajustar_stock_sucursal(producto_id, enc.sucursal if enc else None, -instance.cantidad)
+    ajustar_stock_sucursal(producto_id, enc.sucursal if enc else None, -int(instance.cantidad))
 
 @receiver(post_delete, sender=FacturaDet)
 def detalle_factura_borrar(sender,instance, **kwargs):
@@ -798,7 +903,7 @@ def detalle_factura_borrar(sender,instance, **kwargs):
 
     if not ya_estaba_anulada:
         # Mismo fix de atomicidad + sucursal que detalle_fac_guardar (ver comentario ahi).
-        ajustar_stock_sucursal(id_producto, enc.sucursal if enc else None, instance.cantidad)
+        ajustar_stock_sucursal(id_producto, enc.sucursal if enc else None, int(instance.cantidad))
 
 
 @receiver(post_save, sender=Pago)

@@ -41,8 +41,20 @@
              es forzar la DESCARGA del archivo (factura_descargar_pdf,
              Content-Disposition: attachment): el sistema operativo la
              abre sola con el visor/editor de PDF que tenga configurado
-             por defecto, y ahi el operador decide si imprime o no. -->
+             por defecto, y ahi el operador decide si imprime o no.
+
+             CAMBIADO 21/09/2026 (Fase A.0): si la factura TODAVIA no fue
+             reportada al SIN, "Imprimir" ya no descarga directo -- primero
+             emite (mismo flujo que "Confirmar y Emitir al SIN") y recien
+             despues descarga. Antes se podia entregar al cliente una
+             representacion grafica de una factura que el SIN nunca vio. -->
+        {% if enc.id and enc.reportada_ante_sin %}
         <a href="{% url 'fac:factura_descargar_pdf' enc.id %}" class="btn btn-success">Imprimir</a>
+        {% else %}
+        <button type="button" class="btn btn-success" id="btnImprimir" {% if not enc.id %}disabled{% endif %}>
+            <i class="fas fa-print mr-1"></i>Emitir e Imprimir
+        </button>
+        {% endif %}
         {% if enc.id %}
         <a href="{% url 'fac:factura_mostrar_qr' enc.id %}" class="btn btn-outline-primary" target="_qr">
             <i class="fas fa-qrcode mr-1"></i>Mostrar QR
@@ -609,7 +621,7 @@
         }
     });
 
-    $("#enc_id").val("{{ siguiente_numero }}");
+    $("#enc_id").val("{{ siguiente_numero|stringformat:"d" }}");
     $("#enc_cliente").val("{{ enc.cliente.id }}").change();
     $("#fecha").val("{{ enc.fecha|date:'Y-m-d' }}");
     $("#sub_total").val({{ enc.sub_total }});
@@ -737,7 +749,7 @@
 
     // --- Actualizar SOLO Cliente/Forma de Pago, sin agregar producto ---
     $("#btnActualizarDatos").click(function(){
-        var id = "{{ enc.id }}";
+        var id = "{{ enc.id|stringformat:"d" }}";
         var token = '{{csrf_token}}';
         var formaPago = $("#forma_pago").val();
         var numTarjeta = $("#numero_tarjeta").val();
@@ -812,12 +824,19 @@
         }, 400);
     }
 
-    // --- Fase C: Confirmar y Emitir al SIN ---
-    $("#btnEmitirSin").click(function(){
-        var id = "{{ enc.id }}";
+    // --- Fase A.0/C: Confirmar y Emitir al SIN -- funcion compartida,
+    // usada tanto por "Confirmar y Emitir al SIN" (btnEmitirSin) como
+    // por "Emitir e Imprimir" (btnImprimir, Fase A.0, 21/09/2026): antes,
+    // Imprimir descargaba el PDF sin exigir que la factura ya hubiera
+    // sido emitida -- un cajero podia entregarle al cliente una
+    // representacion grafica de una factura que el SIN nunca vio. Ahora
+    // ambos botones pasan por el mismo flujo de emision; solo cambia
+    // que hace cada uno DESPUES de un envio exitoso (alExito).
+    function emitirFactura(alExito) {
+        var id = "{{ enc.id|stringformat:"d" }}";
         if(!id || id=="0"){
             mensaje("Primero agregue al menos un producto antes de emitir","red");
-            return false;
+            return;
         }
         var totalTexto = $("#total").val();
         var clienteTexto = $("#enc_cliente option:selected").text();
@@ -844,11 +863,20 @@
                             success: function(r){
                                 detenerProgresoEmision(true);
                                 if(r.ok){
+                                    // Fase A: si se emitio en modo contingencia
+                                    // (sin conexion al SIN), no es un error --
+                                    // la factura ya tiene CUF y queda en cola
+                                    // para transmitirse sola. Aviso distinto,
+                                    // no rojo, para no asustar al cajero.
                                     $.alert({
-                                        type:'green', title:'Factura Emitida',
-                                        content: 'Estado SIN: ' + r.estado_sin +
-                                                  '<br>Código de Recepción: ' + (r.codigo_recepcion || '-'),
-                                        onClose: function(){ location.reload(true); }
+                                        type: r.offline ? 'orange' : 'green',
+                                        title: r.offline ? 'Emitida en modo contingencia' : 'Factura Emitida',
+                                        content: r.offline
+                                            ? (r.mensaje || 'No hay conexión con el SIN en este momento. La factura ' +
+                                               'ya quedó firmada y en cola — se transmitirá sola en cuanto vuelva la conexión.')
+                                            : 'Estado SIN: ' + r.estado_sin +
+                                              '<br>Código de Recepción: ' + (r.codigo_recepcion || '-'),
+                                        onClose: function(){ alExito(); }
                                     });
                                 } else {
                                     $.alert({
@@ -867,6 +895,17 @@
                 },
                 cancelar: function(){}
             }
+        });
+    }
+
+    $("#btnEmitirSin").click(function(){
+        emitirFactura(function(){ location.reload(true); });
+    });
+
+    $("#btnImprimir").click(function(){
+        var id = "{{ enc.id|stringformat:"d" }}";
+        emitirFactura(function(){
+            window.location.href = "/fac/facturas/descargar-pdf/" + id;
         });
     });
 

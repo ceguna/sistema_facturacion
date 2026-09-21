@@ -7,7 +7,7 @@ from .views import ClienteView,ClienteNew,ClienteEdit,clienteInactivar, \
     cierre_dia_pendientes, cierre_dia_detalle, cierre_ventas_selector, \
     factura_descargar_xml, facturas_descargar_xml_rango, factura_mostrar_qr, \
     cierre_caja_selector, cartera_creditos, registrar_pago, pago_confirmacion, revertir_pago, \
-    factura_enviar_correo
+    factura_enviar_correo, EventosSignificativosListView
 
 from .reportes import imprimir_factura_recibo, imprimir_factura_list, imprimir_factura_list_pdf, \
     imprimir_factura_list_excel, reporte_cierre_ventas, reporte_cierre_ventas_pdf, \
@@ -73,4 +73,7 @@ urlpatterns = [
     path('creditos/pago-confirmacion/<int:pago_id>/', pago_confirmacion, name='pago_confirmacion'),
     path('creditos/recibo-pago/<int:pago_id>/', recibo_pago, name='recibo_pago'),
     path('creditos/revertir-pago/<int:id>/', revertir_pago, name='revertir_pago'),
+
+    # --- Auditoria de Contingencia SIN (Fase D, 21/09/2026) ---
+    path('contingencia/eventos/', EventosSignificativosListView.as_view(), name='eventos_significativos_list'),
 ]

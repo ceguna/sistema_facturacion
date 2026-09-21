@@ -25,9 +25,12 @@ EmisionSinError con mensaje claro despues del limite.
 """
 import gzip
 import hashlib
+import io
 import os
 import socket
+import tarfile
 import time
+from datetime import timedelta
 
 from decouple import config
 from django.utils import timezone
@@ -44,7 +47,7 @@ from django.db.models import F
 
 from .cuf import calcular_cuf
 from .factura_xml import construir_factura_xml, construir_nota_credito_debito_xml
-from .models import Empresa, Sucursal, PuntoVenta
+from .models import Empresa, Sucursal, PuntoVenta, CUFDVigente
 
 WSDL_CODIGOS = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionCodigos?wsdl"
 WSDL_FACTURACION = "https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionCompraVenta?wsdl"
@@ -95,6 +98,12 @@ CODIGO_AMBIENTE_PILOTO = 2
 CODIGO_AMBIENTE_PRODUCCION = 1
 CODIGO_MODALIDAD = 1          # Electronica en Linea
 CODIGO_TIPO_EMISION = 1       # En linea
+CODIGO_TIPO_EMISION_OFFLINE = 2   # Fuera de linea (contingencia, Fase A)
+# Vigencia que se le da al CUFD cacheado (CUFDVigente) para firmar
+# offline -- conservador, mas corto que el maximo real documentado
+# (~24-48h) para no arriesgarse a firmar con uno que el SIN ya
+# considere vencido del otro lado si la contingencia se extiende.
+HORAS_VIGENCIA_CUFD_OFFLINE = 20
 CODIGO_DOCUMENTO_SECTOR = 1   # Compra y Venta
 TIPO_FACTURA_DOCUMENTO = 1    # Con derecho a credito fiscal
 # REVERTIDO 12/09/2026 -- el cambio del 10/09/2026 (poner esto en 24,
@@ -123,6 +132,21 @@ class EmisionSinError(Exception):
     pass
 
 
+class SinConexionError(EmisionSinError):
+    """
+    Subclase especifica (Fase A, contingencia, 21/09/2026) para cuando
+    el SIN esta genuinamente INALCANZABLE (timeout, DNS, conexion
+    rechazada) -- a diferencia de un EmisionSinError generico, que
+    tambien cubre rechazos de DATOS (el SIN respondio, pero no acepto
+    la factura). Todo el codigo que ya hace "except EmisionSinError"
+    sigue funcionando igual (es subclase), pero el nuevo flujo de
+    emision automatica (fac/views.py) puede distinguir este caso
+    puntual y mandar la factura a la cola offline en vez de solo
+    mostrar un error.
+    """
+    pass
+
+
 def _cliente_soap(wsdl, token, history=None):
     session = Session()
     session.headers.update({"apikey": f"TokenApi {token}"})
@@ -135,7 +159,7 @@ def _cliente_soap(wsdl, token, history=None):
     try:
         return Client(wsdl=wsdl, transport=transport, plugins=plugins)
     except (RequestException, ZeepError, socket.timeout) as e:
-        raise EmisionSinError(
+        raise SinConexionError(
             f"No se pudo conectar con el SIN (servicio no disponible o sin respuesta): {e}"
         )
 
@@ -144,7 +168,7 @@ def _llamar(descripcion, funcion, *args, **kwargs):
     try:
         return funcion(*args, **kwargs)
     except (RequestException, ZeepError, socket.timeout) as e:
-        raise EmisionSinError(
+        raise SinConexionError(
             f"No se pudo completar '{descripcion}' — el SIN no respondió a tiempo "
             f"o la conexión falló. Intente nuevamente en unos minutos. (Detalle: {e})"
         )
@@ -216,7 +240,38 @@ def _pedir_cufd(client_codigos, empresa, sucursal, cuis, codigo_punto_venta, cod
     )
     if not resp["transaccion"]:
         raise EmisionSinError(f"Error obteniendo CUFD: {resp['mensajesList']}")
+
+    # Cachea el CUFD (Fase A, contingencia, 21/09/2026): efecto
+    # secundario de CUALQUIER pedido de CUFD exitoso -- es lo que
+    # permite seguir firmando facturas OFFLINE mas adelante si el SIN
+    # se vuelve inalcanzable, sin depender de haber tenido que pedir un
+    # CUFD justo en ese momento (ver _obtener_cufd_offline).
+    CUFDVigente.objects.update_or_create(
+        sucursal=sucursal, codigo_punto_venta=codigo_punto_venta,
+        defaults={'cufd': resp["codigo"], 'codigo_control': resp["codigoControl"]}
+    )
+
     return resp["codigo"], resp["codigoControl"]
+
+
+def _obtener_cufd_offline(sucursal, codigo_punto_venta):
+    """
+    Devuelve (cufd, codigo_control) del ultimo CUFD cacheado para esta
+    Sucursal+punto de venta, si todavia esta dentro de la ventana de
+    vigencia que le damos (HORAS_VIGENCIA_CUFD_OFFLINE) -- None si no
+    hay cache, o si es demasiado viejo para confiar en el sin
+    confirmarlo con el SIN (lo cual, si estamos offline, no se puede
+    hacer de todas formas).
+    """
+    cache = CUFDVigente.objects.filter(
+        sucursal=sucursal, codigo_punto_venta=codigo_punto_venta
+    ).first()
+    if not cache:
+        return None
+    limite = timezone.now() - timedelta(hours=HORAS_VIGENCIA_CUFD_OFFLINE)
+    if cache.fecha_obtencion < limite:
+        return None
+    return cache.cufd, cache.codigo_control
 
 
 def _validar_homologacion(factura_det_qs):
@@ -303,8 +358,6 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     homologacion de productos), si hay un problema de red/timeout, o si
     el SIN rechaza el envio.
     """
-    from fac.models import FacturaDet
-
     # Fase 2 (20/09/2026): usa la sucursal REAL de esta factura, no
     # Casa Matriz fijo -- antes el sistema solo podia emitir contra
     # codigo_sucursal=0 sin importar cuantas Sucursal hubiera cargadas.
@@ -318,24 +371,7 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
         else CODIGO_AMBIENTE_PILOTO
     )
 
-    todos_los_detalles = list(FacturaDet.objects.filter(factura=factura_enc)
-                               .select_related("producto", "producto__unidad_medida"))
-    ids_excluidos = set()
-    for det in todos_los_detalles:
-        if det.cantidad < 0 and det.id not in ids_excluidos:
-            original = next(
-                (d for d in todos_los_detalles
-                 if d.id not in ids_excluidos
-                 and d.producto_id == det.producto_id
-                 and d.cantidad == -det.cantidad
-                 and d.id < det.id),
-                None
-            )
-            ids_excluidos.add(det.id)
-            if original:
-                ids_excluidos.add(original.id)
-
-    factura_det_qs = [d for d in todos_los_detalles if d.id not in ids_excluidos]
+    factura_det_qs = _detalle_neto(factura_enc)
     if not factura_det_qs:
         raise EmisionSinError("La factura no tiene detalle (ningun producto cargado).")
     _validar_homologacion(factura_det_qs)
@@ -456,6 +492,362 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
         raise EmisionSinError(f"El SIN rechazo la factura: {resp['mensajesList']}")
 
     return factura_enc
+
+
+def _detalle_neto(factura_enc):
+    """
+    Mismo filtro de lineas de reversion que emitir_factura_sin -- se
+    extrajo aca porque emitir_factura_offline tambien lo necesita, y no
+    tiene sentido reproducir la logica de exclusion de a mano en dos
+    lugares (a diferencia del bloque de firmado/validacion XSD, que se
+    deja duplicado a proposito por estabilidad, este filtro es puro
+    calculo sin efectos secundarios -- extraerlo no arriesga nada).
+    """
+    from fac.models import FacturaDet
+    todos_los_detalles = list(FacturaDet.objects.filter(factura=factura_enc)
+                               .select_related("producto", "producto__unidad_medida"))
+    ids_excluidos = set()
+    for det in todos_los_detalles:
+        if det.cantidad < 0 and det.id not in ids_excluidos:
+            original = next(
+                (d for d in todos_los_detalles
+                 if d.id not in ids_excluidos
+                 and d.producto_id == det.producto_id
+                 and d.cantidad == -det.cantidad
+                 and d.id < det.id),
+                None
+            )
+            ids_excluidos.add(det.id)
+            if original:
+                ids_excluidos.add(original.id)
+    return [d for d in todos_los_detalles if d.id not in ids_excluidos]
+
+
+MOTIVO_EVENTO_INACCESIBILIDAD_SIN = 2  # "Inaccesibilidad al servicio web de la Administración Tributaria"
+
+
+def emitir_factura_offline(factura_enc, codigo_punto_venta=0):
+    """
+    Firma factura_enc en modo CONTINGENCIA (codigoTipoEmision=2), sin
+    contactar al SIN -- para cuando emitir_factura_sin fallo con
+    SinConexionError (Fase A, checklist SIN Fase II puntos 8/12/14).
+
+    No envia nada todavia: solo calcula el CUF offline (usando el
+    ultimo CUFD cacheado, ver CUFDVigente/_obtener_cufd_offline), firma
+    y valida el XML contra el XSD igual que en linea, y agrupa la
+    factura bajo un EventoSignificativo abierto (uno por
+    sucursal+punto de venta -- se reutiliza el mismo evento mientras
+    siga abierto, en vez de crear uno nuevo por cada factura offline).
+    Reportar el evento y enviar el paquete al SIN es la Fase B.
+
+    Deja estado_sin=SIN_PENDIENTE -- eso ya alcanza para que
+    FacturaEnc.reportada_ante_sin/puede_editarse bloqueen edicion y
+    eliminacion (la factura ya tiene un CUF real, borrarla dejaria un
+    hueco en la numeracion correlativa).
+
+    Lanza EmisionSinError (no SinConexionError -- este es terminal, no
+    tiene sentido que el llamador lo reintente como si fuera offline
+    de nuevo) si ni siquiera hay un CUFD cacheado utilizable -- ahi no
+    hay forma segura de continuar en contingencia.
+    """
+    from fac.models import EventoSignificativo
+
+    codigo_sucursal = factura_enc.sucursal.codigo_sucursal if factura_enc.sucursal else 0
+    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_sucursal)
+
+    factura_det_qs = _detalle_neto(factura_enc)
+    if not factura_det_qs:
+        raise EmisionSinError("La factura no tiene detalle (ningun producto cargado).")
+    _validar_homologacion(factura_det_qs)
+
+    cache_cufd = _obtener_cufd_offline(sucursal, codigo_punto_venta)
+    if not cache_cufd:
+        raise EmisionSinError(
+            "No hay un CUFD offline disponible para continuar en modo contingencia "
+            "(contingencia demasiado prolongada, o todavía no hubo ninguna emisión "
+            "exitosa hoy que lo haya guardado). Reintente cuando vuelva la conexión."
+        )
+    cufd, codigo_control = cache_cufd
+
+    from catalogos.services import elegir_leyenda_aleatoria
+    actividad_primera_linea = factura_det_qs[0].producto.actividad_economica_sin
+    leyenda = elegir_leyenda_aleatoria(actividad_primera_linea) or LEYENDA_DEFAULT
+
+    fecha_hora = timezone.localtime(timezone.now())
+    cuf = calcular_cuf(
+        nit=empresa.nit,
+        fecha_hora=fecha_hora,
+        codigo_sucursal=sucursal.codigo_sucursal,
+        codigo_modalidad=CODIGO_MODALIDAD,
+        codigo_tipo_emision=CODIGO_TIPO_EMISION_OFFLINE,
+        codigo_tipo_factura=TIPO_FACTURA_DOCUMENTO,
+        codigo_documento_sector=CODIGO_DOCUMENTO_SECTOR,
+        numero_factura=factura_enc.id,
+        codigo_punto_venta=codigo_punto_venta,
+        codigo_control=codigo_control,
+    )
+
+    cabecera = _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_venta, fecha_hora, leyenda)
+    detalle = _armar_detalle(factura_det_qs)
+    xml_sin_firmar = construir_factura_xml(cabecera, detalle)
+
+    signer = XMLSigner(
+        method=methods.enveloped,
+        signature_algorithm="rsa-sha256",
+        digest_algorithm="sha256",
+        c14n_algorithm=CanonicalizationMethod.CANONICAL_XML_1_0_WITH_COMMENTS,
+    )
+    xml_firmado = signer.sign(xml_sin_firmar, key=_LLAVE_PRIVADA, cert=_CERTIFICADO)
+    XMLVerifier().verify(xml_firmado, x509_cert=_CERTIFICADO)
+
+    xml_bytes = etree.tostring(xml_firmado)
+    if not _XSD_SCHEMA.validate(etree.fromstring(xml_bytes)):
+        raise EmisionSinError(f"XML offline no valido contra XSD: {_XSD_SCHEMA.error_log}")
+
+    evento = EventoSignificativo.objects.filter(
+        sucursal=factura_enc.sucursal, codigo_punto_venta=codigo_punto_venta,
+        estado_evento=EventoSignificativo.ABIERTO,
+    ).first()
+    if not evento:
+        evento = EventoSignificativo.objects.create(
+            sucursal=factura_enc.sucursal, codigo_punto_venta=codigo_punto_venta,
+            codigo_motivo=MOTIVO_EVENTO_INACCESIBILIDAD_SIN,
+            descripcion="Inaccesibilidad al servicio web del SIN detectada automáticamente "
+                        f"al intentar emitir la factura {factura_enc.id}.",
+            fecha_hora_inicio=fecha_hora,
+            cufd_evento=cufd,
+        )
+
+    factura_enc.cuf = cuf
+    factura_enc.cufd = cufd
+    factura_enc.codigo_control = codigo_control
+    factura_enc.leyenda = leyenda
+    factura_enc.xml_firmado = xml_bytes.decode('utf-8')
+    factura_enc.mensaje_sin = (
+        "Emitida en modo contingencia (sin conexión al SIN) — pendiente de reportar "
+        "y transmitir automáticamente en cuanto vuelva la conexión."
+    )
+    factura_enc.estado_sin = factura_enc.SIN_PENDIENTE
+    factura_enc.evento_significativo = evento
+    factura_enc.save()
+
+    return factura_enc
+
+
+def cerrar_evento_y_enviar_paquete(evento):
+    """
+    Fase B (contingencia, 21/09/2026): cierra un EventoSignificativo
+    ABIERTO reportandolo de verdad al SIN, y envia en un solo paquete
+    todas las facturas offline que quedaron agrupadas bajo el (las que
+    ya tienen estado_sin=SIN_PENDIENTE y todavia no estan en ningun
+    PaqueteFacturas). Reutiliza el patron ya validado en
+    prototipo/sin/generar_volumen_paquetes.py: CUFD nuevo para
+    reportar -> registroEventoSignificativo -> TAR+gzip de los XML ya
+    firmados (Fase A) -> recepcionPaqueteFactura.
+
+    NO valida la recepcion todavia -- el SIN devuelve el paquete como
+    "pendiente de revision" al enviarlo, la confirmacion real llega
+    con validar_paquete_sin() en una corrida posterior (Fase C decide
+    cuando). Se llama solo cuando ya se confirmo que hay conexion de
+    nuevo -- si vuelve a fallar aca, el evento sigue abierto y el
+    llamador (Fase C) simplemente reintenta en el siguiente ciclo.
+
+    Lanza EmisionSinError/SinConexionError igual que el resto de las
+    funciones de este modulo -- no atrapa nada, el llamador decide que
+    hacer con la falla.
+    """
+    from fac.models import FacturaEnc, PaqueteFacturas
+
+    if evento.estado_evento == evento.CERRADO:
+        raise EmisionSinError(f"El evento #{evento.id} ya esta cerrado.")
+
+    facturas_del_evento = list(
+        FacturaEnc.objects.filter(evento_significativo=evento, paquete__isnull=True)
+        .order_by('id')
+    )
+    if not facturas_del_evento:
+        raise EmisionSinError(
+            f"El evento #{evento.id} no tiene ninguna factura pendiente de empaquetar."
+        )
+
+    empresa, sucursal = _obtener_empresa_y_sucursal(evento.sucursal.codigo_sucursal)
+    cuis = _obtener_cuis_para_punto_venta(sucursal, evento.codigo_punto_venta)
+    codigo_ambiente = (
+        CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
+        else CODIGO_AMBIENTE_PILOTO
+    )
+    token = _obtener_token()
+
+    # --- 1. CUFD nuevo para REPORTAR (distinto del que ya se uso para
+    # firmar las facturas offline, evento.cufd_evento -- el SIN exige
+    # los dos CUFD distintos, confirmado en prototipo/sin/README.md). ---
+    client_codigos = _cliente_soap(WSDL_CODIGOS, token)
+    cufd_reporte, _ = _pedir_cufd(
+        client_codigos, empresa, sucursal, cuis, evento.codigo_punto_venta, codigo_ambiente
+    )
+
+    # --- 2. Registrar el evento significativo ---
+    fecha_fin = timezone.now()
+    client_operaciones = _cliente_soap(WSDL_OPERACIONES, token)
+    solicitud_evento = {
+        "codigoAmbiente": codigo_ambiente,
+        "codigoMotivoEvento": evento.codigo_motivo,
+        "codigoPuntoVenta": evento.codigo_punto_venta,
+        "codigoSistema": empresa.codigo_sistema,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "cufd": cufd_reporte,
+        "cufdEvento": evento.cufd_evento,
+        "cuis": cuis,
+        "descripcion": evento.descripcion,
+        "fechaHoraFinEvento": fecha_fin,
+        "fechaHoraInicioEvento": evento.fecha_hora_inicio,
+        "nit": empresa.nit,
+    }
+    resp_evento = _llamar(
+        "registro del evento significativo",
+        lambda: serialize_object(client_operaciones.service.registroEventoSignificativo(
+            SolicitudEventoSignificativo=solicitud_evento
+        ))
+    )
+    if not resp_evento.get("transaccion"):
+        raise EmisionSinError(f"El SIN rechazo el evento significativo: {resp_evento.get('mensajesList')}")
+
+    evento.cufd_reporte = cufd_reporte
+    evento.codigo_recepcion_evento_significativo = resp_evento.get("codigoRecepcionEventoSignificativo")
+    evento.fecha_hora_fin = fecha_fin
+    evento.estado_evento = evento.CERRADO
+    evento.save()
+
+    # --- 3. Empaquetar los XML ya firmados (Fase A) en TAR+gzip ---
+    tar_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+        for enc in facturas_del_evento:
+            contenido = enc.xml_firmado.encode('utf-8')
+            info = tarfile.TarInfo(name=f"factura_{enc.id}.xml")
+            info.size = len(contenido)
+            tar.addfile(info, io.BytesIO(contenido))
+    tar_gzip = gzip.compress(tar_buffer.getvalue())
+    hash_archivo = hashlib.sha256(tar_gzip).hexdigest().upper()
+
+    paquete = PaqueteFacturas.objects.create(
+        evento=evento,
+        cantidad_facturas=len(facturas_del_evento),
+        hash_archivo=hash_archivo,
+        fecha_limite_envio=fecha_fin + timedelta(hours=48),
+        estado_paquete=PaqueteFacturas.EN_ARMADO,
+    )
+    FacturaEnc.objects.filter(pk__in=[e.pk for e in facturas_del_evento]).update(paquete=paquete)
+
+    # --- 4. Enviar el paquete (CAFC nunca aplica en nuestra modalidad
+    # -- ver prototipo/sin/README.md: es exclusivo de facturas MANUALES
+    # impresas por una imprenta autorizada, no de Electronica en Linea
+    # pasando a fuera de linea, que es siempre nuestro caso). ---
+    client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
+    solicitud_paquete = {
+        "codigoAmbiente": codigo_ambiente,
+        "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR,
+        "codigoEmision": CODIGO_TIPO_EMISION_OFFLINE,
+        "codigoModalidad": CODIGO_MODALIDAD,
+        "codigoPuntoVenta": evento.codigo_punto_venta,
+        "codigoSistema": empresa.codigo_sistema,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "cufd": evento.cufd_evento,
+        "cuis": cuis,
+        "nit": empresa.nit,
+        "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO,
+        "archivo": tar_gzip,
+        "fechaEnvio": timezone.localtime(timezone.now()).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
+        "hashArchivo": hash_archivo,
+        "cantidadFacturas": len(facturas_del_evento),
+        "codigoEvento": evento.codigo_recepcion_evento_significativo,
+    }
+    try:
+        resp_paquete = _llamar(
+            "envío del paquete de contingencia",
+            lambda: serialize_object(client_facturacion.service.recepcionPaqueteFactura(
+                SolicitudServicioRecepcionPaquete=solicitud_paquete
+            ))
+        )
+    except EmisionSinError:
+        # El evento ya quedo cerrado y reportado (paso 2) -- si el envio
+        # del paquete en si falla, el paquete se guarda igual en estado
+        # EN_ARMADO, para que Fase C lo reintente sin tener que volver a
+        # registrar el evento (eso ya no se puede repetir).
+        raise
+
+    if not resp_paquete.get("transaccion"):
+        paquete.mensaje_sin = str(resp_paquete.get("mensajesList") or "")
+        paquete.save()
+        raise EmisionSinError(f"El SIN rechazo el paquete: {resp_paquete.get('mensajesList')}")
+
+    paquete.codigo_recepcion = resp_paquete.get("codigoRecepcion")
+    paquete.fecha_envio = timezone.now()
+    paquete.estado_paquete = PaqueteFacturas.ENVIADO
+    paquete.save()
+
+    return paquete
+
+
+def validar_paquete_sin(paquete):
+    """
+    Fase B (segunda mitad): confirma ante el SIN si un PaqueteFacturas
+    ya ENVIADO fue validado o no -- se llama en una corrida POSTERIOR a
+    cerrar_evento_y_enviar_paquete (Fase C decide cuando, no hace falta
+    esperar un tiempo fijo aca). Actualiza el paquete y CADA factura
+    que agrupa: VALIDADA si el SIN confirma, OBSERVADA si la rechaza
+    (mismo criterio que emitir_factura_sin para una factura individual).
+    """
+    from fac.models import FacturaEnc, PaqueteFacturas
+
+    if paquete.estado_paquete != PaqueteFacturas.ENVIADO:
+        raise EmisionSinError(
+            f"El paquete #{paquete.id} no esta en estado ENVIADO "
+            f"(estado actual: {paquete.get_estado_paquete_display()})."
+        )
+
+    evento = paquete.evento
+    empresa, sucursal = _obtener_empresa_y_sucursal(evento.sucursal.codigo_sucursal)
+    cuis = _obtener_cuis_para_punto_venta(sucursal, evento.codigo_punto_venta)
+    codigo_ambiente = (
+        CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
+        else CODIGO_AMBIENTE_PILOTO
+    )
+    token = _obtener_token()
+    client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
+
+    solicitud_validacion = {
+        "codigoAmbiente": codigo_ambiente,
+        "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR,
+        "codigoEmision": CODIGO_TIPO_EMISION_OFFLINE,
+        "codigoModalidad": CODIGO_MODALIDAD,
+        "codigoPuntoVenta": evento.codigo_punto_venta,
+        "codigoSistema": empresa.codigo_sistema,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "cufd": evento.cufd_evento,
+        "cuis": cuis,
+        "nit": empresa.nit,
+        "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO,
+        "codigoRecepcion": paquete.codigo_recepcion,
+    }
+    resp = _llamar(
+        "validación de recepción del paquete",
+        lambda: serialize_object(client_facturacion.service.validacionRecepcionPaqueteFactura(
+            SolicitudServicioValidacionRecepcionPaquete=solicitud_validacion
+        ))
+    )
+
+    paquete.fecha_validacion = timezone.now()
+    paquete.mensaje_sin = str(resp.get("mensajesList") or "")
+
+    if resp.get("transaccion"):
+        paquete.estado_paquete = PaqueteFacturas.VALIDADO
+        FacturaEnc.objects.filter(paquete=paquete).update(estado_sin=FacturaEnc.SIN_VALIDADA)
+    else:
+        paquete.estado_paquete = PaqueteFacturas.RECHAZADO
+        FacturaEnc.objects.filter(paquete=paquete).update(estado_sin=FacturaEnc.SIN_OBSERVADA)
+
+    paquete.save()
+    return paquete
 
 
 def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):

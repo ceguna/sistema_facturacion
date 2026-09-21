@@ -182,7 +182,7 @@
     </div>
 
     <div class="texto-verificacion">
-        Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea.
+        Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación {% if enc.evento_significativo %}fuera de línea{% else %}en línea{% endif %}.
         {% if enc.codigo_control %}<br>Código de Control: {{ codigo_control_cortado|safe }}{% endif %}
         <br>Verifique en: ov.impuestos.gob.bo
     </div>

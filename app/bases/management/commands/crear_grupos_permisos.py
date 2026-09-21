@@ -83,6 +83,12 @@ class Command(BaseCommand):
             p = get_perm_by_codename("inv", codename)
             if p:
                 perms_supervisor.append(p)
+        # Fase D (contingencia SIN, 21/09/2026): ver eventos/paquetes es
+        # solo lectura (los cierra y envia el sistema solo, via la tarea
+        # programada) -- Supervisor lo necesita para auditar.
+        perms_supervisor += get_perms(
+            "fac", ["eventosignificativo", "paquetefacturas"], ["view"]
+        )
         supervisor.permissions.set(perms_supervisor)
         self.stdout.write(self.style.SUCCESS(
             f"Grupo 'Supervisor' actualizado ({len(perms_supervisor)} permisos)"
@@ -158,6 +164,9 @@ class Command(BaseCommand):
         )
         perms_lectura += get_perms(
             "inv", ["transferenciastockenc", "transferenciastockdet"], ["view"]
+        )
+        perms_lectura += get_perms(
+            "fac", ["eventosignificativo", "paquetefacturas"], ["view"]
         )
         lectura.permissions.set(perms_lectura)
         self.stdout.write(self.style.SUCCESS(

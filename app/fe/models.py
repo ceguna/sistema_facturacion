@@ -280,3 +280,32 @@ class PuntoVenta(ClaseModelo2):
         verbose_name = "Punto de Venta"
         verbose_name_plural = "Puntos de Venta"
         unique_together = ('sucursal', 'codigo_punto_venta')
+
+
+class CUFDVigente(models.Model):
+    """
+    Ultimo CUFD obtenido con exito del SIN, por Sucursal+punto de venta
+    (Fase A, contingencia, 21/09/2026). Se actualiza solo, como efecto
+    secundario de cada CUFD pedido con exito (ver _pedir_cufd en
+    fe/services.py) -- es la unica forma de poder seguir firmando
+    facturas OFFLINE cuando el SIN se vuelve inalcanzable: el CUFD ya
+    esta guardado de ANTES del corte, no hace falta pedirlo de nuevo en
+    ese momento (lo cual requeriria, contradictoriamente, tener
+    conexion). Un solo registro por combinacion -- se pisa, no se
+    acumula historial.
+    """
+    sucursal = models.ForeignKey(
+        Sucursal, on_delete=models.CASCADE, related_name='cufd_vigentes'
+    )
+    codigo_punto_venta = models.PositiveIntegerField(default=0)
+    cufd = models.CharField(max_length=150)
+    codigo_control = models.CharField(max_length=100)
+    fecha_obtencion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "CUFD Vigente (caché offline)"
+        verbose_name_plural = "CUFD Vigentes (caché offline)"
+        unique_together = ('sucursal', 'codigo_punto_venta')
+
+    def __str__(self):
+        return f"CUFD de {self.sucursal} / PV {self.codigo_punto_venta} (obtenido {self.fecha_obtencion:%d/%m/%Y %H:%M})"

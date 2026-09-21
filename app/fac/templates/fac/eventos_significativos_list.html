@@ -1,0 +1,77 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+    <div class="card-header py-3">
+        <h4 class="m-0 font-weight-bold text-primary">Contingencia SIN — Eventos Significativos y Paquetes</h4>
+    </div>
+    <div class="card-body">
+        {% if not obj %}
+            <div class="alert alert-info">
+                <i class="fas fa-plug mr-2"></i>Todavía no se registró ningún corte de conexión con el SIN.
+                Esta pantalla queda vacía mientras el sistema siempre pueda emitir en línea con normalidad.
+            </div>
+        {% endif %}
+        <p class="text-muted">
+            Cada fila es un corte de conexión detectado automáticamente: mientras duró, las facturas se
+            siguieron emitiendo con normalidad en modo contingencia (CUF calculado sin conexión), y al
+            volver la conexión el sistema las agrupó, reportó el evento ante el SIN y envió el paquete solo.
+        </p>
+        <table
+         id="tablaEventos"
+         data-toggle="table"
+         data-pagination="true"
+         data-search="true"
+         data-show-columns="true"
+         data-show-export="True"
+         data-export-types='["csv","txt","xlsx","pdf"]'
+         data-show-pagination-switch="true"
+         data-locale="es-NI"
+         class="table table-striped table-hover" style="width:100%">
+            <thead>
+                <th data-sortable="true" data-field="id">Evento</th>
+                <th data-sortable="true" data-field="sucursal">Sucursal / PV</th>
+                <th data-sortable="true" data-field="motivo">Motivo</th>
+                <th data-sortable="true" data-field="inicio">Inicio</th>
+                <th data-sortable="true" data-field="fin">Fin</th>
+                <th data-sortable="true" data-field="estado">Estado</th>
+                <th data-sortable="true" data-field="facturas">Facturas</th>
+                <th data-sortable="true" data-field="paquete">Paquete(s)</th>
+            </thead>
+            <tbody>
+                {% for evento in obj %}
+                <tr>
+                    <td>#{{ evento.id }}</td>
+                    <td>{{ evento.sucursal }} — PV {{ evento.codigo_punto_venta }}</td>
+                    <td title="{{ evento.descripcion }}">{{ evento.codigo_motivo }}</td>
+                    <td>{{ evento.fecha_hora_inicio|date:"d/m/Y H:i" }}</td>
+                    <td>{{ evento.fecha_hora_fin|date:"d/m/Y H:i"|default:"—" }}</td>
+                    <td>
+                        {% if evento.estado_evento == 'abierto' %}
+                            <span class="badge badge-warning">{{ evento.get_estado_evento_display }}</span>
+                        {% else %}
+                            <span class="badge badge-secondary">{{ evento.get_estado_evento_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ evento.facturas.count }}</td>
+                    <td>
+                        {% for paquete in evento.paquetes.all %}
+                            {% if paquete.estado_paquete == 'validado' %}
+                                <span class="badge badge-success">Paquete #{{ paquete.id }}: {{ paquete.get_estado_paquete_display }}</span>
+                            {% elif paquete.estado_paquete == 'rechazado' %}
+                                <span class="badge badge-danger">Paquete #{{ paquete.id }}: {{ paquete.get_estado_paquete_display }}</span>
+                            {% else %}
+                                <span class="badge badge-info">Paquete #{{ paquete.id }}: {{ paquete.get_estado_paquete_display }}</span>
+                            {% endif %}
+                            <br>
+                        {% empty %}
+                            <span class="text-muted small">Sin paquete todavía</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor%}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
