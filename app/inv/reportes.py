@@ -8,6 +8,7 @@ from xhtml2pdf import pisa
 
 from .models import Producto
 from fe.models import Empresa
+from fe.utils import datos_logo_header
 
 
 def _contexto_lista_precios():
@@ -15,11 +16,13 @@ def _contexto_lista_precios():
         'unidad_medida', 'marca', 'subcategoria'
     ).order_by('codigo')
     empresa = Empresa.objects.first()
-    return {
+    context = {
         'productos': productos,
         'empresa': empresa,
         'fecha_emision': timezone.localtime(timezone.now()),
     }
+    context.update(datos_logo_header(empresa))
+    return context
 
 
 @login_required(login_url='/login/')

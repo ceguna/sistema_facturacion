@@ -55,7 +55,7 @@
                                   <td>
                                       {% if item.existencia > 0 and item.estado %}
                                       <button class="btn btn-warning btn-circle" id="btnSelect" 
-                                      onclick="seleccionarProducto({{item.id|unlocalize}},'{{item.codigo}}','{{item.descripcion}}',{{item.precio|unlocalize}},{{item.existencia|unlocalize}},{{item.descuento_promocional_vigente_pct|unlocalize}})">
+                                      onclick="seleccionarProducto({{item.id|unlocalize}},'{{item.codigo}}','{{item.descripcion}}',{{item.precio|unlocalize}},{{item.existencia|unlocalize}},{{item.descuento_promocional_vigente_pct|unlocalize}},'{{item.unidad_medida.descripcion|default:""}}')">
                                           <i class="far fa-hand-pointer"></i>
                                       </button>
                                       {% endif %}
@@ -127,11 +127,14 @@
   });
   $('#tblProducto').bootstrapTable();
 
-  function seleccionarProducto(id,codigo,descripcion,precio,existencia,descuentoProductoVigente){
+  function seleccionarProducto(id,codigo,descripcion,precio,existencia,descuentoProductoVigente,unidad){
       $("#codigo").val(codigo);
       $("#descripcion").val(descripcion);
       $("#precio").val(precio);
       $("#existencia").val(existencia);
+      // Unidad de medida del producto seleccionado -- agregada
+      // 16/09/2026, mismo criterio que ya usa Compras (compras.html).
+      $("#unidad_producto").val(unidad || '');
 
       // Misma logica de descuento que buscarProducto() en facturas.html:
       // se aplica el MAYOR entre el % del cliente (data-descuento del

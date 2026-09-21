@@ -19,7 +19,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth.models import User
 
 from fac.models import Cliente, FacturaEnc, FacturaDet
-from inv.models import Producto
+from inv.models import Producto, ajustar_stock_sucursal
 from catalogos.models import CatalogoSIN
 from fe.models import Sucursal, PuntoVenta
 from fe.services import emitir_factura_sin, anular_factura_sin, revertir_anulacion_sin, EmisionSinError
@@ -103,8 +103,13 @@ class Command(BaseCommand):
         stock_necesario = cantidad + 10
         if producto.existencia < stock_necesario:
             stock_original = producto.existencia
-            producto.existencia = stock_necesario
-            producto.save()
+            # Fase 2 (20/09/2026): existencia ya no se asigna directo --
+            # es un agregado mantenido por ajustar_stock_sucursal. Se
+            # completa la sucursal Casa Matriz (misma que usa toda la
+            # certificacion, codigo_sucursal=0) con la diferencia que falta.
+            casa_matriz = Sucursal.objects.filter(codigo_sucursal=0).first()
+            ajustar_stock_sucursal(producto.id, casa_matriz, stock_necesario - stock_original)
+            producto.refresh_from_db(fields=['existencia'])
             self.stdout.write(self.style.WARNING(
                 f"Existencia de '{producto.descripcion}' insuficiente para {cantidad} ciclos "
                 f"(tenia {stock_original}). Se subio temporalmente a {stock_necesario} para la prueba."
@@ -169,9 +174,7 @@ class Command(BaseCommand):
                 anular_factura_sin(enc, int(motivo.codigo), codigo_punto_venta=codigo_punto_venta)
                 detalles = FacturaDet.objects.filter(factura=enc)
                 for det in detalles:
-                    prod = det.producto
-                    prod.existencia = int(prod.existencia) + int(det.cantidad)
-                    prod.save()
+                    ajustar_stock_sucursal(det.producto_id, enc.sucursal, int(det.cantidad))
                 enc.anulado = True
                 enc.motivo_anulacion = motivo.descripcion
                 enc.usuario_anulacion = usuario
@@ -190,9 +193,7 @@ class Command(BaseCommand):
                 revertir_anulacion_sin(enc, codigo_punto_venta=codigo_punto_venta)
                 detalles = FacturaDet.objects.filter(factura=enc)
                 for det in detalles:
-                    prod = det.producto
-                    prod.existencia = int(prod.existencia) - int(det.cantidad)
-                    prod.save()
+                    ajustar_stock_sucursal(det.producto_id, enc.sucursal, -int(det.cantidad))
                 enc.anulado = False
                 enc.save()
                 self.stdout.write(self.style.SUCCESS(f"  Reversion OK: factura {enc.id}"))

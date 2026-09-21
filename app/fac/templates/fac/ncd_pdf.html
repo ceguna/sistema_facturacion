@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Nota de Crédito-Débito N° {{ ncd.id }}</title>
+    <style type="text/css">
+    /* Representacion grafica de Nota de Credito-Debito, tamaño Carta
+       (agregado 19/09/2026, a partir de un modelo de referencia
+       oficial del SIN que paso Carlos). NO es la factura "comprimida"
+       -- tiene su propia estructura (factura original + devolucion +
+       monto efectivo debito-credito). Mismas reglas de siempre para
+       xhtml2pdf: tablas para el layout, anchos fijos en cm, sin
+       depender de word-break (valores largos vienen pre-cortados
+       desde Python), CSS 100% inline. */
+    @page {
+        size: letter;
+        margin: 1.1cm;
+    }
+    /* CORREGIDO 20/09/2026 (pedido de Carlos): los 4 bloques de esta
+       plantilla (encabezado, datos del cliente, tabla de items +
+       totales, leyendas + verificacion) sumaban 18.4/18.5cm cada uno
+       -- por debajo del ancho util real de la hoja carta con estos
+       margenes (21.59cm - 2*1.1cm = 19.39cm), dejando un margen
+       derecho de sobra que no se ve intencional y que antes no
+       coincidia entre bloques. Se unificaron los 4 a 19.4cm exactos
+       (misma columna derecha) para que las tablas y el resto del
+       contenido queden alineados de punta a punta. */
+    body {
+        font-family: Helvetica, Arial, sans-serif;
+        font-size: 8.5pt;
+        color: #000;
+    }
+    .tabla-cabecera {
+        width: 100%;
+        border: none;
+        margin-bottom: 4px;
+    }
+    .tabla-cabecera td {
+        border: none;
+        padding: 0;
+        vertical-align: top;
+        font-size: 8pt;
+        line-height: 1.35;
+    }
+    .col-izq { width: 11.5cm; }
+    .col-der { width: 7.9cm; text-align: right; }
+    .logo-header img { max-height: 45px; margin-bottom: 3px; }
+    .razon-social { font-size: 11pt; font-weight: bold; }
+    .etiqueta-der { font-weight: bold; }
+    .linea-separadora {
+        border-top: 1px solid #000;
+        margin: 4px 0 6px 0;
+    }
+    .titulo-ncd {
+        text-align: center;
+        font-size: 15pt;
+        font-weight: bold;
+        margin: 4px 0 6px 0;
+    }
+    .tabla-cliente {
+        width: 100%;
+        border: none;
+        margin-bottom: 5px;
+    }
+    .tabla-cliente td {
+        border: none;
+        padding: 1px 0;
+        font-size: 8.5pt;
+        vertical-align: top;
+    }
+    .tabla-cliente .col-a { width: 12.5cm; }
+    .tabla-cliente .col-b { width: 6.9cm; }
+    .titulo-seccion {
+        font-size: 9.5pt;
+        font-weight: bold;
+        margin: 6px 0 3px 0;
+    }
+    .table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 2px;
+    }
+    .table th {
+        border: 1px solid #000;
+        padding: 3px 4px;
+        text-align: center;
+        font-size: 7pt;
+        font-weight: bold;
+    }
+    .table td {
+        border: 1px solid #000;
+        padding: 3px 4px;
+        font-size: 8pt;
+    }
+    .col-codigo { width: 2.3cm; text-align: left; }
+    .col-cant { width: 1.6cm; text-align: right; }
+    .col-um { width: 2cm; text-align: center; }
+    .col-desc { width: 7.1cm; text-align: left; }
+    .col-num { text-align: right; }
+    .col-punit { width: 2.1cm; }
+    .col-descu { width: 2cm; }
+    .col-subt { width: 2.3cm; }
+    .tabla-resumen {
+        width: 8cm;
+        margin-left: 11.4cm;
+        margin-top: 2px;
+        border-collapse: collapse;
+    }
+    .tabla-resumen td {
+        border: 1px solid #000;
+        padding: 3px 6px;
+        font-size: 8pt;
+    }
+    .tabla-resumen .etiqueta { text-align: left; }
+    .tabla-resumen .valor { text-align: right; width: 3cm; }
+    .tabla-resumen .fila-destacada { font-weight: bold; }
+    .son-letras {
+        margin-top: 6px;
+        font-size: 8.5pt;
+    }
+    .fila-verificacion {
+        width: 100%;
+        border: none;
+        margin-top: 8px;
+    }
+    .fila-verificacion td {
+        border: none;
+        padding: 0;
+        vertical-align: top;
+        font-size: 7pt;
+    }
+    .col-leyendas { width: 12.5cm; }
+    .col-verif { width: 6.9cm; text-align: center; }
+    .caja-verificacion {
+        border: 1px solid #000;
+        padding: 5px 6px;
+    }
+    .caja-verificacion .titulo-verif {
+        font-weight: bold;
+        font-size: 7.5pt;
+        display: block;
+        margin-bottom: 3px;
+    }
+    .caja-verificacion .texto-verif { text-align: left; }
+    .leyenda-legal { font-size: 7pt; margin-bottom: 3px; }
+    .pie-pagina {
+        width: 100%;
+        border: none;
+        margin-top: 6px;
+        border-top: 1px solid #999;
+        padding-top: 3px;
+    }
+    .pie-pagina td { border: none; font-size: 7pt; color: #555; }
+    .pie-pagina .col-doc { text-align: left; font-style: italic; }
+    .pie-pagina .col-pag { text-align: right; }
+    </style>
+</head>
+<body>
+    <table class="tabla-cabecera">
+        <tr>
+            <td class="col-izq">
+                {% if logo_valido %}
+                <div class="logo-header"><img src="{{ empresa.logo.path }}" alt="{{ empresa.razon_social }}" style="width:{{ logo_ancho_pt }}pt; height:{{ logo_alto_pt }}pt;"></div>
+                {% endif %}
+                <div class="razon-social">{{ empresa.razon_social|default:"Sistema de Facturación" }}</div>
+                {% if sucursal.codigo_sucursal == 0 %}CASA MATRIZ<br>{% elif sucursal %}SUCURSAL N. {{ sucursal.codigo_sucursal }} — {{ sucursal.nombre }}<br>{% endif %}
+                {% if punto_venta %}No. Punto de Venta {{ punto_venta.codigo_punto_venta }}<br>{% endif %}
+                {% if empresa.direccion %}{{ empresa.direccion }}<br>{% elif sucursal.direccion %}{{ sucursal.direccion }}<br>{% endif %}
+                {% if empresa.telefono %}Teléfono: {{ empresa.telefono }}<br>{% endif %}
+                {% if sucursal.municipio %}{{ sucursal.municipio }}{% elif sucursal.departamento %}{{ sucursal.departamento }}{% endif %}
+            </td>
+            <td class="col-der">
+                {% if empresa.nit %}<span class="etiqueta-der">NIT</span> {{ empresa.nit }}<br>{% endif %}
+                <span class="etiqueta-der">Nota N°</span> {{ ncd.id|stringformat:"d" }}<br>
+                {% if ncd.cuf %}<span class="etiqueta-der">CÓD. AUTORIZACIÓN</span><br>{{ cuf_cortado|safe }}{% endif %}
+            </td>
+        </tr>
+    </table>
+    <div class="linea-separadora"></div>
+
+    <div class="titulo-ncd">NOTA CRÉDITO - DÉBITO</div>
+
+    <table class="tabla-cliente">
+        <tr>
+            <td class="col-a"><b>Fecha:</b> {{ ncd.fecha|date:"d/m/Y H:i" }}</td>
+            <td class="col-b"><b>NIT/CI/CEX:</b> {% if enc.cliente.nit %}{{ enc.cliente.nit }}{% elif enc.cliente.ci %}{{ enc.cliente.ci }}{% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td class="col-a"><b>Nombre/Razón Social:</b> {{ enc.cliente }}</td>
+            <td class="col-b"><b>Cod. Cliente:</b> {{ enc.cliente.id|stringformat:"d" }}</td>
+        </tr>
+        <tr>
+            <td class="col-a"><b>N° Factura:</b> {{ enc.id|stringformat:"d" }}</td>
+            <td class="col-b"><b>Fecha Factura:</b> {{ enc.fecha|date:"d/m/Y H:i" }}</td>
+        </tr>
+        <tr>
+            <td class="col-a"></td>
+            <td class="col-b"><b>N° Autorización/CUF:</b></td>
+        </tr>
+        <tr>
+            <td class="col-a"></td>
+            <td class="col-b">{{ cuf_original_cortado|default:enc.cuf|safe }}</td>
+        </tr>
+    </table>
+
+    <div class="titulo-seccion">DATOS FACTURA ORIGINAL</div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th class="col-codigo">CÓDIGO<br>PRODUCTO</th>
+                <th class="col-cant">CANTIDAD</th>
+                <th class="col-um">UNIDAD DE<br>MEDIDA</th>
+                <th class="col-desc">DESCRIPCIÓN</th>
+                <th class="col-punit">PRECIO<br>UNITARIO</th>
+                <th class="col-descu">DESCUENTO</th>
+                <th class="col-subt">SUBTOTAL</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for det in detalle_original %}
+            <tr>
+                <td class="col-codigo">{{ det.producto.codigo }}</td>
+                <td class="col-cant col-num">{{ det.cantidad|floatformat:2 }}</td>
+                <td class="col-um">{{ det.producto.unidad_medida.descripcion|default:"—" }}</td>
+                <td class="col-desc">{{ det.producto.descripcion }}</td>
+                <td class="col-punit col-num">{{ det.precio|floatformat:2 }}</td>
+                <td class="col-descu col-num">{{ det.descuento|floatformat:2 }}</td>
+                <td class="col-subt col-num">{{ det.total|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <table class="tabla-resumen">
+        <tr class="fila-destacada"><td class="etiqueta">MONTO TOTAL ORIGINAL Bs</td><td class="valor">{{ ncd.monto_total_original|floatformat:2 }}</td></tr>
+    </table>
+
+    <div class="titulo-seccion">DATOS DE LA DEVOLUCIÓN O RESCISIÓN</div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th class="col-codigo">CÓDIGO<br>PRODUCTO</th>
+                <th class="col-cant">CANTIDAD</th>
+                <th class="col-um">UNIDAD DE<br>MEDIDA</th>
+                <th class="col-desc">DESCRIPCIÓN</th>
+                <th class="col-punit">PRECIO<br>UNITARIO</th>
+                <th class="col-descu">DESCUENTO</th>
+                <th class="col-subt">SUBTOTAL</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for det in detalle_devuelto %}
+            <tr>
+                <td class="col-codigo">{{ det.producto.codigo }}</td>
+                <td class="col-cant col-num">{{ det.cantidad|floatformat:2 }}</td>
+                <td class="col-um">{{ det.producto.unidad_medida.descripcion|default:"—" }}</td>
+                <td class="col-desc">{{ det.producto.descripcion }}</td>
+                <td class="col-punit col-num">{{ det.precio|floatformat:2 }}</td>
+                <td class="col-descu col-num">{{ det.descuento|floatformat:2 }}</td>
+                <td class="col-subt col-num">{{ det.total|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <table class="tabla-resumen">
+        <tr><td class="etiqueta">MONTO TOTAL DEVUELTO Bs</td><td class="valor">{{ ncd.monto_total_devuelto|floatformat:2 }}</td></tr>
+        <tr class="fila-destacada"><td class="etiqueta">MONTO EFECTIVO DÉBITO-CRÉDITO Bs</td><td class="valor">{{ ncd.monto_efectivo_credito_debito|floatformat:2 }}</td></tr>
+    </table>
+
+    <div class="son-letras">Son: {{ importe_en_letras }}</div>
+
+    <table class="fila-verificacion">
+        <tr>
+            <td class="col-leyendas">
+                <div class="leyenda-legal">ESTA FACTURA CONTRIBUYE AL DESARROLLO DEL PAÍS, EL USO ILÍCITO SERÁ SANCIONADO PENALMENTE DE ACUERDO A LEY</div>
+                <div class="leyenda-legal">Ley N° 453: El proveedor deberá entregar el producto en las modalidades y términos ofertados o convenidos.</div>
+                <div class="leyenda-legal">Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea.</div>
+            </td>
+            <td class="col-verif">
+                {% if qr_verificacion_data_uri %}
+                <img src="{{ qr_verificacion_data_uri }}" style="width:80pt; height:80pt;"><br>
+                {% endif %}
+                <div class="caja-verificacion">
+                    <span class="titulo-verif">Verificación del documento</span>
+                    <div class="texto-verif">
+                        Código de Control: {{ ncd.codigo_control|default:"—" }}<br>
+                        {% if ncd.cufd %}CUFD: {{ cufd_cortado|safe }}<br>{% endif %}
+                        Verifique en: ov.impuestos.gob.bo
+                    </div>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <table class="pie-pagina">
+        <tr>
+            <td class="col-doc">(Nota Crédito-Débito)</td>
+            <td class="col-pag">1/1</td>
+        </tr>
+    </table>
+</body>
+</html>

@@ -60,8 +60,8 @@
                     <td>{{ item.fc|date:"d/m/Y H:i:s" }}</td>
                     <td>{{ item.fm|date:"d/m/Y H:i:s" }}</td>
                     <td>
-                        <a href="{% url 'inv:um_edit' item.id %}" class="btn btn-warning btn-circle" role="button"><i class="far fa-edit"></i></a>
-                        <a href="{% url 'inv:um_inactivar' item.id %}" class="btn btn-danger btn-circle" role="button"><i class="far fa-thumbs-down"></i></a>
+                        <a href="{% url 'inv:um_edit' item.id %}" class="btn btn-warning btn-circle" role="button" title="Editar"><i class="far fa-edit"></i></a>
+                        <a href="{% url 'inv:um_inactivar' item.id %}" class="btn btn-danger btn-circle" role="button" title="Activar / Inactivar"><i class="far fa-thumbs-down"></i></a>
                     </td>
                 </tr>
                 {% endfor%}

@@ -1,0 +1,23 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3">
+    <h4 class="m-0 font-weight-bold text-danger">Quitar Línea del Ajuste</h4>
+  </div>
+  <div class="card-body">
+    <div class="alert alert-warning">
+      ¿Quitar "{{ obj.producto }}" (cantidad {{ obj.cantidad }}) del Ajuste de
+      Inventario N° {{ obj.ajuste_id }}? Esta línea se borra de verdad (no es un
+      documento fiscal) y el stock que había sumado se revierte.
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-danger">
+        <i class="far fa-trash-alt mr-1"></i>Sí, Quitar
+      </button>
+      <a href="{% url 'inv:ajuste_inventario_edit' obj.ajuste_id %}" class="btn btn-secondary ml-2">Cancelar</a>
+    </form>
+  </div>
+</div>
+{% endblock %}

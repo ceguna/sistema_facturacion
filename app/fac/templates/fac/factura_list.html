@@ -1,6 +1,24 @@
 {% extends 'base/base.html' %}
 
 {% block page_content %}
+<!-- Overlay de carga (obs 5, 10/09/2026): en rangos de fecha con
+     muchas facturas, bootstrap-table tarda varios segundos en formatear
+     la tabla del lado del cliente y la pantalla queda "congelada" sin
+     feedback. Este overlay se muestra apenas se pinta el HTML y se
+     oculta cuando bootstrap-table termina (post-body.bs.table) o al
+     vencer un timeout de respaldo. Tambien se vuelve a mostrar al
+     enviar el formulario de filtro, mientras carga la pagina nueva.
+     Visible por defecto (sin JS todavia); si algo falla, el respaldo
+     JS lo oculta igual. -->
+<div id="facLoadingOverlay" style="position:fixed;inset:0;z-index:2000;
+     background:rgba(255,255,255,.75);display:flex;flex-direction:column;
+     align-items:center;justify-content:center;">
+  <div class="spinner-border text-primary" role="status" style="width:3rem;height:3rem;">
+    <span class="sr-only">Cargando...</span>
+  </div>
+  <div class="mt-3 font-weight-bold text-primary">Procesando facturas…</div>
+</div>
+
 <div class="card shadow mb-4">
   <!-- Card Header - Dropdown -->
   <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
@@ -28,25 +46,33 @@
         <button type="submit" class="btn btn-primary mb-1"><i class="fas fa-filter mr-1"></i>Filtrar</button>
       </div>
     </form>
-    <div class="row mt-2">
-      <div class="col-md-12 d-flex align-items-end flex-wrap">
-        <button class="btn btn-warning mb-1" type="button" id="btnPrint">Ver en Pantalla</button>
-        <button class="btn btn-danger ml-2 mb-1" type="button" id="btnPrintPdf">Descargar PDF</button>
-        <button class="btn btn-success ml-2 mb-1" type="button" id="btnDescargarExcel">
-          <i class="fas fa-file-excel mr-1"></i>Descargar Excel
-        </button>
-        <button class="btn btn-secondary ml-2 mb-1" type="button" id="btnDescargarXmlRango">
-          <i class="fas fa-file-archive mr-1"></i>Descargar XML (rango)
-        </button>
-      </div>
-    </div>
     <hr>
- 
+
     {% if not obj %}
     <div class="alert alert-info"><i class="fas fa-file-invoice mr-2"></i>No hay facturas en el rango {{ f1|date:'d/m/Y' }} al {{ f2|date:'d/m/Y' }}. Probá ampliar el rango de fechas de arriba, o usá el botón <b>Nuevo</b> para comenzar.</div>
     {% endif %}
-    <div class="buttons-toolbar">
-        <a class="btn btn-success" href="{% url 'fac:factura_new' %}"><i class="far fa-calendar-plus"></i> Nuevo</a>
+    <div class="buttons-toolbar d-flex flex-wrap align-items-center">
+        <a class="btn btn-success mr-2 mb-1" href="{% url 'fac:factura_new' %}"><i class="far fa-calendar-plus"></i> Nuevo</a>
+        <button class="btn btn-warning mr-2 mb-1" type="button" id="btnPrint">Ver en Pantalla</button>
+        <!-- Grupo "Export Data" (12/09/2026): antes eran 3 botones de
+             colores sueltos (Descargar PDF/Excel/XML) al lado de la
+             tabla -- se agrupan aca, mismo estilo gris que el "Export
+             Data" nativo de bootstrap-table (usado en otras listas,
+             ej. /inv/categorias/). La generacion de cada archivo sigue
+             siendo la misma de siempre (vistas del servidor,
+             imprimir-todas-pdf/excel, descargar-xml-rango) -- esto solo
+             reubica los botones. -->
+        <div class="dropdown mb-1">
+          <button class="btn btn-secondary dropdown-toggle" type="button" id="btnExportData"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            <i class="fas fa-download mr-1"></i>Export Data
+          </button>
+          <div class="dropdown-menu" aria-labelledby="btnExportData">
+            <a class="dropdown-item" href="#" id="btnPrintPdf"><i class="fas fa-file-pdf mr-1"></i> Descargar PDF</a>
+            <a class="dropdown-item" href="#" id="btnDescargarExcel"><i class="fas fa-file-excel mr-1"></i> Descargar Excel</a>
+            <a class="dropdown-item" href="#" id="btnDescargarXmlRango"><i class="fas fa-file-archive mr-1"></i> Descargar XML (rango)</a>
+          </div>
+        </div>
     </div>
 
     <table 
@@ -92,6 +118,8 @@
           {% endif %}
           {% if item.tiene_ncd %}
             <br><span class="badge badge-dark" title="Corregida con Nota de Crédito-Débito -- cerrada fiscalmente">NCD Emitida</span>
+          {% elif item.ncd_anulada %}
+            <br><span class="badge badge-secondary" title="La Nota de Crédito-Débito de esta factura fue anulada ante el SIN">NCD Anulada</span>
           {% endif %}
         </td>
         <td>
@@ -102,13 +130,42 @@
           {% endif %}
         </td>
         <td>
-          <a href="{% url 'fac:factura_edit' item.id %}" class="href btn btn-warning btn-circle">
+          <a href="{% url 'fac:factura_edit' item.id %}" class="href btn btn-warning btn-circle" title="Ver / Editar factura">
               <i class="far fa-edit"></i>
           </a>
           {% if item.xml_firmado %}
           <a href="{% url 'fac:factura_descargar_xml' item.id %}" class="href btn btn-outline-secondary btn-circle" title="Descargar XML">
               <i class="fas fa-file-code"></i>
           </a>
+          {% endif %}
+          <!-- Descargar PDF / Enviar por correo / WhatsApp -- Fase 1
+               (16/09/2026, MVP comercial). No dependen de es_supervisor:
+               cualquiera que pueda ver la factura puede reenviarla al
+               cliente, no es una accion fiscalmente sensible como
+               anular/revertir. Gateado en xml_firmado (no
+               reportada_ante_sin): el cajero tiene que haber emitido
+               la factura al SIN primero para que exista el XML que se
+               adjunta al correo -- mismo criterio que ya usa el boton
+               de Descargar XML de mas arriba. -->
+          {% if item.xml_firmado %}
+          <a href="{% url 'fac:factura_descargar_pdf' item.id %}" class="href btn btn-outline-primary btn-circle" title="Descargar PDF">
+              <i class="fas fa-file-pdf"></i>
+          </a>
+          {% if item.cliente.email %}
+          <a href="#" class="href btn btn-info btn-circle" title="Enviar por correo a {{ item.cliente.email }}"
+             onclick="return abrir_modal('{% url 'fac:factura_enviar_correo' item.id %}')">
+              <i class="fas fa-envelope"></i>
+          </a>
+          {% endif %}
+          {% if item.whatsapp_url %}
+          <!-- REVERTIDO 20/09/2026 (pedido de Carlos): el intento del
+               19/09 de disparar la descarga del PDF junto con el link
+               de WhatsApp interfería con que el link abriera el
+               WhatsApp del propio operador -- vuelve al link simple. -->
+          <a href="{{ item.whatsapp_url }}" target="_blank" rel="noopener" class="href btn btn-success btn-circle" title="Compartir por WhatsApp (descargue el PDF primero para adjuntarlo)">
+              <i class="fab fa-whatsapp"></i>
+          </a>
+          {% endif %}
           {% endif %}
           <!-- Anular/Revertir: ocultos por completo si el usuario no es
                supervisor (es_supervisor viene de FacturaView.get_context_data).
@@ -130,10 +187,22 @@
               <i class="fas fa-undo"></i>
           </a>
           {% endif %}
-          {% if item.reportada_ante_sin and not item.anulado and not item.tiene_ncd and es_supervisor %}
+          {% if item.reportada_ante_sin and not item.anulado and not item.tiene_ncd_alguna_vez and es_supervisor %}
           <a href="#" class="href btn btn-warning btn-circle" title="Emitir Nota de Crédito-Débito (supervisor)"
              onclick="return abrir_modal('{% url 'fac:factura_emitir_ncd' item.id %}')">
               <i class="fas fa-file-invoice-dollar"></i>
+          </a>
+          {% endif %}
+          {% if item.ncd_validada and es_supervisor %}
+          <a href="#" class="href btn btn-dark btn-circle" title="Anular Nota de Crédito-Débito (supervisor)"
+             onclick="return abrir_modal('{% url 'fac:ncd_anular' item.ncd_validada.id %}')">
+              <i class="fas fa-ban"></i>
+          </a>
+          {% endif %}
+          {% if item.ncd_anulada and es_supervisor %}
+          <a href="#" class="href btn btn-primary btn-circle" title="Revertir anulación de la Nota de Crédito-Débito (supervisor)"
+             onclick="return abrir_modal('{% url 'fac:ncd_revertir_anulacion' item.ncd_anulada.id %}')">
+              <i class="fas fa-undo"></i>
           </a>
           {% endif %}
           {% if user.is_superuser and not item.reportada_ante_sin %}
@@ -153,6 +222,32 @@
 
 {% block js_page %}
 <script>
+// --- Overlay de carga (obs 5) ---
+(function(){
+  function ocultarOverlay(){
+    var o = document.getElementById('facLoadingOverlay');
+    if (o) { o.style.display = 'none'; }
+  }
+  function mostrarOverlay(){
+    var o = document.getElementById('facLoadingOverlay');
+    if (o) { o.style.display = 'flex'; }
+  }
+  // bootstrap-table formatea la tabla de forma sincronica en DOM-ready;
+  // para cuando 'load' dispara ya termino. Se cubre con varias señales
+  // por si alguna no llega: post-body.bs.table, window.load y un tope
+  // de respaldo.
+  $(document).on('post-body.bs.table', function(e){
+    if (e.target && e.target.id === 'table') { ocultarOverlay(); }
+  });
+  $(window).on('load', ocultarOverlay);
+  setTimeout(ocultarOverlay, 12000);
+  // Al filtrar (GET que recarga la pagina), volver a mostrarlo mientras
+  // se arma la pagina nueva.
+  $(function(){
+    $('form[method="get"]').on('submit', mostrarOverlay);
+  });
+})();
+
 $(function(){
   $("#f1, #f2").datetimepicker({
       format: 'Y-m-d',

@@ -5,7 +5,9 @@ from bases.views import Home, HomeSinPrivilegios, ChartsView, TablesView, \
     LibroVentasView, LibroComprasView, FacturasAnuladasView, \
     UsuarioListView, UsuarioNew, UsuarioEdit, UsuarioResetPassword, \
     UsuarioToggleActivo, GrupoListView, GrupoNew, GrupoEdit, GrupoDel, \
-    MiPerfilView, MiCambiarPasswordView, estado_inventario, kardex_inventario
+    MiPerfilView, MiCambiarPasswordView, estado_inventario, kardex_inventario, \
+    estado_inventario_pdf, estado_inventario_excel, kardex_inventario_pdf, kardex_inventario_excel, \
+    CambiarSucursalActual
 
 urlpatterns = [
     path('',Home.as_view(), name='home'),
@@ -18,7 +20,14 @@ urlpatterns = [
     path('reportes/libro-compras/', LibroComprasView.as_view(), name='libro_compras'),
     path('reportes/facturas-anuladas/', FacturasAnuladasView.as_view(), name='facturas_anuladas'),
     path('reportes/estado-inventario', estado_inventario, name='estado_inventario'),
+    path('reportes/estado-inventario/pdf', estado_inventario_pdf, name='estado_inventario_pdf'),
+    path('reportes/estado-inventario/excel', estado_inventario_excel, name='estado_inventario_excel'),
     path('reportes/kardex-inventario', kardex_inventario, name='kardex_inventario'),
+    path('reportes/kardex-inventario/pdf', kardex_inventario_pdf, name='kardex_inventario_pdf'),
+    path('reportes/kardex-inventario/excel', kardex_inventario_excel, name='kardex_inventario_excel'),
+
+    # Sucursal actual (20/09/2026, Fase 2 -- solo superusuarios pueden cambiarla)
+    path('cambiar-sucursal-actual/', CambiarSucursalActual.as_view(), name='cambiar_sucursal_actual'),
 
     # Mi Perfil (cualquier usuario logueado)
     path('mi-perfil/', MiPerfilView.as_view(), name='mi_perfil'),

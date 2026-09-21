@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Nota de Crédito-Débito N° {{ ncd.id }}</title>
+    <style type="text/css">
+    /* Representacion grafica de Nota de Credito-Debito, rollo termico/
+       quimico 58mm (agregado 19/09/2026) -- mismo criterio que
+       factura_pdf_termico.html, pero con la estructura propia de una
+       NCD (factura original + devolucion + monto efectivo). */
+    @page {
+        size: 58mm {{ altura_pagina_mm }}mm;
+        margin: 2mm;
+    }
+    body {
+        font-family: Helvetica, Arial, sans-serif;
+        font-size: 7.5pt;
+        color: #000;
+        text-align: center;
+    }
+    .titulo-ncd { font-size: 9.5pt; font-weight: bold; margin: 4px 0; }
+    .razon-social { font-size: 8.5pt; font-weight: bold; margin-bottom: 1px; }
+    .datos-emisor { font-size: 7pt; line-height: 1.4; }
+    .separador { border-top: 1px solid #000; margin: 5px 0; }
+    .bloque-fiscal { font-size: 7pt; line-height: 1.5; }
+    .datos-doc { text-align: left; font-size: 7pt; line-height: 1.5; }
+    .titulo-seccion { font-weight: bold; font-size: 7.5pt; margin: 3px 0; }
+    .item { text-align: left; margin-top: 4px; }
+    .item .codigo-desc { font-size: 7pt; }
+    .fila-item { width: 54mm; border-collapse: collapse; }
+    .fila-item td { font-size: 7pt; padding: 0; }
+    .fila-item .der { text-align: right; }
+    .tabla-resumen { width: 54mm; margin-top: 4px; border-collapse: collapse; }
+    .tabla-resumen td { font-size: 7.5pt; padding: 1px 0; text-align: left; }
+    .tabla-resumen .der { text-align: right; }
+    .tabla-resumen .fila-destacada td { font-weight: bold; }
+    .son-letras { text-align: left; font-size: 7pt; margin-top: 4px; }
+    .leyendas { font-size: 6.5pt; line-height: 1.4; margin-top: 3px; }
+    .texto-verificacion { font-size: 6.5pt; margin-top: 4px; }
+    .qr-bloque { margin-top: 8px; margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+    <div class="titulo-ncd">NOTA CRÉDITO - DÉBITO</div>
+
+    <div class="razon-social">{{ empresa.razon_social|default:"Sistema de Facturación" }}</div>
+    <div class="datos-emisor">
+        {% if sucursal.codigo_sucursal == 0 %}CASA MATRIZ<br>{% elif sucursal %}SUCURSAL N. {{ sucursal.codigo_sucursal }} — {{ sucursal.nombre }}<br>{% endif %}
+        {% if punto_venta %}Nro. Punto de Venta {{ punto_venta.codigo_punto_venta }}<br>{% endif %}
+        {% if empresa.direccion %}{{ empresa.direccion }}<br>{% elif sucursal.direccion %}{{ sucursal.direccion }}<br>{% endif %}
+        {% if empresa.telefono %}Telf: {{ empresa.telefono }}<br>{% endif %}
+        {% if sucursal.municipio %}{{ sucursal.municipio }}{% elif sucursal.departamento %}{{ sucursal.departamento }}{% endif %}
+    </div>
+
+    <div class="separador"></div>
+
+    <div class="bloque-fiscal">
+        {% if empresa.nit %}<b>NIT</b><br>{{ empresa.nit }}<br>{% endif %}
+        <b>NOTA N°</b><br>{{ ncd.id|stringformat:"d" }}<br>
+        {% if ncd.cuf %}<b>CÓD. AUTORIZACIÓN</b><br>{{ cuf_cortado|safe }}{% endif %}
+    </div>
+
+    <div class="separador"></div>
+
+    <div class="datos-doc">
+        <b>Fecha:</b> {{ ncd.fecha|date:"d/m/Y H:i" }}<br>
+        <b>Nombre/Razón Social:</b><br>{{ enc.cliente }}<br>
+        <b>NIT/CI/CEX:</b> {% if enc.cliente.nit %}{{ enc.cliente.nit }}{% elif enc.cliente.ci %}{{ enc.cliente.ci }}{% else %}—{% endif %}<br>
+        <b>Cod. Cliente:</b> {{ enc.cliente.id|stringformat:"d" }}<br>
+        <b>N° Factura:</b> {{ enc.id|stringformat:"d" }}<br>
+        <b>Fecha Factura:</b> {{ enc.fecha|date:"d/m/Y H:i" }}<br>
+        <b>N° Autorización/CUF:</b><br>{{ cuf_original_cortado|default:enc.cuf|safe }}
+    </div>
+
+    <div class="separador"></div>
+    <div class="titulo-seccion">DATOS FACTURA ORIGINAL</div>
+
+    {% for det in detalle_original %}
+    <div class="item">
+        <div class="codigo-desc">{{ det.producto.codigo }} {{ det.producto.descripcion }}</div>
+        <table class="fila-item">
+            <tr>
+                <td>{{ det.cantidad|floatformat:2 }} X {{ det.precio|floatformat:2 }} - {{ det.descuento|floatformat:2 }}</td>
+                <td class="der">{{ det.total|floatformat:2 }}</td>
+            </tr>
+        </table>
+    </div>
+    {% endfor %}
+    <table class="tabla-resumen">
+        <tr class="fila-destacada"><td>MONTO TOTAL ORIGINAL Bs</td><td class="der">{{ ncd.monto_total_original|floatformat:2 }}</td></tr>
+    </table>
+
+    <div class="separador"></div>
+    <div class="titulo-seccion">DATOS DE LA DEVOLUCIÓN O RESCISIÓN</div>
+
+    {% for det in detalle_devuelto %}
+    <div class="item">
+        <div class="codigo-desc">{{ det.producto.codigo }} {{ det.producto.descripcion }}</div>
+        <table class="fila-item">
+            <tr>
+                <td>{{ det.cantidad|floatformat:2 }} X {{ det.precio|floatformat:2 }} - {{ det.descuento|floatformat:2 }}</td>
+                <td class="der">{{ det.total|floatformat:2 }}</td>
+            </tr>
+        </table>
+    </div>
+    {% endfor %}
+    <table class="tabla-resumen">
+        <tr><td>MONTO TOTAL DEVUELTO Bs</td><td class="der">{{ ncd.monto_total_devuelto|floatformat:2 }}</td></tr>
+        <tr class="fila-destacada"><td>MONTO EFECTIVO<br>DÉBITO-CRÉDITO Bs</td><td class="der">{{ ncd.monto_efectivo_credito_debito|floatformat:2 }}</td></tr>
+    </table>
+
+    <div class="son-letras">Son: {{ importe_en_letras }}</div>
+
+    <div class="leyendas">
+        ESTA FACTURA CONTRIBUYE AL DESARROLLO DEL PAÍS, EL USO ILÍCITO SERÁ SANCIONADO PENALMENTE DE ACUERDO A LEY
+        <br><br>
+        Ley N° 453: El proveedor deberá entregar el producto en las modalidades y términos ofertados o convenidos.
+    </div>
+
+    <div class="texto-verificacion">
+        Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea.
+        {% if ncd.codigo_control %}<br>Código de Control: {{ codigo_control_cortado|safe }}{% endif %}
+        <br>Verifique en: ov.impuestos.gob.bo
+    </div>
+
+    {% if qr_verificacion_data_uri %}
+    <div class="qr-bloque">
+        <img src="{{ qr_verificacion_data_uri }}" style="width:75pt; height:75pt;">
+    </div>
+    {% endif %}
+</body>
+</html>

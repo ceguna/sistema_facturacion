@@ -1,0 +1,59 @@
+<div class="modal-dialog modal-lg">
+    <div class="modal-content">
+        <form role="form" action="{% url 'fac:ncd_anular' ncd.id %}" method="POST">
+            <div class="col-xl-12 col-md-12 mb-12">
+                <div class="card border-left-warning shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                Anular Nota de Crédito-Débito
+                            </div>
+                            <div class="dropdown-divider"></div>
+                                {% csrf_token %}
+                                <div class="row">
+                                    <div class="col-12">
+                                        ¿Anular la Nota de Crédito-Débito N° <b>{{ ncd.id }}</b>
+                                        (factura N° <b>{{ ncd.factura_original_id }}</b>), por
+                                        Bs <b>{{ ncd.monto_total_devuelto }}</b>?
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-12">
+                                        <small class="text-muted">
+                                            Se envía al SIN por su propio servicio de anulación
+                                            (anulacionDocumentoAjuste, distinto del que anula una
+                                            factura normal). Solo si el SIN la acepta, queda marcada
+                                            como "Anulada ante el SIN".
+                                        </small>
+                                    </div>
+                                </div>
+                                <div class="row mt-2">
+                                    <div class="col-12">
+                                        <label for="codigo_motivo">Motivo de anulación (obligatorio):</label>
+                                        <select class="form-control" id="codigo_motivo" name="codigo_motivo" required>
+                                            <option value="">Seleccione un motivo...</option>
+                                            {% for m in motivos %}
+                                                <option value="{{ m.codigo }}">{{ m.descripcion }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                </div>
+                            <div class="dropdown-divider"></div>
+                                <div class="row">
+                                    <div class="col">
+                                        <button type="submit" class="btn btn-danger"><span class="fa fa-ban"></span> Sí, Anular</button>
+                                        <button type="button" class="btn btn-success" onclick="return cerrar_modal()">Cancelar</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="far fa-calendar-times fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>

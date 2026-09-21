@@ -1,0 +1,26 @@
+<!-- Encabezado compartido (logo + razón social) para reportes PDF que
+     NO son factura/NCD (esos tienen su propio encabezado mas completo,
+     ver fac/templates/fac/factura_pdf.html y ncd_pdf.html). Agregado
+     20/09/2026, pedido de Carlos -- antes varios reportes mostraban
+     "CGS Technology - ..." fijo en vez del nombre real de la empresa
+     que use cada instalacion.
+
+     Requiere en el contexto: empresa, logo_valido, logo_ancho_pt,
+     logo_alto_pt (ver fe/utils.py::datos_logo_header). Si esas
+     variables no estan presentes, simplemente no se ve el logo (no
+     rompe el reporte). CSS inline a proposito: xhtml2pdf no sigue
+     <link rel="stylesheet">. -->
+<table style="width:100%; border:none; margin-bottom:8px;">
+    <tr>
+        <td style="border:none; padding:0; vertical-align:middle; width:3.5cm;">
+            {% if logo_valido %}
+            <img src="{{ empresa.logo.path }}" alt="{{ empresa.razon_social }}" style="width:{{ logo_ancho_pt }}pt; height:{{ logo_alto_pt }}pt;">
+            {% endif %}
+        </td>
+        <td style="border:none; padding:0; vertical-align:middle;">
+            <div style="font-size:13pt; font-weight:bold;">{{ empresa.razon_social|default:"Sistema de Facturación" }}</div>
+            {% if empresa.nit %}<div style="font-size:8pt;">NIT: {{ empresa.nit }}</div>{% endif %}
+        </td>
+    </tr>
+</table>
+<hr style="border:none; border-top:1px solid #333; margin:2px 0 8px 0;">

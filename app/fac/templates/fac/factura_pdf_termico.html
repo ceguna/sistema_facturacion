@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Factura N° {{ enc.id }}</title>
+    <style type="text/css">
+    /* Rediseño 20/09/2026 a partir de un modelo de referencia oficial
+       (Representación Gráfica de Factura Electrónica, rollo térmico/
+       químico) que Carlos paso. Reemplaza el ticket de caja anterior
+       (mas compacto, pensado solo para impresion inmediata) por una
+       version que sigue la estructura oficial: encabezado centrado,
+       datos fiscales, detalle compacto, totales, y QR al final.
+       xhtml2pdf: tablas para alineacion (no soporta flexbox), sin
+       word-break real (valores largos vienen pre-cortados con <br>
+       desde Python), altura de @page calculada en el servidor porque
+       el motor no tiene "altura automatica" real. */
+    @page {
+        size: 58mm {{ altura_pagina_mm }}mm;
+        margin: 2mm;
+        {% if marca_agua_anulada_data_uri %}background-image: url({{ marca_agua_anulada_data_uri }});{% endif %}
+    }
+    body {
+        font-family: Helvetica, Arial, sans-serif;
+        font-size: 7.5pt;
+        color: #000;
+        text-align: center;
+    }
+    .titulo-factura {
+        font-size: 10pt;
+        font-weight: bold;
+        margin-top: 2px;
+    }
+    .subtitulo-factura {
+        font-size: 7pt;
+        margin-bottom: 5px;
+    }
+    .razon-social {
+        font-size: 8.5pt;
+        font-weight: bold;
+        margin-bottom: 1px;
+    }
+    .datos-emisor {
+        font-size: 7pt;
+        line-height: 1.4;
+    }
+    .separador {
+        border-top: 1px solid #000;
+        margin: 5px 0;
+    }
+    .bloque-fiscal {
+        font-size: 7pt;
+        line-height: 1.5;
+    }
+    .datos-cliente {
+        text-align: left;
+        font-size: 7pt;
+        line-height: 1.5;
+    }
+    .titulo-detalle {
+        font-weight: bold;
+        font-size: 8pt;
+        margin: 2px 0;
+    }
+    .item {
+        text-align: left;
+        margin-top: 4px;
+    }
+    .item .codigo-desc {
+        font-size: 7pt;
+    }
+    .fila-item {
+        width: 54mm;
+        border-collapse: collapse;
+    }
+    .fila-item td {
+        font-size: 7pt;
+        padding: 0;
+    }
+    .fila-item .der {
+        text-align: right;
+    }
+    .tabla-totales {
+        width: 54mm;
+        margin-top: 5px;
+        border-collapse: collapse;
+    }
+    .tabla-totales td {
+        font-size: 7.5pt;
+        padding: 1px 0;
+        text-align: left;
+    }
+    .tabla-totales .der {
+        text-align: right;
+    }
+    .tabla-totales .fila-destacada td {
+        font-weight: bold;
+    }
+    .son-letras {
+        text-align: left;
+        font-size: 7pt;
+        margin-top: 4px;
+    }
+    .leyendas {
+        font-size: 6.5pt;
+        line-height: 1.4;
+        margin-top: 3px;
+    }
+    .texto-verificacion {
+        font-size: 6.5pt;
+        margin-top: 4px;
+    }
+    .qr-bloque {
+        margin-top: 8px;
+        margin-bottom: 4px;
+    }
+    </style>
+</head>
+<body>
+    <div class="titulo-factura">FACTURA</div>
+    <div class="subtitulo-factura">CON DERECHO A CRÉDITO FISCAL</div>
+
+    <div class="razon-social">{{ empresa.razon_social|default:"Sistema de Facturación" }}</div>
+    <div class="datos-emisor">
+        {% if sucursal.codigo_sucursal == 0 %}CASA MATRIZ<br>{% elif sucursal %}SUCURSAL N. {{ sucursal.codigo_sucursal }} — {{ sucursal.nombre }}<br>{% endif %}
+        {% if punto_venta %}Nro. Punto de Venta {{ punto_venta.codigo_punto_venta }}<br>{% endif %}
+        {% if empresa.direccion %}{{ empresa.direccion }}<br>{% elif sucursal.direccion %}{{ sucursal.direccion }}<br>{% endif %}
+        {% if empresa.telefono %}Telf: {{ empresa.telefono }}<br>{% endif %}
+        {% if sucursal.municipio %}{{ sucursal.municipio }}{% elif sucursal.departamento %}{{ sucursal.departamento }}{% endif %}
+    </div>
+
+    <div class="separador"></div>
+
+    <div class="bloque-fiscal">
+        {% if empresa.nit %}<b>NIT</b><br>{{ empresa.nit }}<br>{% endif %}
+        <b>FACTURA NRO.</b><br>{{ enc.id|stringformat:"d" }}<br>
+        {% if enc.cuf %}<b>CÓD. AUTORIZACIÓN</b><br>{{ cuf_cortado|safe }}{% endif %}
+    </div>
+
+    <div class="separador"></div>
+
+    <div class="datos-cliente">
+        <b>Nombre/Razón Social:</b><br>{{ enc.cliente }}<br>
+        <b>NIT/CI/CEX:</b> {% if enc.cliente.nit %}{{ enc.cliente.nit }}{% elif enc.cliente.ci %}{{ enc.cliente.ci }}{% else %}—{% endif %}<br>
+        <b>Cod. Cliente:</b> {{ enc.cliente.id|stringformat:"d" }}<br>
+        <b>Fecha:</b> {{ enc.fecha|date:"d/m/Y H:i" }}<br>
+        <b>Forma de Pago:</b> {{ enc.get_forma_pago_display }}
+        {% if enc.numero_tarjeta %}<br><b>N° Tarjeta:</b> **** **** **** {{ enc.numero_tarjeta }}{% endif %}
+    </div>
+
+    <div class="separador"></div>
+    <div class="titulo-detalle">DETALLE</div>
+
+    {% for det in detalle %}
+    <div class="item">
+        <div class="codigo-desc">{{ det.producto.codigo }} {{ det.producto.descripcion }}</div>
+        <table class="fila-item">
+            <tr>
+                <td>{{ det.cantidad|floatformat:2 }} X {{ det.precio|floatformat:2 }} - {{ det.descuento|floatformat:2 }}</td>
+                <td class="der">{{ det.total|floatformat:2 }}</td>
+            </tr>
+        </table>
+    </div>
+    {% endfor %}
+
+    <div class="separador"></div>
+
+    <table class="tabla-totales">
+        <tr><td>SUBTOTAL</td><td class="der">{{ enc.sub_total|floatformat:2 }}</td></tr>
+        <tr><td>DESCUENTO</td><td class="der">{{ enc.descuento|floatformat:2 }}</td></tr>
+        <tr><td>TOTAL</td><td class="der">{{ enc.total|floatformat:2 }}</td></tr>
+        <tr><td>MONTO GIFT CARD</td><td class="der">{{ monto_gift_card|floatformat:2 }}</td></tr>
+        <tr class="fila-destacada"><td>MONTO A PAGAR</td><td class="der">{{ enc.total|floatformat:2 }}</td></tr>
+        <tr class="fila-destacada"><td>IMPORTE BASE<br>CRÉDITO FISCAL</td><td class="der">{{ importe_base_credito_fiscal|floatformat:2 }}</td></tr>
+    </table>
+
+    <div class="son-letras">Son: {{ importe_en_letras }}</div>
+
+    <div class="leyendas">
+        ESTA FACTURA CONTRIBUYE AL DESARROLLO DEL PAÍS, EL USO ILÍCITO SERÁ SANCIONADO PENALMENTE DE ACUERDO A LEY
+        <br><br>
+        {{ enc.leyenda|default:"Ley N° 453: El proveedor deberá entregar el producto en las modalidades y términos ofertados o convenidos." }}
+    </div>
+
+    <div class="texto-verificacion">
+        Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea.
+        {% if enc.codigo_control %}<br>Código de Control: {{ codigo_control_cortado|safe }}{% endif %}
+        <br>Verifique en: ov.impuestos.gob.bo
+    </div>
+
+    {% if qr_verificacion_data_uri %}
+    <div class="qr-bloque">
+        <img src="{{ qr_verificacion_data_uri }}" style="width:75pt; height:75pt;">
+    </div>
+    {% endif %}
+</body>
+</html>

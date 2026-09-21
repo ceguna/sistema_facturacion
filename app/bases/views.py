@@ -20,7 +20,67 @@ from django.utils import timezone
 from django.db.models import Sum
 from inv.models import Producto, Categoria, SubCategoria
 from cmp.models import ComprasDet
-from fac.models import FacturaDet
+from fac.models import FacturaDet, NotaCreditoDebito
+
+def obtener_sucursal_actual(request):
+    """
+    Resuelve la sucursal en la que esta operando el usuario actual
+    (Fase 2, 20/09/2026, arquitectura multi-sucursal) -- usada para
+    marcar FacturaEnc.sucursal / ComprasEnc.sucursal /
+    AjusteInventarioEnc.sucursal al crear, y para filtrar Cliente por
+    sucursal. Orden de resolucion:
+      1. Superusuario que cambio de sucursal en esta sesion (selector
+         en la barra superior, ver CambiarSucursalActual mas abajo) --
+         request.session['sucursal_actual_id'].
+      2. PerfilUsuario.sucursal -- la sucursal "de base" del usuario.
+      3. Si la empresa tiene una UNICA sucursal cargada, esa (caso mas
+         comun hoy -- instalaciones de una sola sucursal, ej. la
+         libreria -- no tiene sentido pedir que la elijan a mano).
+      4. None si no se puede resolver (hay mas de una sucursal y el
+         usuario no tiene ninguna asignada) -- quien llame a esta
+         funcion debe manejar ese caso mostrando un error claro, nunca
+         adivinar cual usar.
+    """
+    from fe.models import Sucursal
+
+    sucursal_id_sesion = request.session.get('sucursal_actual_id')
+    if sucursal_id_sesion and request.user.is_superuser:
+        sucursal = Sucursal.objects.filter(pk=sucursal_id_sesion).first()
+        if sucursal:
+            return sucursal
+
+    perfil = getattr(request.user, 'perfilusuario', None)
+    if perfil and perfil.sucursal_id:
+        return perfil.sucursal
+
+    sucursales = Sucursal.objects.all()
+    if sucursales.count() == 1:
+        return sucursales.first()
+
+    return None
+
+
+class CambiarSucursalActual(LoginRequiredMixin, generic.View):
+    """
+    Selector de sucursal para superusuarios (20/09/2026, Fase 2) --
+    solo ellos pueden operar "como si estuvieran" en cualquier
+    sucursal sin que su PerfilUsuario tenga que fijar una fija (un
+    cajero/almacenero normal SIEMPRE opera desde la sucursal de su
+    PerfilUsuario, no ve este selector). Guarda la eleccion en la
+    sesion; obtener_sucursal_actual() la respeta antes que cualquier
+    otra fuente.
+    """
+    def post(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            messages.error(request, 'No tiene permisos para cambiar de sucursal.')
+            return redirect(request.META.get('HTTP_REFERER', 'bases:home'))
+        from fe.models import Sucursal
+        sucursal = Sucursal.objects.filter(pk=request.POST.get('sucursal_id')).first()
+        if sucursal:
+            request.session['sucursal_actual_id'] = sucursal.id
+            messages.success(request, f'Ahora estás operando en la sucursal: {sucursal}.')
+        return redirect(request.META.get('HTTP_REFERER', 'bases:home'))
+
 
 class MixinFormInvalid:
     def form_invalid(self, form):
@@ -194,6 +254,26 @@ class ChartsView(LoginRequiredMixin, generic.TemplateView):
 IVA_TASA = 0.13  # Tasa de IVA vigente en Bolivia
 
 
+def _parse_int_localizado(valor, por_defecto):
+    """
+    Convierte a int un valor que puede venir con separador de miles
+    (ej. '2,026') -- CORREGIDO 12/09/2026: los <select> de mes/año de
+    los reportes IVA arman sus <option value="..."> con {{ }}, que con
+    USE_THOUSAND_SEPARATOR=True (settings) formatea CUALQUIER entero,
+    value incluido -- el año 2026 salia como "2,026" y rompia con
+    ValueError: invalid literal for int(). El fix real esta en las
+    plantillas (filtro |unlocalize en el value); esto es ademas una
+    red de seguridad server-side, por si el parametro llega asi desde
+    cualquier otro lado (URL armada a mano, bookmark viejo, etc.).
+    """
+    if valor is None or valor == '':
+        return por_defecto
+    try:
+        return int(str(valor).replace(',', '').replace('.', ''))
+    except (TypeError, ValueError):
+        return por_defecto
+
+
 class LibroVentasView(LoginRequiredMixin, generic.TemplateView):
     template_name = 'bases/libro_ventas.html'
     login_url = 'bases:login'
@@ -203,8 +283,8 @@ class LibroVentasView(LoginRequiredMixin, generic.TemplateView):
         from fac.models import FacturaEnc
 
         hoy = timezone.localtime(timezone.now()).date()
-        mes = int(self.request.GET.get('mes', hoy.month))
-        anio = int(self.request.GET.get('anio', hoy.year))
+        mes = _parse_int_localizado(self.request.GET.get('mes'), hoy.month)
+        anio = _parse_int_localizado(self.request.GET.get('anio'), hoy.year)
 
         facturas = FacturaEnc.objects.filter(
             anulado=False, fecha__year=anio, fecha__month=mes
@@ -258,8 +338,8 @@ class LibroComprasView(LoginRequiredMixin, generic.TemplateView):
         from cmp.models import ComprasEnc
 
         hoy = timezone.localtime(timezone.now()).date()
-        mes = int(self.request.GET.get('mes', hoy.month))
-        anio = int(self.request.GET.get('anio', hoy.year))
+        mes = _parse_int_localizado(self.request.GET.get('mes'), hoy.month)
+        anio = _parse_int_localizado(self.request.GET.get('anio'), hoy.year)
 
         compras = ComprasEnc.objects.filter(
             fecha_compra__year=anio, fecha_compra__month=mes
@@ -312,9 +392,19 @@ class FacturasAnuladasView(LoginRequiredMixin, generic.TemplateView):
         context = super().get_context_data(**kwargs)
         from fac.models import FacturaEnc
 
-        anuladas = FacturaEnc.objects.filter(anulado=True) \
-            .select_related('cliente', 'usuario_anulacion') \
-            .order_by('-fecha_anulacion')
+        # NUEVO 12/09/2026: mismo filtro de periodo (mes/año) que Libro
+        # de Ventas -- antes traia TODAS las facturas anuladas de toda
+        # la historia sin ningun filtro (mismo tipo de hallazgo de
+        # carga lenta que ya se corrigio en el listado de Facturas).
+        # Filtra por fecha_anulacion (la fecha relevante de este
+        # reporte, no la fecha de emision original).
+        hoy = timezone.localtime(timezone.now()).date()
+        mes = _parse_int_localizado(self.request.GET.get('mes'), hoy.month)
+        anio = _parse_int_localizado(self.request.GET.get('anio'), hoy.year)
+
+        anuladas = FacturaEnc.objects.filter(
+            anulado=True, fecha_anulacion__year=anio, fecha_anulacion__month=mes
+        ).select_related('cliente', 'usuario_anulacion').order_by('-fecha_anulacion')
 
         for f in anuladas:
             f.total_fmt = "{:,.2f}".format(f.total)
@@ -323,6 +413,14 @@ class FacturasAnuladasView(LoginRequiredMixin, generic.TemplateView):
             'anuladas': anuladas,
             'total_anulado': sum(f.total for f in anuladas),
             'total_anulado_fmt': "{:,.2f}".format(sum(f.total for f in anuladas)),
+            'mes': mes,
+            'anio': anio,
+            'meses': [
+                (1, 'Enero'), (2, 'Febrero'), (3, 'Marzo'), (4, 'Abril'),
+                (5, 'Mayo'), (6, 'Junio'), (7, 'Julio'), (8, 'Agosto'),
+                (9, 'Septiembre'), (10, 'Octubre'), (11, 'Noviembre'), (12, 'Diciembre'),
+            ],
+            'anios': range(hoy.year - 3, hoy.year + 1),
         })
         return context
 
@@ -497,6 +595,13 @@ class UsuarioNew(SuccessMessageMixin, SinPrivilegios, generic.CreateView):
         clave_temporal = get_random_string(10)
         form.instance.set_password(clave_temporal)
         response = super().form_valid(form)
+        # Sucursal (20/09/2026, Fase 2): 'sucursal' no es un campo de
+        # User -- se guarda a mano en PerfilUsuario, recien ahora que
+        # self.object (el User) ya tiene pk.
+        from bases.models import PerfilUsuario
+        PerfilUsuario.objects.update_or_create(
+            user=self.object, defaults={'sucursal': form.cleaned_data.get('sucursal')}
+        )
         messages.success(
             self.request,
             f"Usuario '{self.object.username}' creado. Contraseña temporal: "
@@ -513,6 +618,14 @@ class UsuarioEdit(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
     context_object_name = "obj"
     success_url = reverse_lazy("bases:usuario_list")
     success_message = "Usuario actualizado satisfactoriamente"
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        from bases.models import PerfilUsuario
+        PerfilUsuario.objects.update_or_create(
+            user=self.object, defaults={'sucursal': form.cleaned_data.get('sucursal')}
+        )
+        return response
 
 
 class UsuarioResetPassword(SinPrivilegios, generic.DetailView):
@@ -626,13 +739,11 @@ vistas nuevas). Requiere estos imports adicionales al inicio del
 archivo, si no los tiene ya:
 """
 
-@login_required(login_url='/login/')
-@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
-def estado_inventario(request):
+def _contexto_estado_inventario(request):
     """
-    Reporte de Estado de Inventario: una "foto" del momento actual,
-    no un historico -- existencia, precio de venta, costo promedio, y
-    valor total a cada uno. Agregado 08/09/2026, junto con Kardex.
+    Arma el contexto de Estado de Inventario -- compartido entre la
+    pantalla (HTML), el PDF y el Excel (13/09/2026), para que los tres
+    formatos muestren siempre los mismos datos con el mismo filtro.
     """
     categoria_id = request.GET.get('categoria_id', '').strip()
     buscar = request.GET.get('buscar', '').strip()
@@ -651,7 +762,7 @@ def estado_inventario(request):
     total_valor_costo = 0
     for prod in productos:
         valor_venta = round(prod.existencia * prod.precio, 2)
-        valor_costo = round(prod.existencia * prod.costo_promedio, 2)
+        valor_costo = round(prod.existencia * prod.costo_actual, 2)
         total_valor_venta += valor_venta
         total_valor_costo += valor_costo
         filas.append({
@@ -661,14 +772,102 @@ def estado_inventario(request):
             'valor_costo': valor_costo,
         })
 
-    return render(request, 'bases/estado_inventario.html', {
+    categoria_obj = Categoria.objects.filter(pk=categoria_id).first() if categoria_id else None
+
+    from fe.models import Empresa
+    from fe.utils import datos_logo_header
+    empresa = Empresa.objects.first()
+    return {
         'filas': filas,
         'categorias': Categoria.objects.filter(estado=True).order_by('descripcion'),
         'categoria_id': categoria_id,
+        'categoria_nombre': categoria_obj.descripcion if categoria_obj else 'Todas',
         'buscar': buscar,
         'total_valor_venta': round(total_valor_venta, 2),
         'total_valor_costo': round(total_valor_costo, 2),
-    })
+        'empresa': empresa,
+        'fecha_emision': timezone.localtime(timezone.now()),
+        **datos_logo_header(empresa),
+    }
+
+
+@login_required(login_url='/login/')
+@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
+def estado_inventario(request):
+    """
+    Reporte de Estado de Inventario: una "foto" del momento actual,
+    no un historico -- existencia, precio de venta, costo actual, y
+    valor total a cada uno. Agregado 08/09/2026, junto con Kardex.
+    """
+    return render(request, 'bases/estado_inventario.html', _contexto_estado_inventario(request))
+
+
+@login_required(login_url='/login/')
+@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
+def estado_inventario_pdf(request):
+    """
+    PDF con elementos de reporte real (encabezado con empresa, titulo,
+    fecha de emision, filtro aplicado, totales) -- agregado 13/09/2026:
+    antes solo se podia "exportar" con el Export Data generico de
+    bootstrap-table, que descarga la tabla cruda sin ningun encabezado.
+    """
+    from xhtml2pdf import pisa
+    from django.template.loader import render_to_string
+    from django.http import HttpResponse as _HttpResponse
+
+    contexto = _contexto_estado_inventario(request)
+    html = render_to_string('bases/estado_inventario_print.html', contexto)
+
+    response = _HttpResponse(content_type='application/pdf')
+    response['Content-Disposition'] = 'attachment; filename="estado_inventario.pdf"'
+    resultado = pisa.CreatePDF(html, dest=response)
+    if resultado.err:
+        return _HttpResponse("Ocurrió un error al generar el PDF. Contacte al administrador.", status=500)
+    return response
+
+
+@login_required(login_url='/login/')
+@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
+def estado_inventario_excel(request):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from django.http import HttpResponse as _HttpResponse
+
+    contexto = _contexto_estado_inventario(request)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Estado de Inventario"
+
+    ws.append(["Estado de Inventario"])
+    ws.append([f"Categoría: {contexto['categoria_nombre']}", "", f"Emitido: {contexto['fecha_emision'].strftime('%d/%m/%Y %H:%M')}"])
+    ws.append([])
+    encabezados = ["Código", "Descripción", "Categoría", "Existencia", "Precio Venta",
+                   "Costo Actual", "Valor (Venta)", "Valor (Costo)"]
+    ws.append(encabezados)
+    for celda in ws[ws.max_row]:
+        celda.font = Font(bold=True)
+
+    for fila in contexto['filas']:
+        ws.append([
+            fila['producto'].codigo, fila['producto'].descripcion, fila['categoria'],
+            fila['producto'].existencia, fila['producto'].precio, fila['producto'].costo_actual,
+            fila['valor_venta'], fila['valor_costo'],
+        ])
+        ws.cell(row=ws.max_row, column=1).number_format = '@'
+
+    ws.append([])
+    fila_total = ["", "", "", "", "", "TOTALES", contexto['total_valor_venta'], contexto['total_valor_costo']]
+    ws.append(fila_total)
+    for celda in ws[ws.max_row]:
+        celda.font = Font(bold=True)
+
+    response = _HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = 'attachment; filename="estado_inventario.xlsx"'
+    wb.save(response)
+    return response
 
 
 def _movimientos_producto_qs(producto, fecha_desde=None, fecha_hasta=None):
@@ -694,6 +893,65 @@ def _movimientos_producto_qs(producto, fecha_desde=None, fecha_hasta=None):
     return compras_qs.select_related('compra'), ventas_qs.select_related('factura')
 
 
+def _eventos_ncd_producto(producto):
+    """
+    Movimientos de stock generados por Notas de Credito-Debito sobre
+    `producto`, calculados sobre las lineas de la factura original
+    (misma fuente que usa fe.services.emitir_nota_credito_debito_sin,
+    no hay un detalle propio de la NCD). Agregado 15/09/2026 --
+    hallazgo de Carlos probando NCD contra el SIN real (factura 778):
+    sin esto, estos movimientos reales (existencia SI cambia) no
+    tenian ningun ComprasDet/FacturaDet propio que el Kardex pudiera
+    leer, y aparecian enteros como "ajuste no identificado".
+
+    Una NCD Validada devuelve el stock (entrada). Si despues se anula,
+    ese stock vuelve a salir (hallazgo #1 de Carlos, mismo dia --
+    anular_nota_credito_debito_sin no lo hacia; corregido en
+    fe/services.py junto con este fix). Si esa anulacion se revierte,
+    vuelve a entrar. Devuelve un evento por cada fase que realmente
+    ocurrio (una NCD Anulada aporta 2 eventos; Revertida, 3) -- no solo
+    el efecto neto actual, para que el Kardex muestre el historial
+    completo.
+    """
+    ncds = NotaCreditoDebito.objects.filter(
+        factura_original__facturadet__producto=producto,
+        estado_sin__in=[
+            NotaCreditoDebito.SIN_VALIDADA,
+            NotaCreditoDebito.SIN_ANULADA,
+            NotaCreditoDebito.SIN_REVERTIDA,
+        ],
+    ).distinct().select_related('factura_original')
+
+    eventos = []
+    for ncd in ncds:
+        cantidad = FacturaDet.objects.filter(
+            factura=ncd.factura_original, producto=producto
+        ).aggregate(total=Sum('cantidad'))['total'] or 0
+        if not cantidad:
+            continue
+        eventos.append({
+            'fecha': timezone.localtime(ncd.fecha).date(),
+            'tipo': 'Devolución por NCD',
+            'documento': f'NCD #{ncd.id} (Factura #{ncd.factura_original_id})',
+            'cantidad': cantidad,
+        })
+        if ncd.estado_sin in (NotaCreditoDebito.SIN_ANULADA, NotaCreditoDebito.SIN_REVERTIDA) and ncd.fecha_anulacion:
+            eventos.append({
+                'fecha': timezone.localtime(ncd.fecha_anulacion).date(),
+                'tipo': 'Anulación de NCD',
+                'documento': f'NCD #{ncd.id} (Factura #{ncd.factura_original_id})',
+                'cantidad': -cantidad,
+            })
+        if ncd.estado_sin == NotaCreditoDebito.SIN_REVERTIDA and ncd.fecha_reversion_sin:
+            eventos.append({
+                'fecha': timezone.localtime(ncd.fecha_reversion_sin).date(),
+                'tipo': 'Reversión de anulación de NCD',
+                'documento': f'NCD #{ncd.id} (Factura #{ncd.factura_original_id})',
+                'cantidad': cantidad,
+            })
+    return eventos
+
+
 def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
     """
     Calcula el Kardex de un producto para el rango [fecha_desde,
@@ -704,39 +962,78 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
     LIMITACION CONOCIDA (valorizacion): las ENTRADAS se valorizan con
     el precio de compra REAL de esa linea (precio_prv), dato exacto e
     historico. Las SALIDAS (ventas) y el SALDO INICIAL se valorizan
-    con el costo_promedio ACTUAL del producto -- una aproximacion, ya
+    con el costo_actual del producto -- una aproximacion, ya
     que no se guarda una foto historica del costo promedio en cada
     momento del pasado, solo su valor de hoy. Aceptado como
     aproximacion razonable (decision 08/09/2026, Carlos conforme con
     "sin ser un costeo contable estricto").
-    """
-    costo_actual = producto.costo_promedio or 0
 
-    # Saldo inicial: se retrocede desde la existencia ACTUAL,
-    # deshaciendo todo lo que entro/salio desde fecha_desde en
-    # adelante (sin tope superior).
-    compras_desde, ventas_desde = _movimientos_producto_qs(producto, fecha_desde=fecha_desde)
-    total_entradas_desde = sum(c.cantidad for c in compras_desde)
-    total_salidas_desde = sum(v.cantidad for v in ventas_desde)
-    saldo_inicial_cantidad = producto.existencia - total_entradas_desde + total_salidas_desde
+    AJUSTE NO IDENTIFICADO (agregado 10/09/2026): el saldo inicial se
+    calcula sumando movimientos reales (compras - ventas) anteriores a
+    fecha_desde, acumulados desde cero -- NO retrocediendo desde la
+    existencia actual. Retroceder desde la existencia escondia
+    cualquier descuadre entre Producto.existencia y el historial de
+    movimientos dentro del saldo inicial (un producto con la
+    existencia inflada por las corridas de volumen de la certificacion
+    SIN mostraba un "saldo inicial" fantasma sin origen visible -- ver
+    caso AGE-001, +12). Ese descuadre ahora se expone aparte, en
+    'ajuste_no_identificado'.
+    """
+    costo_actual = producto.costo_actual or 0
+
+    # Movimientos de NCD (agregado 15/09/2026, ver _eventos_ncd_producto)
+    # -- se calculan una sola vez, y se reparten igual que
+    # compras/ventas entre saldo inicial, rango y neto historico.
+    eventos_ncd = _eventos_ncd_producto(producto)
+
+    # Saldo inicial = suma de TODOS los movimientos reales anteriores a
+    # fecha_desde (entradas - salidas), acumulado desde cero.
+    dia_antes = fecha_desde - datetime.timedelta(days=1)
+    compras_antes, ventas_antes = _movimientos_producto_qs(producto, fecha_hasta=dia_antes)
+    saldo_inicial_cantidad = (
+        sum(c.cantidad for c in compras_antes) - sum(v.cantidad for v in ventas_antes)
+        + sum(e['cantidad'] for e in eventos_ncd if e['fecha'] <= dia_antes)
+    )
     saldo_inicial_valor = round(saldo_inicial_cantidad * costo_actual, 2)
 
     # Movimientos dentro del rango elegido, para el detalle.
     compras_rango, ventas_rango = _movimientos_producto_qs(
         producto, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta
     )
+    eventos_ncd_rango = [e for e in eventos_ncd if fecha_desde <= e['fecha'] <= fecha_hasta]
 
     movimientos = []
     for c in compras_rango:
-        movimientos.append({
-            'fecha': c.compra.fecha_compra,
-            'tipo': 'Compra',
-            'documento': f'Compra #{c.compra.id}',
-            'entrada': c.cantidad,
-            'salida': 0,
-            'valor_entrada': round(c.cantidad * c.precio_prv, 2),
-            'valor_salida': 0,
-        })
+        if c.cantidad < 0:
+            # Linea de reversion de compra ("contra compra") -- se
+            # quito ese producto de la compra. Se muestra como una
+            # SALIDA (revierte el ingreso), con entrada en 0, mismo
+            # documento (Compra #N), y en Observacion quien la hizo.
+            # Explica el saldo negativo que puede aparecer en la linea
+            # siguiente hasta la proxima compra.
+            cantidad_abs = abs(c.cantidad)
+            usuario = c.usuario_reversion
+            movimientos.append({
+                'fecha': c.compra.fecha_compra,
+                'tipo': 'Reversión de compra',
+                'documento': f'Compra #{c.compra.id}',
+                'entrada': 0,
+                'salida': cantidad_abs,
+                'valor_entrada': 0,
+                'valor_salida': round(cantidad_abs * c.precio_prv, 2),
+                'observacion': f'Reversión por {usuario.get_username()}' if usuario else 'Reversión',
+            })
+        else:
+            movimientos.append({
+                'fecha': c.compra.fecha_compra,
+                'tipo': 'Compra',
+                'documento': f'Compra #{c.compra.id}',
+                'entrada': c.cantidad,
+                'salida': 0,
+                'valor_entrada': round(c.cantidad * c.precio_prv, 2),
+                'valor_salida': 0,
+                'observacion': '',
+            })
     for v in ventas_rango:
         es_reversion = v.cantidad < 0
         cantidad_abs = abs(v.cantidad)
@@ -751,6 +1048,7 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
                 'salida': 0,
                 'valor_entrada': valor_abs,
                 'valor_salida': 0,
+                'observacion': '',
             })
         else:
             movimientos.append({
@@ -761,7 +1059,22 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
                 'salida': cantidad_abs,
                 'valor_entrada': 0,
                 'valor_salida': valor_abs,
+                'observacion': '',
             })
+    for e in eventos_ncd_rango:
+        cantidad_abs = abs(e['cantidad'])
+        valor_abs = round(cantidad_abs * costo_actual, 2)
+        es_entrada = e['cantidad'] > 0
+        movimientos.append({
+            'fecha': e['fecha'],
+            'tipo': e['tipo'],
+            'documento': e['documento'],
+            'entrada': cantidad_abs if es_entrada else 0,
+            'salida': 0 if es_entrada else cantidad_abs,
+            'valor_entrada': valor_abs if es_entrada else 0,
+            'valor_salida': 0 if es_entrada else valor_abs,
+            'observacion': '',
+        })
     movimientos.sort(key=lambda m: m['fecha'])
 
     saldo_corriente = saldo_inicial_cantidad
@@ -775,6 +1088,23 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
     total_entradas_rango = sum(m['entrada'] for m in movimientos)
     total_salidas_rango = sum(m['salida'] for m in movimientos)
 
+    # Ajuste no identificado: diferencia entre la existencia que el
+    # sistema tiene cargada HOY y la que resultaria de sumar TODOS los
+    # movimientos reales (compras - ventas) de toda la historia.
+    # Idealmente 0. Cuando no lo es, es arrastre de las corridas de
+    # volumen para la certificacion SIN (emisiones/anulaciones/
+    # reversiones masivas que movieron existencia por caminos que el
+    # Kardex no cuenta) o de los scripts ad-hoc que ajustaron
+    # existencia a mano. Es constante -- no depende del rango elegido.
+    # Se expone explicito para que el saldo final del Kardex nunca
+    # parezca "no cerrar" contra el Estado de Inventario.
+    compras_todas, ventas_todas = _movimientos_producto_qs(producto)
+    neto_historico = (
+        sum(c.cantidad for c in compras_todas) - sum(v.cantidad for v in ventas_todas)
+        + sum(e['cantidad'] for e in eventos_ncd)
+    )
+    ajuste_no_identificado = producto.existencia - neto_historico
+
     return {
         'producto': producto,
         'saldo_inicial_cantidad': saldo_inicial_cantidad,
@@ -784,7 +1114,71 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
         'total_salidas': total_salidas_rango,
         'saldo_final_cantidad': saldo_corriente,
         'saldo_final_valor': round(valor_corriente, 2),
+        'ajuste_no_identificado': ajuste_no_identificado,
+        'ajuste_no_identificado_valor': round(ajuste_no_identificado * costo_actual, 2),
+        'existencia_sistema': producto.existencia,
     }
+
+
+def _contexto_kardex_inventario(request):
+    """
+    Arma el contexto de Kardex de Inventario (modo resumen o detalle
+    segun venga o no producto_id) -- compartido entre la pantalla, el
+    PDF y el Excel (13/09/2026). Devuelve (contexto, error): error
+    solo se usa en modo detalle cuando el producto_id no existe.
+    """
+    hoy = timezone.localdate()
+    f1_raw = request.GET.get('f1')
+    f2_raw = request.GET.get('f2')
+    from django.utils.dateparse import parse_date
+    fecha_desde = parse_date(f1_raw) if f1_raw else hoy.replace(day=1)
+    fecha_hasta = parse_date(f2_raw) if f2_raw else hoy
+
+    producto_id = request.GET.get('producto_id', '').strip()
+    categoria_id = request.GET.get('categoria_id', '').strip()
+
+    from fe.models import Empresa
+    from fe.utils import datos_logo_header
+    empresa = Empresa.objects.first()
+    base = {
+        'f1': fecha_desde,
+        'f2': fecha_hasta,
+        'productos': Producto.objects.filter(estado=True).order_by('descripcion'),
+        'categorias': Categoria.objects.filter(estado=True).order_by('descripcion'),
+        'producto_id': producto_id,
+        'categoria_id': categoria_id,
+        'empresa': empresa,
+        'fecha_emision': timezone.localtime(timezone.now()),
+        **datos_logo_header(empresa),
+    }
+
+    if producto_id:
+        producto = Producto.objects.filter(pk=producto_id, estado=True).first()
+        if not producto:
+            return None, 'Producto no encontrado.'
+        base.update({'modo': 'detalle', 'kardex': _calcular_kardex_producto(producto, fecha_desde, fecha_hasta)})
+        return base, None
+
+    productos = Producto.objects.filter(estado=True).order_by('descripcion')
+    if categoria_id:
+        productos = productos.filter(subcategoria__categoria_id=categoria_id)
+
+    resumen = []
+    for prod in productos:
+        k = _calcular_kardex_producto(prod, fecha_desde, fecha_hasta)
+        resumen.append({
+            'producto': prod,
+            'saldo_inicial_cantidad': k['saldo_inicial_cantidad'],
+            'saldo_inicial_valor': k['saldo_inicial_valor'],
+            'total_entradas': k['total_entradas'],
+            'total_salidas': k['total_salidas'],
+            'saldo_final_cantidad': k['saldo_final_cantidad'],
+            'saldo_final_valor': k['saldo_final_valor'],
+            'ajuste_no_identificado': k['ajuste_no_identificado'],
+            'existencia_sistema': k['existencia_sistema'],
+        })
+    base.update({'modo': 'resumen', 'resumen': resumen})
+    return base, None
 
 
 @login_required(login_url='/login/')
@@ -804,57 +1198,92 @@ def kardex_inventario(request):
     ilegible). Con un producto_id elegido: DETALLE completo de ese
     producto.
     """
-    hoy = timezone.localdate()
-    f1_raw = request.GET.get('f1')
-    f2_raw = request.GET.get('f2')
-    from django.utils.dateparse import parse_date
-    fecha_desde = parse_date(f1_raw) if f1_raw else hoy.replace(day=1)
-    fecha_hasta = parse_date(f2_raw) if f2_raw else hoy
+    contexto, error = _contexto_kardex_inventario(request)
+    if error:
+        messages.error(request, error)
+        return redirect('bases:kardex_inventario')
+    return render(request, 'bases/kardex_inventario.html', contexto)
 
-    producto_id = request.GET.get('producto_id', '').strip()
-    categoria_id = request.GET.get('categoria_id', '').strip()
 
-    if producto_id:
-        producto = Producto.objects.filter(pk=producto_id, estado=True).first()
-        if not producto:
-            messages.error(request, 'Producto no encontrado.')
-            return redirect('bases:kardex_inventario')
-        kardex = _calcular_kardex_producto(producto, fecha_desde, fecha_hasta)
-        return render(request, 'bases/kardex_inventario.html', {
-            'modo': 'detalle',
-            'kardex': kardex,
-            'f1': fecha_desde,
-            'f2': fecha_hasta,
-            'productos': Producto.objects.filter(estado=True).order_by('descripcion'),
-            'categorias': Categoria.objects.filter(estado=True).order_by('descripcion'),
-            'producto_id': producto_id,
-            'categoria_id': categoria_id,
-        })
+@login_required(login_url='/login/')
+@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
+def kardex_inventario_pdf(request):
+    """PDF con elementos de reporte real -- ver estado_inventario_pdf."""
+    from xhtml2pdf import pisa
+    from django.template.loader import render_to_string
+    from django.http import HttpResponse as _HttpResponse
 
-    productos = Producto.objects.filter(estado=True).order_by('descripcion')
-    if categoria_id:
-        productos = productos.filter(subcategoria__categoria_id=categoria_id)
+    contexto, error = _contexto_kardex_inventario(request)
+    if error:
+        return _HttpResponse(error, status=404)
 
-    resumen = []
-    for prod in productos:
-        k = _calcular_kardex_producto(prod, fecha_desde, fecha_hasta)
-        resumen.append({
-            'producto': prod,
-            'saldo_inicial_cantidad': k['saldo_inicial_cantidad'],
-            'saldo_inicial_valor': k['saldo_inicial_valor'],
-            'total_entradas': k['total_entradas'],
-            'total_salidas': k['total_salidas'],
-            'saldo_final_cantidad': k['saldo_final_cantidad'],
-            'saldo_final_valor': k['saldo_final_valor'],
-        })
+    html = render_to_string('bases/kardex_inventario_print.html', contexto)
+    response = _HttpResponse(content_type='application/pdf')
+    response['Content-Disposition'] = 'attachment; filename="kardex_inventario.pdf"'
+    resultado = pisa.CreatePDF(html, dest=response)
+    if resultado.err:
+        return _HttpResponse("Ocurrió un error al generar el PDF. Contacte al administrador.", status=500)
+    return response
 
-    return render(request, 'bases/kardex_inventario.html', {
-        'modo': 'resumen',
-        'resumen': resumen,
-        'f1': fecha_desde,
-        'f2': fecha_hasta,
-        'productos': Producto.objects.filter(estado=True).order_by('descripcion'),
-        'categorias': Categoria.objects.filter(estado=True).order_by('descripcion'),
-        'producto_id': producto_id,
-        'categoria_id': categoria_id,
-    })
+
+@login_required(login_url='/login/')
+@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
+def kardex_inventario_excel(request):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from django.http import HttpResponse as _HttpResponse
+
+    contexto, error = _contexto_kardex_inventario(request)
+    if error:
+        return _HttpResponse(error, status=404)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Kardex de Inventario"
+
+    ws.append(["Kardex de Inventario"])
+    ws.append([f"Período: {contexto['f1'].strftime('%d/%m/%Y')} - {contexto['f2'].strftime('%d/%m/%Y')}",
+                "", f"Emitido: {contexto['fecha_emision'].strftime('%d/%m/%Y %H:%M')}"])
+    ws.append([])
+
+    if contexto['modo'] == 'detalle':
+        k = contexto['kardex']
+        ws.append([f"Producto: {k['producto'].codigo} - {k['producto'].descripcion}"])
+        ws.append([])
+        ws.append(["Fecha", "Tipo", "Documento", "Entrada", "Salida", "Saldo (Cant.)", "Saldo (Valor)", "Observación"])
+        for celda in ws[ws.max_row]:
+            celda.font = Font(bold=True)
+        ws.append(["", "Saldo Inicial", "", "", "", k['saldo_inicial_cantidad'], k['saldo_inicial_valor'], ""])
+        for m in k['movimientos']:
+            ws.append([
+                m['fecha'].strftime('%d/%m/%Y'), m['tipo'], m['documento'],
+                m['entrada'] or '', m['salida'] or '', m['saldo_corriente'], m['valor_saldo_corriente'],
+                m.get('observacion', ''),
+            ])
+        ws.append(["", "Saldo Final", "", "", "", k['saldo_final_cantidad'], k['saldo_final_valor'], ""])
+        if k['ajuste_no_identificado']:
+            ws.append(["", "Ajuste no identificado", "", "", "", k['ajuste_no_identificado'], k['ajuste_no_identificado_valor'], ""])
+            ws.append(["", "Existencia actual del sistema", "", "", "", k['existencia_sistema'], "", ""])
+    else:
+        encabezados = ["Código", "Producto", "Saldo Inicial (Cant.)", "Saldo Inicial (Valor)",
+                       "Entradas", "Salidas", "Saldo Final (Cant.)", "Saldo Final (Valor)",
+                       "Ajuste no ident.", "Existencia Sistema"]
+        ws.append(encabezados)
+        for celda in ws[ws.max_row]:
+            celda.font = Font(bold=True)
+        for fila in contexto['resumen']:
+            ws.append([
+                fila['producto'].codigo, fila['producto'].descripcion,
+                fila['saldo_inicial_cantidad'], fila['saldo_inicial_valor'],
+                fila['total_entradas'], fila['total_salidas'],
+                fila['saldo_final_cantidad'], fila['saldo_final_valor'],
+                fila['ajuste_no_identificado'], fila['existencia_sistema'],
+            ])
+            ws.cell(row=ws.max_row, column=1).number_format = '@'
+
+    response = _HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = 'attachment; filename="kardex_inventario.xlsx"'
+    wb.save(response)
+    return response

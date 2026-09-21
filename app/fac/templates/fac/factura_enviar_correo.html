@@ -1,0 +1,37 @@
+<div class="modal-dialog modal-lg">
+    <div class="modal-content">
+        <form role="form" action="{% url 'fac:factura_enviar_correo' enc.id %}" method="POST" data-mensaje-exito="Envío de factura al email cliente satisfactorio.">
+            <div class="col-xl-12 col-md-12 mb-12">
+                <div class="card border-left-info shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                Enviar Factura por Correo
+                            </div>
+                            <div class="dropdown-divider"></div>
+                                {% csrf_token %}
+                                <div class="row">
+                                    <div class="col-12">
+                                        ¿Enviar la Factura N° <b>{{ enc.id }}</b> por correo a
+                                        <b>{{ enc.cliente.email }}</b>?
+                                    </div>
+                                </div>
+                            <div class="dropdown-divider"></div>
+                                <div class="row">
+                                    <div class="col">
+                                        <button type="submit" class="btn btn-info"><span class="fa fa-envelope"></span> Sí, Enviar</button>
+                                        <button type="button" class="btn btn-success" onclick="return cerrar_modal()">Cancelar</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-envelope fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>

@@ -1,6 +1,9 @@
 from django import forms
 
-from .models import Categoria, SubCategoria, Marca, UnidadMedida, Producto, TipoCambio
+from .models import (
+    Categoria, SubCategoria, Marca, UnidadMedida, Producto, TipoCambio,
+    AjusteInventarioEnc, MotivoAjusteInventario,
+)
 
 class CategoriaForm(forms.ModelForm):
     class Meta:
@@ -70,19 +73,27 @@ class UnidadMedidaForm(forms.ModelForm):
 class ProductoForm(forms.ModelForm):
     class Meta:
         model=Producto
-        fields = ['codigo','codigo_barra','descripcion','estado', 
+        # 'costo_actual' NO forma parte de este formulario a proposito
+        # (igual que antes, cuando se llamaba costo_promedio): es un
+        # campo puramente calculado por las señales de Compras/Ajuste
+        # de Inventario, nunca por el usuario. Se muestra en la
+        # plantilla directamente desde 'obj' (solo lectura real, sin
+        # pasar por el ciclo de validacion del form) -- ver
+        # producto_form.html.
+        fields = ['codigo','codigo_barra','descripcion','estado',
                 'precio','existencia','ultima_compra',
                 'marca','subcategoria','unidad_medida','foto',
                 'descuento_promocional_pct','descuento_vigencia_desde',
-                'descuento_vigencia_hasta','costo_referencia_usd',
+                'descuento_vigencia_hasta','precio_referencia_usd',
                 'margen_deseado_pct']
         exclude = ['um','fm','uc','fc']
         labels = {'descripcion':"Descripción del Producto",
                 "estado":"Estado",
+                "precio":"Precio de Venta",
                 "descuento_promocional_pct":"Descuento Promocional (%)",
                 "descuento_vigencia_desde":"Vigente Desde",
                 "descuento_vigencia_hasta":"Vigente Hasta",
-                "costo_referencia_usd":"Costo Referencia (USD)",
+                "precio_referencia_usd":"Precio Referencial (USD)",
                 "margen_deseado_pct":"Margen Deseado (%)"}
         widgets = {
             'descripcion': forms.TextInput,
@@ -100,6 +111,16 @@ class ProductoForm(forms.ModelForm):
             self.fields[field].widget.attrs.update({
                 'class':'form-control'
             })
+        # CORREGIDO 12/09/2026: el select de Categoria/Sub Categoria se
+        # arma a mano en la plantilla (no es un campo real del modelo,
+        # solo filtra el chained de Sub Categoria), pero la validacion
+        # real cae sobre 'subcategoria' -- antes mostraba el mensaje
+        # generico de Django ("Este campo es requerido"/"Seleccione
+        # una opcion valida...") que no orientaba a donde mirar.
+        self.fields['subcategoria'].error_messages.update({
+            'required': 'Debe seleccionar categoría.',
+            'invalid_choice': 'Debe seleccionar categoría.',
+        })
         self.fields['ultima_compra'].widget.attrs['readonly'] = True
         self.fields['existencia'].widget.attrs['readonly'] = True
         # CORREGIDO 07/09/2026: ninguno de los dos tenia el 'required'
@@ -114,11 +135,11 @@ class ProductoForm(forms.ModelForm):
         self.fields['descuento_vigencia_hasta'].required = False
         self.fields['descuento_vigencia_desde'].input_formats = ['%Y-%m-%d']
         self.fields['descuento_vigencia_hasta'].input_formats = ['%Y-%m-%d']
-        # CORREGIDO 06/09/2026: Costo Referencia y Margen Deseado pasan
+        # CORREGIDO 06/09/2026: Precio Referencial y Margen Deseado pasan
         # a ser OBLIGATORIOS -- con el dolar fluctuando tanto al alza,
         # sin estos dos datos no se puede calcular un precio de venta
         # sugerido confiable en "Revision de Precios".
-        self.fields['costo_referencia_usd'].required = True
+        self.fields['precio_referencia_usd'].required = True
         self.fields['margen_deseado_pct'].required = True
 
         # Asterisco automatico en la etiqueta de cada campo obligatorio
@@ -147,10 +168,10 @@ class ProductoForm(forms.ModelForm):
         # explicitamente que sean mayores a 0, ligado a cada campo con
         # add_error() (no un error generico) para que se muestre en el
         # lugar correcto.
-        costo = cleaned.get('costo_referencia_usd')
+        costo = cleaned.get('precio_referencia_usd')
         margen = cleaned.get('margen_deseado_pct')
         if not costo or costo <= 0:
-            self.add_error('costo_referencia_usd', 'Debe ingresar un Costo de Referencia mayor a 0.')
+            self.add_error('precio_referencia_usd', 'Debe ingresar un Precio Referencial mayor a 0.')
         if not margen or margen <= 0:
             self.add_error('margen_deseado_pct', 'Debe ingresar un Margen Deseado mayor a 0.')
 
@@ -203,3 +224,31 @@ class TipoCambioForm(forms.ModelForm):
                 'class': 'form-control'
             })
         self.fields['fecha'].input_formats = ['%Y-%m-%d']
+
+
+class AjusteInventarioEncForm(forms.ModelForm):
+    """
+    Encabezado de Ajuste de Inventario -- pantalla de Producción
+    Interna (mismo patron visual/interaccion que ComprasEncForm, sin
+    Proveedor/No. Factura/Fecha Factura, que no tienen sentido aca).
+    El motivo se restringe a los que 'es_produccion_interna=True' --
+    la Carga Inicial NO se crea desde esta pantalla manual, solo por
+    Excel (ver inv/views.py: cargar_inventario_inicial).
+    """
+    class Meta:
+        model = AjusteInventarioEnc
+        fields = ['fecha', 'motivo', 'observacion']
+        widgets = {
+            'fecha': forms.DateInput(format='%Y-%m-%d', attrs={'autocomplete': 'off'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in iter(self.fields):
+            self.fields[field].widget.attrs.update({'class': 'form-control'})
+        self.fields['fecha'].widget.attrs['readonly'] = True
+        self.fields['fecha'].input_formats = ['%Y-%m-%d']
+        self.fields['motivo'].queryset = MotivoAjusteInventario.objects.filter(
+            estado=True, es_produccion_interna=True
+        )
+        self.fields['motivo'].empty_label = "Seleccione motivo"

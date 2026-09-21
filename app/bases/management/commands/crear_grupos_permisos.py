@@ -71,6 +71,18 @@ class Command(BaseCommand):
             p = get_perm_by_codename("fac", codename)
             if p:
                 perms_supervisor.append(p)
+        # Fase 2 (20/09/2026): Supervisor tiene control total sobre
+        # transferencias de stock entre sucursales, incluida la
+        # confirmacion/cancelacion (supervision de todo el sistema).
+        perms_supervisor += get_perms(
+            "inv",
+            ["transferenciastockenc", "transferenciastockdet"],
+            ["add", "change", "view", "delete"],
+        )
+        for codename in ["confirmar_transferenciastock", "cancelar_transferenciastock"]:
+            p = get_perm_by_codename("inv", codename)
+            if p:
+                perms_supervisor.append(p)
         supervisor.permissions.set(perms_supervisor)
         self.stdout.write(self.style.SUCCESS(
             f"Grupo 'Supervisor' actualizado ({len(perms_supervisor)} permisos)"
@@ -110,6 +122,19 @@ class Command(BaseCommand):
         perms_almacenero += get_perms(
             "cmp", ["proveedor", "comprasenc", "comprasdet"], ["add", "change", "view"]
         )
+        # Fase 2 (20/09/2026): el Almacenero es quien fisicamente envia y
+        # recibe mercaderia entre sucursales -- necesita crear
+        # transferencias (envio) y confirmar/cancelar (recepcion propia
+        # o de otra sucursal, por telefono con el otro almacenero).
+        perms_almacenero += get_perms(
+            "inv",
+            ["transferenciastockenc", "transferenciastockdet"],
+            ["add", "change", "view"],
+        )
+        for codename in ["confirmar_transferenciastock", "cancelar_transferenciastock"]:
+            p = get_perm_by_codename("inv", codename)
+            if p:
+                perms_almacenero.append(p)
         almacenero.permissions.set(perms_almacenero)
         self.stdout.write(self.style.SUCCESS(
             f"Grupo 'Almacenero' actualizado ({len(perms_almacenero)} permisos)"
@@ -130,6 +155,9 @@ class Command(BaseCommand):
         )
         perms_lectura += get_perms(
             "fac", ["cliente", "facturaenc", "facturadet"], ["view"]
+        )
+        perms_lectura += get_perms(
+            "inv", ["transferenciastockenc", "transferenciastockdet"], ["view"]
         )
         lectura.permissions.set(perms_lectura)
         self.stdout.write(self.style.SUCCESS(

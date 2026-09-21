@@ -8,7 +8,12 @@ from .views import CategoriaView, CategoriaNew, CategoriaEdit, CategoriaDel, \
     ProductoView, ProductoNew, ProductoEdit, producto_inactivar, \
     producto_homologar, producto_homologar_pendientes, \
     TipoCambioView, TipoCambioNew, TipoCambioEdit, \
-    revision_precios, aplicar_precio_sugerido, aplicar_todos_sugeridos
+    revision_precios, aplicar_precio_sugerido, aplicar_todos_sugeridos, \
+    AjusteInventarioView, ajuste_inventario, ajuste_inventario_det_eliminar, \
+    eliminar_ajuste_inventario, carga_inicial, carga_inicial_exportar_plantilla, \
+    carga_inicial_importar, \
+    TransferenciaStockListView, transferencia_stock_new, \
+    transferencia_confirmar_recepcion, transferencia_cancelar
 
 from .reportes import lista_precios, lista_precios_pdf
 
@@ -51,4 +56,23 @@ urlpatterns = [
     path('productos/revision-precios/', revision_precios, name='revision_precios'),
     path('productos/revision-precios/aplicar/<int:id>/', aplicar_precio_sugerido, name='aplicar_precio_sugerido'),
     path('productos/revision-precios/aplicar-todos/', aplicar_todos_sugeridos, name='aplicar_todos_sugeridos'),
+
+    # --- Ajuste de Inventario (13/09/2026) ---
+    path('ajustes/', AjusteInventarioView.as_view(), name='ajuste_inventario_list'),
+    path('ajustes/new', ajuste_inventario, name='ajuste_inventario_new'),
+    path('ajustes/edit/<int:ajuste_id>', ajuste_inventario, name='ajuste_inventario_edit'),
+    path('ajustes/<int:ajuste_id>/delete/<int:pk>', ajuste_inventario_det_eliminar, name='ajuste_inventario_det_eliminar'),
+    path('ajustes/eliminar/<int:id>', eliminar_ajuste_inventario, name='ajuste_inventario_eliminar'),
+
+    # --- Carga Inicial de Inventario por Excel ---
+    path('ajustes/carga-inicial/', carga_inicial, name='carga_inicial'),
+    path('ajustes/carga-inicial/plantilla/', carga_inicial_exportar_plantilla, name='carga_inicial_exportar_plantilla'),
+    path('ajustes/carga-inicial/importar/', carga_inicial_importar, name='carga_inicial_importar'),
+
+    # --- Transferencias de Stock entre Sucursales (Fase 2, 20/09/2026) ---
+    path('transferencias/', TransferenciaStockListView.as_view(), name='transferencia_stock_list'),
+    path('transferencias/new', transferencia_stock_new, name='transferencia_stock_new'),
+    path('transferencias/edit/<int:transferencia_id>', transferencia_stock_new, name='transferencia_stock_edit'),
+    path('transferencias/<int:id>/confirmar', transferencia_confirmar_recepcion, name='transferencia_stock_confirmar'),
+    path('transferencias/<int:id>/cancelar', transferencia_cancelar, name='transferencia_stock_cancelar'),
 ]

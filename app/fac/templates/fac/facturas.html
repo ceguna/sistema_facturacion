@@ -33,7 +33,16 @@
                 Confirmar y Emitir al SIN
             {% endif %}
         </button>
-        <a href="{% url 'fac:factura_imprimir_one' enc.id %}" class="btn btn-success" target="_factura">Imprimir</a>
+        <!-- CAMBIADO 20/09/2026 (pedido de Carlos): antes abria la vista
+             HTML/PDF embebida en el navegador (factura_imprimir_one).
+             Un navegador no puede "detectar y lanzar" un editor de PDF
+             especifico instalado en la maquina -- lo que si se puede
+             hacer, y es el comportamiento real mas cercano a lo pedido,
+             es forzar la DESCARGA del archivo (factura_descargar_pdf,
+             Content-Disposition: attachment): el sistema operativo la
+             abre sola con el visor/editor de PDF que tenga configurado
+             por defecto, y ahi el operador decide si imprime o no. -->
+        <a href="{% url 'fac:factura_descargar_pdf' enc.id %}" class="btn btn-success">Imprimir</a>
         {% if enc.id %}
         <a href="{% url 'fac:factura_mostrar_qr' enc.id %}" class="btn btn-outline-primary" target="_qr">
             <i class="fas fa-qrcode mr-1"></i>Mostrar QR
@@ -175,6 +184,10 @@
                         <div class="col-lg-3">
                             <input type="number" class="form-control" name="cantidad" id="cantidad" placeholder="0">
                             <input type="hidden" class="form-control" name="existencia" id="existencia">
+                            <!-- Unidad de medida del producto seleccionado -- agregada
+                                 16/09/2026, debajo de Cantidad (a pedido de Carlos; en
+                                 Compras va al lado de la Descripción, aca se pidio distinto). -->
+                            <input type="text" readonly class="form-control-plaintext form-control-sm" id="unidad_producto" value="" title="Unidad de medida">
                         </div>
                         <div class="col-lg-4">
                             <input type="number" class="form-control" name="precio" id="precio" placeholder="Precio" value="0.0" readonly>
@@ -237,6 +250,7 @@
                             <th data-sortable="true" data-field="codigo">Código</th>
                             <th data-sortable="true" data-field="descripcion">Descripción</th>
                             <th data-field="cantidad">Cant</th>
+                            <th data-field="unidad">Unid.</th>
                             <th data-field="subtotal">S. Total</th>
                             <th data-field="descuento">Des.</th>
                             <th data-field="total">Total</th>
@@ -249,6 +263,7 @@
                                 <td>{{ item.producto.codigo }}</td>
                                 <td>{{ item.producto.descripcion }}</td>
                                 <td>{{ item.cantidad }}</td>
+                                <td>{{ item.producto.unidad_medida.descripcion|default:"-" }}</td>
                                 <td>{{ item.sub_total }}</td>
                                 <td>{{ item.descuento }}</td>
                                 <td>{{ item.total }}</td>
@@ -257,13 +272,13 @@
                                 <button type="button" class="btn btn-warning btn-circle"
                                     onclick="borrar_detalle({{ item.id|unlocalize }})"
                                     data-toggle="tooltip" data-placement="top"
-                                    title="Revertir: crea una línea compensatoria en negativo y mantiene el historial. Requiere usuario y clave de supervisor.">
+                                    title="Revertir (requiere supervisor)">
                                     <i class="fas fa-history"></i>
                                 </button>
-                                <button class="btn btn-danger btn-circle" 
+                                <button class="btn btn-danger btn-circle"
                                     onclick="return abrir_modal('{% url 'fac:facturas_del' enc.id item.id %}')"
                                     data-toggle="tooltip" data-placement="top"
-                                    title="Eliminar permanentemente: no queda registro de que esta línea existió.">
+                                    title="Eliminar (sin dejar registro)">
                                     <i class="fas fa-trash-alt"></i>
                                 </button>
                                 {% else %}
@@ -311,7 +326,7 @@
                                     <button type="button" class="btn btn-warning btn-circle btn-sm"
                                         onclick="revertir_pago({{ pago.id|unlocalize }})"
                                         data-toggle="tooltip" data-placement="top"
-                                        title="Revertir este abono: corrige un error de carga, no una devolución real. Requiere usuario y clave de supervisor.">
+                                        title="Revertir abono (requiere supervisor)">
                                         <i class="fas fa-undo"></i>
                                     </button>
                                     {% else %}
@@ -406,6 +421,7 @@
                     $("#precio").val("0.00");
                     $("#descuento_pct_aplicable").val(0);
                     $("#descuento_pct_label").text("");
+                    $("#unidad_producto").val("");
                     $("#codigo").focus();
                     return false;
                 }
@@ -414,6 +430,9 @@
                 $("#descripcion").val(r.descripcion);
                 $("#precio").val(r.precio);
                 $("#existencia").val(r.existencia);
+                // Unidad de medida -- agregada 16/09/2026, mismo criterio
+                // que ya usa Compras (compras.html).
+                $("#unidad_producto").val(r.unidad_medida_descripcion || "");
 
                 var descCliente = parseFloat($('#enc_cliente option:selected').data('descuento')) || 0;
                 var descProducto = parseFloat(r.descuento_vigente_pct) || 0;
@@ -436,6 +455,7 @@
                     $("#codigo").val("");
                     $("#descripcion").val("");
                     $("#precio").val("0.00");
+                    $("#unidad_producto").val("");
                     $("#codigo").focus();
                 }
             }
@@ -473,7 +493,11 @@
         aplicarBloqueoCliente();
 
         // Tooltips de los botones de Reversion/Borrado en el detalle.
-        $('[data-toggle="tooltip"]').tooltip();
+        // CORREGIDO 16/09/2026 -- hallazgo de Carlos: sin container:'body',
+        // el tooltip se anclaba dentro de la celda de la tabla (btn-circle
+        // muy pegados) y quedaba parpadeando -- el propio tooltip tapaba
+        // el boton, disparando mouseleave/mouseenter en bucle.
+        $('[data-toggle="tooltip"]').tooltip({container: 'body'});
 
         $("#btnBuscar").click(function(e){
             if ($("#enc_cliente").val()==="0"){

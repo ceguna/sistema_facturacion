@@ -1,4 +1,6 @@
 import re
+import calendar
+from urllib.parse import quote
 
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
@@ -14,18 +16,21 @@ from django.contrib import messages
 
 from django.contrib.auth import authenticate
 from django.utils import timezone
-from django.db.models import Sum
+from django.db.models import Sum, F
 
-from bases.views import SinPrivilegios
+from bases.views import SinPrivilegios, obtener_sucursal_actual
 
 from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, Pago, NotaCreditoDebito
 from .forms import ClienteForm
 import inv.views as inv
-from inv.models import Producto
+from inv.models import Producto, StockSucursal, ajustar_stock_sucursal
 
 from fe.services import emitir_factura_sin, anular_factura_sin, revertir_anulacion_sin, \
-    emitir_nota_credito_debito_sin, EmisionSinError
+    emitir_nota_credito_debito_sin, anular_nota_credito_debito_sin, \
+    revertir_anulacion_nota_credito_debito_sin, EmisionSinError
 from catalogos.models import CatalogoSIN
+from .reportes import generar_pdf_factura_bytes, nombre_archivo_documento, _ncd_vigente
+from django.core.mail import EmailMessage
 
 class ClienteView(SinPrivilegios, generic.ListView):
     model = Cliente
@@ -57,6 +62,14 @@ class ClienteNew(VistaBaseCreate):
     form_class=ClienteForm
     success_url= reverse_lazy("fac:cliente_list")
     permission_required="fac.add_cliente"
+
+    def form_valid(self, form):
+        # sucursal (Fase 2, 20/09/2026): se asigna sola segun quien esta
+        # logueado -- NO es un campo que el cajero elija a mano (cada
+        # sucursal tiene sus propios clientes, decision confirmada por
+        # Carlos 16/09/2026).
+        form.instance.sucursal = obtener_sucursal_actual(self.request)
+        return super().form_valid(form)
 
 class ClienteEdit(VistaBaseEdit):
     model=Cliente
@@ -93,12 +106,26 @@ class FacturaView(SinPrivilegios, generic.ListView):
         # o el rango que el usuario haya elegido en la cabecera.
         from django.utils.dateparse import parse_date
 
+        # CORREGIDO 16/09/2026 -- hallazgo de Carlos: al entrar a una
+        # factura y volver (cualquier accion dentro de facturas.html
+        # redirige a 'fac:factura_list' sin querystring, ver Cancelar/
+        # anular/revertir/etc.), el filtro de fecha elegido se perdia y
+        # volvia al mes actual por defecto. Ahora el rango elegido se
+        # guarda en la sesion cuando llega por GET, y se reusa cuando
+        # no hay f1/f2 en la URL -- asi sobrevive a un redirect plano.
         hoy = timezone.localdate()
         f1_raw = self.request.GET.get('f1')
         f2_raw = self.request.GET.get('f2')
 
         f1 = parse_date(f1_raw) if f1_raw else None
         f2 = parse_date(f2_raw) if f2_raw else None
+
+        if f1 and f2:
+            self.request.session['fac_f1'] = f1.isoformat()
+            self.request.session['fac_f2'] = f2.isoformat()
+        elif not f1_raw and not f2_raw:
+            f1 = parse_date(self.request.session.get('fac_f1') or '') or None
+            f2 = parse_date(self.request.session.get('fac_f2') or '') or None
 
         if not f1:
             f1 = hoy.replace(day=1)
@@ -121,7 +148,49 @@ class FacturaView(SinPrivilegios, generic.ListView):
         fechas_cerradas = set(CierreDia.objects.values_list('fecha', flat=True))
         for item in context['obj']:
             item.dia_cerrado = timezone.localtime(item.fecha).date() in fechas_cerradas
-            item.tiene_ncd = _tiene_ncd_validada(item)
+            # ncd_validada guarda el OBJETO (no solo un booleano) --
+            # agregado 15/09/2026 junto con anular_ncd, que necesita el
+            # id real de la NCD para armar el link de accion.
+            # CORREGIDO 17/09/2026: incluye Revertida ademas de Validada
+            # -- una NCD cuya anulacion se deshizo vuelve a estar
+            # vigente, asi que el boton "Anular NCD" tiene que poder
+            # apuntarle igual que a una recien validada (ver el mismo
+            # ajuste en _tiene_ncd_validada y anular_ncd/
+            # anular_nota_credito_debito_sin).
+            item.ncd_validada = item.notas_credito_debito.filter(
+                estado_sin__in=[NotaCreditoDebito.SIN_VALIDADA, NotaCreditoDebito.SIN_REVERTIDA]
+            ).first()
+            item.tiene_ncd = item.ncd_validada is not None
+            # tiene_ncd_alguna_vez (agregado 17/09/2026): a diferencia
+            # de tiene_ncd (solo VIGENTE ahora), esto mira si la
+            # factura alguna vez tuvo una NCD real -- controla que el
+            # boton "Emitir NCD" quede oculto tambien mientras la unica
+            # NCD de la factura esta anulada (los 3 casos que pidio
+            # Carlos: sin NCD / con NCD vigente / con NCD anulada, cada
+            # uno con un solo boton visible a la vez).
+            item.tiene_ncd_alguna_vez = _tiene_ncd(item)
+            # ncd_anulada (agregado 15/09/2026, Etapa XI): la NCD
+            # anulada de esta factura, si existe -- habilita el boton
+            # de revertir su anulacion, mismo criterio que ncd_validada.
+            item.ncd_anulada = item.notas_credito_debito.filter(
+                estado_sin=NotaCreditoDebito.SIN_ANULADA
+            ).first()
+            # whatsapp_url (agregado 16/09/2026, Fase 1): link wa.me
+            # listo con el numero del cliente y un mensaje precargado --
+            # no existe forma de adjuntar el PDF automaticamente via URL
+            # (WhatsApp no lo permite), asi que el flujo es: el cajero
+            # descarga el PDF (boton aparte) y lo adjunta a mano en el
+            # chat que este link ya abre. None si el cliente no tiene
+            # celular cargado -- el boton se oculta en ese caso.
+            numero = item.cliente.whatsapp_numero
+            if numero:
+                mensaje = (
+                    f"Hola {item.cliente}, le enviamos la Factura N° {item.id} "
+                    f"por Bs {item.total}. Gracias por su compra."
+                )
+                item.whatsapp_url = f"https://wa.me/{numero}?text={quote(mensaje)}"
+            else:
+                item.whatsapp_url = None
         # _es_supervisor esta definida mas abajo en este mismo modulo --
         # se resuelve en tiempo de ejecucion, no hay problema de orden.
         context['es_supervisor'] = _es_supervisor(self.request.user)
@@ -135,8 +204,18 @@ def facturas(request,id=None):
     template_name='fac/facturas.html'
 
     detalle = {}
+    # sucursal (Fase 2, 20/09/2026): clientes se filtran por la
+    # sucursal actual del cajero -- decision confirmada por Carlos
+    # 16/09/2026 (cada sucursal tiene sus propios clientes, no
+    # compartidos). Si no se puede resolver la sucursal (instalacion
+    # con mas de una y el usuario sin asignar), se listan TODOS en vez
+    # de dejar la pantalla vacia -- edge case administrativo, no debe
+    # tapar el flujo normal de facturar.
+    sucursal_actual = obtener_sucursal_actual(request)
     clientes = Cliente.objects.filter(estado=True)
-    
+    if sucursal_actual is not None:
+        clientes = clientes.filter(sucursal=sucursal_actual)
+
     if request.method == "GET":
         if not id and dias_pendientes_de_cierre():
             messages.warning(
@@ -202,6 +281,7 @@ def facturas(request,id=None):
             )
             return redirect("fac:factura_new")
 
+        enc_existente = None
         if id:
             enc_existente = FacturaEnc.objects.filter(pk=id).first()
             if enc_existente and not enc_existente.puede_editarse:
@@ -283,8 +363,26 @@ def facturas(request,id=None):
             messages.error(request, 'Datos de cantidad/precio/descuento inválidos.')
             return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
 
-        if int(cantidad_num) > prod.existencia:
-            messages.error(request, 'No hay existencia suficiente de este producto')
+        # Stock de la sucursal donde se esta facturando (Fase 2,
+        # 20/09/2026), no el total agregado de la empresa -- otra
+        # sucursal puede tener de sobra mientras esta especifica no
+        # tiene. Si se esta editando una factura ya existente, se usa
+        # la sucursal YA FIJADA en esa factura (no la del cajero
+        # actual, por si un supervisor la retoma desde otra sucursal).
+        sucursal_para_stock = enc_existente.sucursal if (id and enc_existente) else sucursal_actual
+        if sucursal_para_stock is not None:
+            stock_en_sucursal = StockSucursal.objects.filter(
+                producto=prod, sucursal=sucursal_para_stock
+            ).first()
+            cantidad_disponible = stock_en_sucursal.cantidad if stock_en_sucursal else 0
+        else:
+            cantidad_disponible = prod.existencia
+        if int(cantidad_num) > cantidad_disponible:
+            messages.error(
+                request,
+                f'No hay existencia suficiente de este producto en '
+                f'{sucursal_para_stock or "su sucursal"} (disponible: {cantidad_disponible}).'
+            )
             return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")
 
         if forma_pago == FacturaEnc.FORMA_PAGO_CREDITO:
@@ -321,6 +419,7 @@ def facturas(request,id=None):
                 fecha = fecha,
                 forma_pago = forma_pago,
                 numero_tarjeta = numero_tarjeta or None,
+                sucursal = sucursal_actual,
             )
             enc.save()
             id = enc.id
@@ -429,8 +528,9 @@ def factura_actualizar_datos(request, id):
 
  
 class ProductoView(inv.ProductoView):
-    template_name="fac/buscar_producto.html" 
+    template_name="fac/buscar_producto.html"
 
+@login_required(login_url='/login/')
 def borrar_detalle_factura(request, id):
     template_name = "fac/factura_borrar_detalle.html"
 
@@ -524,6 +624,42 @@ def _dentro_plazo_anulacion(fecha_factura, ahora):
     return False
 
 
+def _sumar_meses(fecha, meses):
+    """Suma N meses a una fecha, ajustando el dia si el mes destino es mas corto."""
+    mes_total = fecha.month - 1 + meses
+    anio = fecha.year + mes_total // 12
+    mes = mes_total % 12 + 1
+    dia = min(fecha.day, calendar.monthrange(anio, mes)[1])
+    return fecha.replace(year=anio, month=mes, day=dia)
+
+
+def _dentro_plazo_emision_ncd(fecha_factura_original, ahora):
+    """
+    Plazo para EMITIR una Nota de Credito-Debito sobre una factura:
+    18 meses desde la emision de la factura ORIGINAL (Articulo 36 de
+    la RND del SIN sobre Notas de Credito-Debito -- investigado
+    19/09/2026 a pedido de Carlos, ver memoria del proyecto). Existe
+    una extension a 60 meses para productos sujetos a normativa
+    sectorial especifica, mediante solicitud previa aparte ante el
+    SIN -- no aplica por defecto a una libreria, no se implementa aca.
+    """
+    return ahora <= _sumar_meses(fecha_factura_original, 18)
+
+
+def _dentro_plazo_operacion_ncd(fecha_ncd, ahora):
+    """
+    Plazo para ANULAR una NCD ya emitida, o para REVERTIR la anulacion
+    de una NCD: hasta el dia 9 del mes siguiente a la emision de la
+    propia NCD -- misma regla general del SIN para "Documentos
+    Fiscales Digitales" en modalidad electronica/computarizada/Portal
+    Web en linea (no es exclusiva de facturas; investigado 19/09/2026
+    a pedido de Carlos, ver memoria del proyecto). Reutiliza
+    _dentro_plazo_anulacion -- misma formula, solo cambia que fecha se
+    le pasa (la de la NCD, no la de la factura original).
+    """
+    return _dentro_plazo_anulacion(fecha_ncd, ahora)
+
+
 def _es_supervisor(user):
     return user.is_superuser or user.has_perm('fac.anular_facturaenc')
 
@@ -534,12 +670,37 @@ def _es_supervisor_cierre(user):
 
 def _tiene_ncd_validada(enc):
     """
-    True si esta factura ya tiene una Nota de Credito-Debito aceptada
-    por el SIN -- a partir de ahi queda fiscalmente cerrada: no se
-    puede anular, eliminar, ni registrarle nuevos abonos (decision
-    tomada el 26/08/2026 al disenar NotaCreditoDebito).
+    True si esta factura tiene una Nota de Credito-Debito VIGENTE ahora
+    mismo -- Validada o Revertida (una anulacion deshecha vuelve a
+    dejar la correccion en efecto, igual que si nunca se hubiera
+    anulado). Mientras este vigente, la factura queda fiscalmente
+    cerrada: no se puede anular, eliminar, ni registrarle nuevos abonos
+    (decision tomada el 26/08/2026 al disenar NotaCreditoDebito).
+    CORREGIDO 17/09/2026: antes solo miraba Validada, asi que una NCD
+    revertida (vigente de nuevo) no bloqueaba estas acciones -- hueco
+    real, encontrado al revisar los 3 estados de boton que pidio Carlos.
     """
-    return enc.notas_credito_debito.filter(estado_sin=NotaCreditoDebito.SIN_VALIDADA).exists()
+    return enc.notas_credito_debito.filter(
+        estado_sin__in=[NotaCreditoDebito.SIN_VALIDADA, NotaCreditoDebito.SIN_REVERTIDA]
+    ).exists()
+
+
+def _tiene_ncd(enc):
+    """
+    True si esta factura ya tuvo alguna vez una Nota de Credito-Debito
+    real (en cualquier estado salvo un intento que nunca llego a
+    procesarse o que el SIN observo) -- el ciclo de vida de la NCD es
+    UNICO por factura (decision 26/08/2026: solo devolucion total, una
+    sola vez), asi que no se puede volver a emitir otra aunque la
+    primera este anulada. Distinto de _tiene_ncd_validada, que solo
+    mira si hay una VIGENTE ahora mismo (para bloquear anular/eliminar/
+    pagar) -- agregado 17/09/2026 junto con la logica de 3 estados del
+    boton "Emitir NCD" (antes reaparecia despues de anular la unica NCD
+    de la factura, lo que hubiera permitido emitir una segunda).
+    """
+    return enc.notas_credito_debito.exclude(
+        estado_sin__in=[NotaCreditoDebito.SIN_NO_ENVIADA, NotaCreditoDebito.SIN_OBSERVADA]
+    ).exists()
 
 
 def _rechazar_envio_modal(request, mensaje):
@@ -650,11 +811,14 @@ def anular_factura(request, id):
             messages.error(request, f'El SIN rechazó la anulación: {e}')
             return redirect('fac:factura_edit', id=id)
 
+        # F() atomico (revision de seguridad/bugs 16/09/2026) -- evita
+        # perder un ajuste de stock si otra caja/sucursal esta
+        # escribiendo el mismo producto en simultaneo. AMPLIADO
+        # 20/09/2026 (Fase 2): ajustar_stock_sucursal devuelve el stock
+        # a la sucursal REAL de esta factura, no a un pozo global.
         detalles = FacturaDet.objects.filter(factura=enc)
         for det in detalles:
-            prod = det.producto
-            prod.existencia = int(prod.existencia) + int(det.cantidad)
-            prod.save()
+            ajustar_stock_sucursal(det.producto_id, enc.sucursal, det.cantidad)
 
         texto_motivo = motivo_catalogo.descripcion
         if detalle_adicional:
@@ -708,11 +872,10 @@ def revertir_anulacion(request, id):
             messages.error(request, f'El SIN rechazó la reversión: {e}')
             return redirect('fac:factura_edit', id=id)
 
+        # F() atomico + sucursal (Fase 2) -- ver comentario en anular_factura.
         detalles = FacturaDet.objects.filter(factura=enc)
         for det in detalles:
-            prod = det.producto
-            prod.existencia = int(prod.existencia) - int(det.cantidad)
-            prod.save()
+            ajustar_stock_sucursal(det.producto_id, enc.sucursal, -det.cantidad)
 
         enc.anulado = False
         # La anulacion solo fue posible porque en ese momento la
@@ -771,8 +934,25 @@ def emitir_ncd(request, id):
             'Esta factura está anulada -- no corresponde una Nota de Crédito-Débito.'
         )
 
-    if _tiene_ncd_validada(enc):
+    # CORREGIDO 17/09/2026: antes usaba _tiene_ncd_validada (solo mira
+    # si hay una VIGENTE ahora), asi que anular la unica NCD de la
+    # factura volvia a habilitar este boton -- se podia emitir una
+    # segunda NCD sobre la misma factura, algo que el diseño de
+    # devolucion total (26/08/2026) nunca contemplo. _tiene_ncd mira si
+    # alguna vez hubo una NCD real, sin importar su estado actual.
+    if _tiene_ncd(enc):
         return _modal_error(request, 'Esta factura ya tiene una Nota de Crédito-Débito emitida.')
+
+    # Plazo de emision (19/09/2026, investigado a pedido de Carlos):
+    # 18 meses desde la emision de la factura ORIGINAL (normativa SIN,
+    # Art. 36 RND Notas de Credito-Debito). Se aplica a todos los
+    # usuarios sin excepcion, sin importar el rol.
+    if not _dentro_plazo_emision_ncd(enc.fecha, timezone.now()):
+        return _modal_error(
+            request,
+            'Fuera del plazo permitido para emitir una Nota de Crédito-Débito sobre esta '
+            'factura (18 meses desde su emisión, según normativa del SIN).'
+        )
 
     if request.method == 'POST':
         motivo = request.POST.get('motivo', '').strip()
@@ -805,6 +985,139 @@ def emitir_ncd(request, id):
         return redirect('fac:factura_edit', id=id)
 
     return render(request, 'fac/factura_emitir_ncd.html', {'enc': enc})
+
+
+@login_required(login_url='/login/')
+def anular_ncd(request, id):
+    """
+    Anula ante el SIN una Nota de Credito-Debito ya validada (Etapa VII
+    de certificacion, ver instructivo NCD Etapas IV/VII/VIII/XI).
+    Mismo nivel de autorizacion que Anular/Revertir/Emitir NCD
+    (_es_supervisor). Se abre en el popup via abrir_modal() -- por eso
+    los rechazos DENTRO del POST usan _rechazar_envio_modal() (400), no
+    _modal_error() (200, que abrir_modal tomaria como exito): mismo
+    bug ya corregido dos veces en Compras, no repetirlo aca.
+    """
+    ncd = NotaCreditoDebito.objects.filter(pk=id).first()
+    if not ncd:
+        return _modal_error(request, 'La Nota de Crédito-Débito no existe.')
+
+    if not _es_supervisor(request.user):
+        return _modal_error(request, 'No tiene permisos para anular una Nota de Crédito-Débito.')
+
+    # CORREGIDO 17/09/2026: antes solo aceptaba Validada -- si se habia
+    # revertido una anulacion previa (la correccion vuelve a estar
+    # vigente), no habia forma de volver a anularla desde aca aunque el
+    # boton "Anular NCD" ya la mostrara como vigente. Validada y
+    # Revertida son, a estos efectos, el mismo estado: la NCD esta en
+    # efecto ahora mismo.
+    if ncd.estado_sin not in (NotaCreditoDebito.SIN_VALIDADA, NotaCreditoDebito.SIN_REVERTIDA):
+        return _modal_error(
+            request,
+            'Solo se puede anular una Nota de Crédito-Débito que esté vigente (Validada o con '
+            f'una anulación revertida) por el SIN (estado actual: {ncd.get_estado_sin_display()}).'
+        )
+
+    if ncd.anulada:
+        return _modal_error(request, 'Esta Nota de Crédito-Débito ya está anulada.')
+
+    # Plazo de anulacion (19/09/2026, investigado a pedido de Carlos):
+    # hasta el dia 9 del mes siguiente a la emision de la PROPIA NCD
+    # (misma regla general del SIN para Documentos Fiscales Digitales
+    # en esta modalidad). Se aplica a todos los usuarios sin excepcion.
+    if not _dentro_plazo_operacion_ncd(ncd.fecha, timezone.now()):
+        return _modal_error(
+            request,
+            'Fuera del plazo permitido para anular esta Nota de Crédito-Débito '
+            '(hasta el día 9 del mes siguiente a su emisión, según normativa del SIN).'
+        )
+
+    # Mismo catalogo MOTIVOS_ANULACION que ya usa anular_factura --
+    # confirmado que ya incluye 'NOTA DE CREDITO-DEBITO MAL EMITIDA'
+    # (codigo 2) como entrada propia, sincronizada por el SIN; no hizo
+    # falta un catalogo aparte.
+    motivos = CatalogoSIN.objects.filter(
+        tipo_catalogo=CatalogoSIN.TipoCatalogo.MOTIVOS_ANULACION, vigente=True
+    ).order_by('codigo')
+
+    if request.method == 'POST':
+        codigo_motivo_raw = request.POST.get('codigo_motivo')
+        motivo_catalogo = motivos.filter(codigo=codigo_motivo_raw).first()
+        if not motivo_catalogo:
+            return _rechazar_envio_modal(request, 'Debe seleccionar un motivo de anulación válido.')
+
+        try:
+            anular_nota_credito_debito_sin(ncd, int(motivo_catalogo.codigo))
+        except EmisionSinError as e:
+            messages.error(request, f'El SIN rechazó la anulación de la Nota de Crédito-Débito: {e}')
+            return redirect('fac:factura_edit', id=ncd.factura_original_id)
+
+        ncd.anulada = True
+        ncd.fecha_anulacion = timezone.now()
+        ncd.motivo_anulacion = motivo_catalogo.descripcion
+        ncd.usuario_anulacion = request.user
+        ncd.save()
+
+        messages.success(
+            request,
+            f'Nota de Crédito-Débito N° {ncd.id} anulada correctamente ante el SIN.'
+        )
+        return redirect('fac:factura_edit', id=ncd.factura_original_id)
+
+    return render(request, 'fac/factura_anular_ncd.html', {'ncd': ncd, 'motivos': motivos})
+
+
+@login_required(login_url='/login/')
+def revertir_anulacion_ncd(request, id):
+    """
+    Revierte ante el SIN la anulacion de una Nota de Credito-Debito
+    (Etapa XI de certificacion -- confirmada en el dashboard real del
+    SIN el 15/09/2026, ver instructivo NCD Etapas IV/VII/VIII/XI).
+    Mismo nivel de autorizacion y mismo patron modal que anular_ncd
+    (_rechazar_envio_modal en el POST, _modal_error en el GET).
+
+    CORREGIDO 19/09/2026 (investigado a pedido de Carlos, ver memoria
+    del proyecto): el parrafo anterior decia que no habia plazo
+    documentado para esto -- en ese momento no se habia encontrado.
+    El portal del SIN SI tiene un servicio dedicado ("Reversion
+    Anulacion Nota Credito-Debito") que sigue la misma regla general
+    de Documentos Fiscales Digitales en esta modalidad: hasta el dia 9
+    del mes siguiente a la emision de la propia NCD.
+    """
+    ncd = NotaCreditoDebito.objects.filter(pk=id).first()
+    if not ncd:
+        return _modal_error(request, 'La Nota de Crédito-Débito no existe.')
+
+    if not _es_supervisor(request.user):
+        return _modal_error(request, 'No tiene permisos para revertir anulaciones de Notas de Crédito-Débito.')
+
+    if not ncd.anulada or ncd.estado_sin != NotaCreditoDebito.SIN_ANULADA:
+        return _modal_error(request, 'Esta Nota de Crédito-Débito no está anulada ante el SIN, no hay nada que revertir.')
+
+    if not _dentro_plazo_operacion_ncd(ncd.fecha, timezone.now()):
+        return _modal_error(
+            request,
+            'Fuera del plazo permitido para revertir la anulación de esta Nota de Crédito-Débito '
+            '(hasta el día 9 del mes siguiente a su emisión, según normativa del SIN).'
+        )
+
+    if request.method == 'POST':
+        try:
+            revertir_anulacion_nota_credito_debito_sin(ncd)
+        except EmisionSinError as e:
+            messages.error(request, f'El SIN rechazó la reversión: {e}')
+            return redirect('fac:factura_edit', id=ncd.factura_original_id)
+
+        ncd.anulada = False
+        ncd.save()
+
+        messages.success(
+            request,
+            f'Anulación de la Nota de Crédito-Débito N° {ncd.id} revertida correctamente ante el SIN.'
+        )
+        return redirect('fac:factura_edit', id=ncd.factura_original_id)
+
+    return render(request, 'fac/factura_revertir_anulacion_ncd.html', {'ncd': ncd})
 
 
 @login_required(login_url='/login/')
@@ -868,11 +1181,10 @@ def eliminar_factura(request, id):
         # el stock). Con soft-delete nada se borra de verdad, asi que
         # el stock se devuelve aca a mano -- mismo patron que ya usa
         # anular_factura.
+        # F() atomico + sucursal (Fase 2) -- ver comentario en anular_factura.
         detalles = FacturaDet.objects.filter(factura=enc)
         for det in detalles:
-            prod = det.producto
-            prod.existencia = int(prod.existencia) + int(det.cantidad)
-            prod.save()
+            ajustar_stock_sucursal(det.producto_id, enc.sucursal, det.cantidad)
 
         # La factura a credito ya paso el chequeo de arriba (sin ningun
         # abono), asi que eliminarla tambien cierra la cuenta a credito
@@ -911,6 +1223,15 @@ def factura_emitir_sin(request, id):
 
     if not FacturaDet.objects.filter(factura=enc).exists():
         return JsonResponse({"ok": False, "error": "La factura no tiene productos cargados"})
+
+    # Checklist Fase II del SIN, punto 2: no se puede emitir una factura
+    # por monto Bs 0, salvo que el medio de pago sea Gift Card (unico
+    # caso permitido por normativa).
+    if round(enc.total, 2) == 0 and enc.forma_pago != FacturaEnc.FORMA_PAGO_GIFT_CARD:
+        return JsonResponse({
+            "ok": False,
+            "error": "No se puede emitir una factura por Bs 0.00, salvo que la forma de pago sea Gift Card."
+        })
 
     try:
         emitir_factura_sin(enc)
@@ -1037,6 +1358,149 @@ def factura_descargar_xml(request, id):
     response = HttpResponse(enc.xml_firmado, content_type='application/xml')
     response['Content-Disposition'] = f'attachment; filename="factura_{enc.id}_{enc.cuf or "sin_cuf"}.xml"'
     return response
+
+
+def _conexion_correo_empresa(empresa):
+    """
+    Arma la conexion SMTP a usar para enviar facturas -- prioriza las
+    credenciales propias de la Empresa (cargadas desde /fe/, agregado
+    16/09/2026 para que cada cliente registre su propio correo sin
+    tocar el .env del servidor); si la Empresa no cargo nada, cae a la
+    configuracion general de settings.py (.env) pasando None, que es
+    lo que get_connection() ya hace por defecto.
+    """
+    from django.core.mail import get_connection
+
+    if empresa and empresa.email_host and empresa.email_host_user:
+        return get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=empresa.email_host,
+            port=empresa.email_port or 587,
+            username=empresa.email_host_user,
+            password=empresa.email_host_password or '',
+            use_tls=empresa.email_use_tls,
+        )
+    return get_connection()
+
+
+@login_required(login_url='/login/')
+def factura_enviar_correo(request, id):
+    """
+    Envia el PDF y el XML de la factura por correo al cliente -- Fase 1
+    (16/09/2026, MVP comercial: correo + WhatsApp, ver plan de accion
+    con Carlos). Reusa generar_pdf_factura_bytes (fac/reportes.py),
+    misma fuente que factura_descargar_pdf. El XML solo existe una vez
+    que la factura se emitio al SIN (xml_firmado se llena en
+    emitir_factura_sin) -- por eso el chequeo de abajo es sobre
+    xml_firmado directamente (igual que ya hace factura_descargar_xml),
+    no sobre reportada_ante_sin: asi el cajero queda obligado a emitir
+    primero, sin depender de que el SIN ademas la haya Validado (una
+    factura Observada igual ya tiene su XML firmado, y el cliente
+    igual espera recibir algo).
+
+    Las credenciales SMTP salen de Empresa (config propia por cliente,
+    ver _conexion_correo_empresa) o de settings.py/.env como respaldo.
+    Si faltan ambas, el backend SMTP de Django tira una excepcion clara
+    al conectar, atrapada aca y mostrada legible en vez de un 500.
+    """
+    enc = FacturaEnc.objects.filter(pk=id).first()
+    if not enc:
+        return _modal_error(request, 'Factura no existe.')
+
+    if not enc.estado:
+        return _modal_error(request, 'Esta factura fue eliminada.')
+
+    if not enc.xml_firmado:
+        return _modal_error(
+            request,
+            'Esta factura todavía no fue emitida al SIN -- primero debe emitirla '
+            'para generar el XML, recién ahí se puede enviar por correo.'
+        )
+
+    if not enc.cliente.email:
+        return _modal_error(
+            request,
+            f'El cliente "{enc.cliente}" no tiene un correo cargado. '
+            'Agréguelo desde Clientes antes de enviar.'
+        )
+
+    if request.method == 'POST':
+        from fe.models import Empresa
+        empresa = Empresa.objects.first()
+        nombre_empresa = empresa.razon_social if empresa and empresa.razon_social else 'CGS Gestión'
+
+        # CORREGIDO 17/09/2026 (hallazgo de Carlos, "Invalid address ''"):
+        # EmailMessage sin from_email cae al DEFAULT_FROM_EMAIL de
+        # settings.py (.env) -- vacio si el correo se cargo desde la
+        # pantalla de Empresa en vez del .env, que es justo el flujo que
+        # armamos. Se prioriza la cuenta propia de la Empresa; si no hay
+        # ninguna de las dos, se avisa ANTES de intentar mandar, en vez
+        # de dejar que el servidor SMTP lo rechace con un mensaje critico.
+        from django.conf import settings as django_settings
+        remitente = (empresa.email_host_user if empresa else None) or django_settings.DEFAULT_FROM_EMAIL
+        if not remitente:
+            return _rechazar_envio_modal(
+                request,
+                'No hay una cuenta de correo remitente configurada. Cárguela en '
+                'Configuración SIN → Empresa → Correo saliente antes de enviar.'
+            )
+
+        pdf_bytes = generar_pdf_factura_bytes(enc)
+        if pdf_bytes is None:
+            return _rechazar_envio_modal(request, 'Ocurrió un error al generar el PDF de la factura.')
+
+        # NCD vigente (19/09/2026): si esta factura tiene una Nota de
+        # Credito-Debito vigente, ES ese documento el que se adjunta
+        # (mismo PDF que ya genero generar_pdf_factura_bytes mas
+        # arriba) -- asunto, cuerpo, nombre de archivo y XML adjunto
+        # tienen que ser coherentes con lo que en verdad se mando, no
+        # seguir hablando de "la Factura N°..." si lo que se envio fue
+        # la NCD que la corrige.
+        ncd = _ncd_vigente(enc)
+        if ncd:
+            asunto = f'Nota de Crédito-Débito N° {ncd.id} — {nombre_empresa}'
+            cuerpo = (
+                f'Estimado/a {enc.cliente},\n\n'
+                f'Adjuntamos la Nota de Crédito-Débito N° {ncd.id}, correspondiente a la '
+                f'Factura N° {enc.id}, por un total de Bs {ncd.monto_total_devuelto}, '
+                f'emitida el {timezone.localtime(ncd.fecha).strftime("%d/%m/%Y")}, '
+                'en PDF y en el formato XML firmado que registra el SIN.\n\n'
+                f'Gracias por su compra.\n\n{nombre_empresa}'
+            )
+            xml_documento = ncd.xml_firmado
+            cuf_documento = ncd.cuf
+        else:
+            asunto = f'Factura N° {enc.id} — {nombre_empresa}'
+            cuerpo = (
+                f'Estimado/a {enc.cliente},\n\n'
+                f'Adjuntamos la Factura N° {enc.id} por un total de Bs {enc.total}, '
+                f'emitida el {timezone.localtime(enc.fecha).strftime("%d/%m/%Y")}, '
+                'en PDF y en el formato XML firmado que registra el SIN.\n\n'
+                f'Gracias por su compra.\n\n{nombre_empresa}'
+            )
+            xml_documento = enc.xml_firmado
+            cuf_documento = enc.cuf
+
+        email = EmailMessage(
+            subject=asunto,
+            body=cuerpo,
+            from_email=remitente,
+            to=[enc.cliente.email],
+            connection=_conexion_correo_empresa(empresa),
+        )
+        nombre_pdf = nombre_archivo_documento(enc)
+        email.attach(nombre_pdf, pdf_bytes, 'application/pdf')
+        email.attach(f'{nombre_pdf.rsplit(".", 1)[0]}_{cuf_documento or "sin_cuf"}.xml', xml_documento, 'application/xml')
+
+        try:
+            email.send(fail_silently=False)
+        except Exception as e:
+            return _rechazar_envio_modal(request, f'No se pudo enviar el correo: {e}')
+
+        messages.success(request, 'Envío de factura al email cliente satisfactorio.')
+        return redirect('fac:factura_edit', id=enc.id)
+
+    return render(request, 'fac/factura_enviar_correo.html', {'enc': enc})
 
 
 @login_required(login_url='/login/')
@@ -1221,6 +1685,7 @@ def pago_confirmacion(request, pago_id):
     })
 
 
+@login_required(login_url='/login/')
 def revertir_pago(request, id):
     """
     Revierte (soft-delete) un abono cargado por error -- Caso 1 de la

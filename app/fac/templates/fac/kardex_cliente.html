@@ -21,8 +21,7 @@
 
         <div class="header-empresa">
             {% if es_pdf %}
-            <b>{{ empresa.razon_social|default:"Sistema de Facturación" }}</b><br>
-            {% if empresa.nit %}NIT: {{ empresa.nit }}<br>{% endif %}
+            {% include 'base/reporte_logo_header.html' %}
             <h3>Kardex de Cliente — Cuenta de Crédito</h3>
             {% endif %}
         </div>

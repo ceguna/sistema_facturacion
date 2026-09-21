@@ -53,6 +53,16 @@
                             </div>
                         </div>
 
+                        <div class="row">
+                            <div class="col-md-6 form-group">
+                                <!-- Sucursal (20/09/2026, Fase 2): vacio =
+                                     se resuelve solo si hay una unica sucursal. -->
+                                <label>{{ form.sucursal.label }}</label>
+                                {{ form.sucursal }}
+                                <small class="form-text text-muted">{{ form.sucursal.help_text }}</small>
+                            </div>
+                        </div>
+
                         <div class="dropdown-divider"></div>
                         <div class="row">
                             <div class="col-md-8 form-group">

@@ -79,17 +79,29 @@
                             </div>
                         </div>
 
-                        <!-- Fila 3: Precio / Existencia / Ultima Compra -->
+                        <!-- Fila 3: Precio / Costo Actual / Existencia / Ultima Compra -->
                         <div class="row mt-2">
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label class="small mb-0">{{form.precio.label}}</label>
                                 {{form.precio}}
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
+                                <!-- Costo Actual (13/09/2026, ex "costo_promedio"): solo
+                                     lectura real -- no es un campo del form, se muestra
+                                     directo de 'obj' (mismo criterio que 'existencia', pero
+                                     sin pasar por el ciclo de validacion del form ya que
+                                     este campo lo calculan solas las señales de Compras/
+                                     Ajuste de Inventario). "—" para un producto que todavia
+                                     no tuvo ninguna entrada, en vez de un enganoso "0.0". -->
+                                <label class="small mb-0">Costo Actual</label>
+                                <input type="text" readonly class="form-control-plaintext"
+                                       value="{% if obj.costo_actual %}{{ obj.costo_actual }}{% else %}— (sin datos todavía){% endif %}">
+                            </div>
+                            <div class="col-md-3">
                                 <label class="small mb-0">{{form.existencia.label}}</label>
                                 {{form.existencia}}
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label class="small mb-0">{{form.ultima_compra.label}}</label>
                                 {{form.ultima_compra}}
                             </div>
@@ -159,14 +171,14 @@
 
                         <div class="dropdown-divider mt-2"></div>
 
-                        <!-- Fila 7: Costo de Referencia -->
+                        <!-- Fila 7: Precio de Referencia -->
                         <div class="row">
-                            <div class="col-md-12"><b class="small">Costo de Referencia (productos importados)</b></div>
+                            <div class="col-md-12"><b class="small">Precio de Referencia (productos importados)</b></div>
                         </div>
                         <div class="row">
                             <div class="col-md-3">
-                                <label class="small mb-0">{{form.costo_referencia_usd.label}}</label>
-                                {{form.costo_referencia_usd}}
+                                <label class="small mb-0">{{form.precio_referencia_usd.label}}</label>
+                                {{form.precio_referencia_usd}}
                             </div>
                             <div class="col-md-3">
                                 <label class="small mb-0">{{form.margen_deseado_pct.label}}</label>
@@ -226,6 +238,19 @@
 
         $('#id_descuento_promocional_pct').on('input change', actualizarEstadoDescuentoProducto);
         actualizarEstadoDescuentoProducto();
+
+        // Lectura de codigo de barra (12/09/2026): un lector USB/Bluetooth
+        // se comporta como un teclado -- tipea los digitos muy rapido y
+        // termina con un Enter. Sin esto, ese Enter intentaba enviar el
+        // formulario entero. Ahora Enter en este campo pasa el foco a
+        // Descripcion (siguiente campo logico), como si fuera Tab, para
+        // que escanear un producto fluya sin tocar el mouse.
+        $('#id_codigo_barra').on('keydown', function(e){
+            if (e.key === 'Enter' || e.keyCode === 13) {
+                e.preventDefault();
+                $('#id_descripcion').focus().select();
+            }
+        });
 
         // Vista previa en vivo: al elegir un archivo nuevo, se muestra
         // dentro del recuadro de arriba a la derecha, sin esperar a guardar.

@@ -1,0 +1,48 @@
+<div class="modal-dialog modal-lg">
+    <div class="modal-content">
+        <form role="form" action="{% url 'fac:ncd_revertir_anulacion' ncd.id %}" method="POST">
+            <div class="col-xl-12 col-md-12 mb-12">
+                <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                Revertir Anulación de Nota de Crédito-Débito (Supervisor)
+                            </div>
+                            <div class="dropdown-divider"></div>
+                                {% csrf_token %}
+                                <div class="row">
+                                    <div class="col-12">
+                                        ¿Revertir la anulación de la Nota de Crédito-Débito N° <b>{{ ncd.id }}</b>
+                                        (factura N° <b>{{ ncd.factura_original_id }}</b>), por
+                                        Bs <b>{{ ncd.monto_total_devuelto }}</b>?
+                                    </div>
+                                </div>
+                                <div class="row mt-2">
+                                    <div class="col-12">
+                                        <small class="text-muted">
+                                            Se envía al SIN por su propio servicio de reversión
+                                            (reversionAnulacionDocumentoAjuste, distinto del que revierte
+                                            la anulación de una factura normal). Solo si el SIN la acepta,
+                                            la Nota de Crédito-Débito vuelve a estar Anulada revertida.
+                                        </small>
+                                    </div>
+                                </div>
+                            <div class="dropdown-divider"></div>
+                                <div class="row">
+                                    <div class="col">
+                                        <button type="submit" class="btn btn-primary"><span class="fa fa-undo"></span> Sí, Revertir Anulación</button>
+                                        <button type="button" class="btn btn-success" onclick="return cerrar_modal()">Cancelar</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-undo-alt fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>

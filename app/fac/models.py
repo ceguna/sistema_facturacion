@@ -5,11 +5,11 @@ from django.utils import timezone
 
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from django.db.models import Sum
+from django.db.models import Sum, F
 from django.db.models.functions import TruncDate
 
 from bases.models import ClaseModelo,ClaseModelo2
-from inv.models import Producto
+from inv.models import Producto, ajustar_stock_sucursal
 
 class Cliente(ClaseModelo):
     NAT='Natural'
@@ -32,10 +32,22 @@ class Cliente(ClaseModelo):
     apellidos = models.CharField(max_length=100)
     celular = models.CharField(max_length=20, null=True, blank=False)
     tipo=models.CharField(max_length=10, choices=TIPO_CLIENTE, default=NAT)
-    ci = models.CharField(max_length=20, null=True, unique=True)
-    nit = models.CharField(max_length=30, null=True, blank=True, unique=True)
-    razon = models.CharField(max_length=100, null=True, unique=True)
+    # CI/NIT/razon (Fase 2, 20/09/2026): dejan de ser unique=True GLOBAL
+    # -- decision de negocio confirmada por Carlos el 16/09/2026 ("cada
+    # sucursal tenga su propio cliente... lo que va a diferenciar es la
+    # sucursal, aunque se repita el nombre y el NIT"). La unicidad real
+    # pasa a Meta.constraints, por (sucursal, campo) -- ver mas abajo.
+    ci = models.CharField(max_length=20, null=True)
+    nit = models.CharField(max_length=30, null=True, blank=True)
+    razon = models.CharField(max_length=100, null=True)
     email = models.CharField(max_length=250, null=True, blank=True)
+    # sucursal (Fase 2, 20/09/2026): CONFIRMADO por Carlos -- cada
+    # sucursal tiene sus propios clientes, no compartidos. Null en
+    # datos viejos (migrados a la sucursal por defecto) y en
+    # instalaciones todavia sin sucursales.
+    sucursal = models.ForeignKey(
+        'fe.Sucursal', on_delete=models.PROTECT, null=True, blank=True
+    )
     descuento_autorizado_pct = models.FloatField(
         default=0,
         help_text="Porcentaje de descuento pre-aprobado para este cliente "
@@ -64,10 +76,34 @@ class Cliente(ClaseModelo):
     def __str__(self):
         return '{} {}'.format(self.apellidos,self.nombres)
 
+    @property
+    def whatsapp_numero(self):
+        """
+        Normaliza 'celular' al formato que exige el link wa.me (solo
+        digitos, con codigo de pais). Agregado 16/09/2026 (Fase 1 --
+        envio de factura por correo/WhatsApp). Bolivia = 591; los
+        celulares locales tienen 8 digitos y casi siempre se cargan sin
+        el codigo de pais, asi que se antepone salvo que ya venga
+        incluido. None si no hay celular cargado.
+        """
+        if not self.celular:
+            return None
+        digitos = ''.join(c for c in self.celular if c.isdigit())
+        if not digitos:
+            return None
+        if not digitos.startswith('591'):
+            digitos = '591' + digitos
+        return digitos
+
     def save(self, *args, **kwargs):
         self.nombres = self.nombres.upper()
         self.apellidos = self.apellidos.upper()
-        self.razon = self.razon.upper()
+        # Corregido 20/09/2026 (hallazgo de paso, al tocar este mismo
+        # metodo por Fase 2): 'razon' es null=True en el modelo, pero
+        # esta linea asumia que siempre venia cargado -- un cliente
+        # Natural (sin razon social) tiraba AttributeError al guardar
+        # si razon quedaba en None.
+        self.razon = self.razon.upper() if self.razon else None
         self.nit = self.nit.strip() if self.nit else None
         super(Cliente, self).save( *args, **kwargs)
 
@@ -99,6 +135,13 @@ class Cliente(ClaseModelo):
 
     class Meta:
         verbose_name_plural = "Clientes"
+        # Fase 2, 20/09/2026: unicidad por sucursal, no global (ver
+        # comentario en los campos ci/nit/razon mas arriba).
+        constraints = [
+            models.UniqueConstraint(fields=['sucursal', 'ci'], name='cliente_unico_ci_por_sucursal'),
+            models.UniqueConstraint(fields=['sucursal', 'nit'], name='cliente_unico_nit_por_sucursal'),
+            models.UniqueConstraint(fields=['sucursal', 'razon'], name='cliente_unico_razon_por_sucursal'),
+        ]
 
 class FacturaEnc(ClaseModelo2):
     SIN_NO_ENVIADA = 'no_enviada'
@@ -170,6 +213,17 @@ class FacturaEnc(ClaseModelo2):
 
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
     fecha = models.DateTimeField(auto_now_add=True)
+    # sucursal (Fase 2, 20/09/2026): que sucursal vendio. Null en datos
+    # viejos (migrados a la sucursal por defecto) y en instalaciones
+    # todavia sin sucursales -- ver ajustar_stock_sucursal (inv/models.py)
+    # y _obtener_empresa_y_sucursal (fe/services.py) para como se usa.
+    # La NUMERACION de factura NO cambia por esto: todas las sucursales
+    # de una empresa comparten la misma tabla FacturaEnc (Silo Model =
+    # un NIT = una base, no una sucursal = una base), asi que el id
+    # autoincremental ya sale secuencial entre sucursales tal cual.
+    sucursal = models.ForeignKey(
+        'fe.Sucursal', on_delete=models.PROTECT, null=True, blank=True
+    )
     sub_total=models.FloatField(default=0)
     descuento=models.FloatField(default=0)
     total=models.FloatField(default=0)
@@ -183,6 +237,21 @@ class FacturaEnc(ClaseModelo2):
 
     cuf = models.CharField(max_length=100, null=True, blank=True)
     cufd = models.CharField(max_length=100, null=True, blank=True)
+    # leyenda (21/09/2026, checklist SIN Fase II punto 4): elegida al azar
+    # del catalogo CatalogoSIN (LEYENDAS) en el momento de emitir, y
+    # guardada aca -- asi el mismo texto que se mando al SIN en el XML es
+    # el que se imprime en la representacion grafica (y el que se sigue
+    # mostrando si se reimprime/reenvia despues), en vez de recalcularse
+    # distinto cada vez. Null en facturas emitidas antes de este cambio.
+    leyenda = models.CharField(max_length=200, null=True, blank=True)
+    # codigo_control (agregado 17/09/2026): ya se calculaba y se usaba
+    # para derivar el CUF en emitir_factura_sin, pero nunca se
+    # guardaba -- es uno de los datos que el propio portal de
+    # verificacion del SIN (Oficina Virtual, ov.impuestos.gob.bo)
+    # exige junto al NIT/Numero de Factura/CUF/fecha/total para que
+    # alguien pueda verificar la factura a mano, asi que tiene que
+    # quedar impreso en el documento igual que el CUF.
+    codigo_control = models.CharField(max_length=20, null=True, blank=True)
     estado_sin = models.CharField(
         max_length=15, choices=ESTADO_SIN_CHOICES, default=SIN_NO_ENVIADA
     )
@@ -475,23 +544,26 @@ class NotaCreditoDebito(ClaseModelo2):
     factura ya tiene abonos registrados, o porque paso el plazo de
     anulacion (hasta el dia 9 del mes siguiente).
 
-    Se envia al SIN via el MISMO servicio recepcionFactura que usa una
-    factura normal (confirmado 26/08/2026 -- no existe una operacion
-    SOAP separada; se distingue solo por tipoFacturaDocumento=3 y
-    codigoDocumentoSector=47), pero con una estructura de detalle
-    distinta: reconstruye TODAS las lineas de la factura original
+    CORREGIDO 15/09/2026 (el parrafo de abajo describia una hipotesis
+    de fondo que resulto INCORRECTA, ver instructivo NCD Etapas IV/VII/
+    VIII/XI para el detalle completo de la investigacion): la NCD NO
+    usa el mismo WSDL/servicio que una factura normal. Usa un WSDL
+    COMPLETAMENTE DISTINTO --
+    ServicioFacturacionDocumentoAjuste (WSDL_DOCUMENTO_AJUSTE en
+    fe/services.py), operacion recepcionDocumentoAjuste -- nunca usado
+    hasta el 12/09/2026, que es la causa real del error persistente
+    995 "SERVICIO NO DISPONIBLE" que bloqueo la certificacion durante
+    meses. codigoDocumentoSector=24 (no 47 como se penso originalmente
+    -- ese 24 SI es del catalogo real que exige este documento, y
+    tipoFacturaDocumento=3, igual que una factura normal). El servicio
+    reconstruye TODAS las lineas de la factura original
     (codigoDetalleTransaccion=1) y agrega, aparte, la porcion que se
     esta devolviendo (codigoDetalleTransaccion=2) -- asi el SIN puede
     recalcular el credito fiscal de ambas partes. El detalle en si NO
     se persiste en un modelo aparte: se reconstruye en el momento de
     emitir, a partir de los FacturaDet de factura_original (fuente
-    unica de verdad, sin duplicar datos).
-
-    codigoDocumentoSector=47 viene confirmado del XSD oficial
-    'notaElectronicaCreditoDebitoDescuento.xsd' (fixed="47") -- NO es
-    el 24 que se habia inferido antes de un catalogo interno distinto
-    (ActividadDocumentoSector), que resulto ser una clasificacion
-    separada, no el campo real que exige este documento.
+    unica de verdad, sin duplicar datos). Ver
+    fe.services.emitir_nota_credito_debito_sin.
 
     Decisiones tomadas el 26/08/2026:
       - Primera version: solo DEVOLUCION TOTAL de la factura (no
@@ -514,11 +586,15 @@ class NotaCreditoDebito(ClaseModelo2):
     SIN_PENDIENTE = 'pendiente'
     SIN_VALIDADA = 'validada'
     SIN_OBSERVADA = 'observada'
+    SIN_ANULADA = 'anulada'
+    SIN_REVERTIDA = 'revertida'
     SIN_ESTADO_CHOICES = [
         (SIN_NO_ENVIADA, 'Sin Emitir al SIN'),
         (SIN_PENDIENTE, 'Pendiente SIN'),
         (SIN_VALIDADA, 'Validada SIN'),
         (SIN_OBSERVADA, 'Observada SIN'),
+        (SIN_ANULADA, 'Anulada ante el SIN'),
+        (SIN_REVERTIDA, 'Anulación revertida ante el SIN'),
     ]
 
     factura_original = models.ForeignKey(
@@ -534,6 +610,12 @@ class NotaCreditoDebito(ClaseModelo2):
 
     cuf = models.CharField(max_length=100, null=True, blank=True)
     cufd = models.CharField(max_length=100, null=True, blank=True)
+    # codigo_control (agregado 19/09/2026, mismo motivo que
+    # FacturaEnc.codigo_control del 17/09): se calculaba en
+    # emitir_nota_credito_debito_sin para derivar el CUF pero nunca se
+    # guardaba -- lo exige el verificador publico del SIN junto al
+    # resto de los datos impresos en la representacion grafica de la NCD.
+    codigo_control = models.CharField(max_length=20, null=True, blank=True)
 
     monto_total_original = models.FloatField(
         help_text="Total de la factura original (montoTotalOriginal ante el SIN)."
@@ -564,6 +646,31 @@ class NotaCreditoDebito(ClaseModelo2):
         related_name='notas_credito_debito_autorizadas',
         help_text="Supervisor que autorizo la emision de esta NCD."
     )
+
+    # --- Anulacion de la NCD (agregado 15/09/2026, Etapa VII de
+    # certificacion) -- mismo patron que FacturaEnc.anulado: un
+    # booleano separado de estado_sin (que sigue guardando el ultimo
+    # codigoEstado devuelto por el SIN, ahora incluyendo SIN_ANULADA),
+    # mas los campos de auditoria de quien/cuando/por que. Ante el SIN
+    # se anula via anulacionDocumentoAjuste (WSDL_DOCUMENTO_AJUSTE),
+    # NUNCA anulacionFactura -- ver fe.services.anular_nota_credito_debito_sin.
+    anulada = models.BooleanField(default=False)
+    fecha_anulacion = models.DateTimeField(null=True, blank=True)
+    motivo_anulacion = models.CharField(max_length=250, null=True, blank=True)
+    usuario_anulacion = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    codigo_motivo_anulacion_sin = models.PositiveSmallIntegerField(null=True, blank=True)
+    fecha_anulacion_sin = models.DateTimeField(null=True, blank=True)
+
+    # --- Reversion de la anulacion de la NCD (agregado 15/09/2026,
+    # Etapa XI -- confirmada en el dashboard real del SIN: la fila
+    # especifica de NCD, codigoDocumentoSector=24/tipoFacturaDocumento=3,
+    # SI pide esto, igual que la anulacion). Mismo patron que
+    # FacturaEnc.fecha_reversion_sin -- via
+    # reversionAnulacionDocumentoAjuste (WSDL_DOCUMENTO_AJUSTE), ver
+    # fe.services.revertir_anulacion_nota_credito_debito_sin.
+    fecha_reversion_sin = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"NCD N° {self.id} — Factura N° {self.factura_original_id}"
@@ -653,11 +760,19 @@ def detalle_fac_guardar(sender,instance,**kwargs):
             enc.saldo_pendiente = round((enc.sub_total - enc.descuento) - total_abonado, 2)
         enc.save()
 
-    prod=Producto.objects.filter(pk=producto_id).first()
-    if prod:
-        cantidad = int(prod.existencia) - int(instance.cantidad)
-        prod.existencia = cantidad
-        prod.save()
+    # CORREGIDO 16/09/2026 -- revision de seguridad/bugs (Etapa A):
+    # leer existencia, restar en Python y guardar es un read-modify-
+    # write no atomico -- con dos cajas/sucursales vendiendo el mismo
+    # producto casi al mismo tiempo (escenario real con multiples
+    # PuntoVenta), el ultimo save() gana y el otro decremento se pierde
+    # en silencio, dejando existencia mas alta de lo real. F() empuja
+    # la resta a la base de datos, atomica por fila.
+    #
+    # AMPLIADO 20/09/2026 (Fase 2): ajustar_stock_sucursal reemplaza el
+    # F() suelto de arriba -- mismo criterio atomico, pero ahora
+    # descuenta de la sucursal REAL de esta factura, no de un pozo
+    # global compartido entre todas las sucursales.
+    ajustar_stock_sucursal(producto_id, enc.sucursal if enc else None, -instance.cantidad)
 
 @receiver(post_delete, sender=FacturaDet)
 def detalle_factura_borrar(sender,instance, **kwargs):
@@ -682,11 +797,8 @@ def detalle_factura_borrar(sender,instance, **kwargs):
         enc.save()
 
     if not ya_estaba_anulada:
-        prod=Producto.objects.filter(pk=id_producto).first()
-        if prod:
-            cantidad = int(prod.existencia) + int(instance.cantidad)
-            prod.existencia = cantidad
-            prod.save()
+        # Mismo fix de atomicidad + sucursal que detalle_fac_guardar (ver comentario ahi).
+        ajustar_stock_sucursal(id_producto, enc.sucursal if enc else None, instance.cantidad)
 
 
 @receiver(post_save, sender=Pago)

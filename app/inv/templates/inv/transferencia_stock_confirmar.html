@@ -1,0 +1,58 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="col-xl-8 col-md-10 mx-auto">
+    <div class="card border-left-success shadow h-100 py-2">
+        <div class="card-body">
+            <div class="csg-form-title">Confirmar Recepción — Transferencia #{{ obj.id }}</div>
+            <div class="dropdown-divider"></div>
+
+            <div class="row">
+                <div class="col-6">
+                    <p><b>Origen:</b> {{ obj.sucursal_origen }}</p>
+                    <p><b>Destino:</b> {{ obj.sucursal_destino }}</p>
+                </div>
+                <div class="col-6">
+                    <p><b>Fecha de envío:</b> {{ obj.fecha_envio|date:"d/m/Y H:i" }}</p>
+                    <p><b>Estado:</b> <span class="badge badge-warning">{{ obj.get_estado_display }}</span></p>
+                </div>
+            </div>
+
+            <table class="table table-striped table-hover table-sm" style="width:100%">
+                <thead>
+                    <th>Producto</th>
+                    <th>Cantidad</th>
+                    <th>Unidad</th>
+                </thead>
+                <tbody>
+                    {% for item in obj.detalle.all %}
+                    <tr>
+                        <td>{{ item.producto }}</td>
+                        <td>{{ item.cantidad }}</td>
+                        <td>{{ item.producto.unidad_medida.descripcion|default:"-" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="3" class="text-center text-muted">Esta transferencia no tiene ningún producto cargado.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle mr-2"></i>
+                Al confirmar, el stock detallado arriba se sumará a <b>{{ obj.sucursal_destino }}</b> y la transferencia
+                quedará marcada como <b>Confirmada</b>. Esta acción no se puede deshacer.
+            </div>
+
+            <form method="post">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success" {% if not obj.detalle.all %}disabled{% endif %}>
+                    <i class="fas fa-check"></i> Confirmar Recepción
+                </button>
+                <a href="{% url 'inv:transferencia_stock_list' %}" class="btn btn-secondary">
+                    <i class="far fa-hand-point-left"></i> Cancelar
+                </a>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

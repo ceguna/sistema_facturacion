@@ -54,7 +54,7 @@
             {% else %}<span class="badge badge-secondary">Inactivo</span>{% endif %}
           </td>
           <td>
-            <button class="btn btn-warning btn-circle" onclick="return abrir_modal('{% url 'inv:tipo_cambio_edit' item.id %}')">
+            <button class="btn btn-warning btn-circle" onclick="return abrir_modal('{% url 'inv:tipo_cambio_edit' item.id %}')" title="Editar">
               <i class="far fa-edit"></i>
             </button>
           </td>

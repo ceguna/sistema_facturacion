@@ -66,10 +66,10 @@
                         {% endif %}
                     </td>
                     <td>
-                        <button class="btn btn-warning btn-circle" onclick="return abrir_modal('{% url 'cmp:proveedor_edit' item.id %}')"><i class="far fa-edit"></i></button>
-                        <button class="btn btn-danger btn-circle" onclick="return abrir_modal('{% url 'cmp:proveedor_inactivar' item.id %}')">
+                        <button class="btn btn-warning btn-circle" onclick="return abrir_modal('{% url 'cmp:proveedor_edit' item.id %}')" title="Editar"><i class="far fa-edit"></i></button>
+                        <button class="btn btn-danger btn-circle" onclick="return abrir_modal('{% url 'cmp:proveedor_inactivar' item.id %}')" title="Activar / Inactivar">
                             <i class="far fa-thumbs-down"></i>
-                        </button>                
+                        </button>
                     </td>
                 </tr>
                 {% endfor%}

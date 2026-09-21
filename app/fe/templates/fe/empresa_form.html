@@ -42,12 +42,31 @@
                     </div>
                     <div class="row">
                         <div class="col-md-6 form-group">
+                            <!-- tipo_empresa (13/09/2026, instructivo de Ajuste de
+                                 Inventario): decide como se calcula el costo del
+                                 producto SOLO en una entrada por Produccion Interna
+                                 -- Comercial promedia, Industrial pisa el ultimo
+                                 valor. Se define una vez al registrar la empresa. -->
+                            <label>{{ form.tipo_empresa.label }}</label>
+                            {{ form.tipo_empresa }}
+                            <small class="form-text text-muted">{{ form.tipo_empresa.help_text }}</small>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 form-group">
                             <label>{{ form.nit.label }}</label>
                             {{ form.nit }}
                         </div>
                         <div class="col-md-6 form-group">
                             <label>{{ form.codigo_actividad_economica.label }}</label>
                             {{ form.codigo_actividad_economica }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8 form-group">
+                            <label>{{ form.direccion.label }}</label>
+                            {{ form.direccion }}
+                            <small class="form-text text-muted">{{ form.direccion.help_text }}</small>
                         </div>
                     </div>
                     <div class="row">
@@ -68,11 +87,31 @@
                             <div class="mt-2">
                                 <img src="{{ obj.logo.url }}" alt="Logo actual" style="max-height: 80px;">
                             </div>
+                            {% else %}
+                            <small class="form-text text-muted">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                Todavía no cargó un logo — se usa un texto genérico en su lugar,
+                                tanto en las facturas como en el menú del sistema.
+                            </small>
                             {% endif %}
                         </div>
                         <div class="col-md-6 form-group">
                             <label>{{ form.ambiente.label }}</label>
                             {{ form.ambiente }}
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-8 form-group">
+                            <!-- Formato de factura (17/09/2026): un solo lugar
+                                 elige el formato para TODOS los caminos donde
+                                 se genera el documento (ver en pantalla,
+                                 descargar PDF, correo, WhatsApp). -->
+                            <label>{{ form.formato_factura.label }}</label>
+                            {{ form.formato_factura }}
+                            <small class="form-text text-muted">
+                                Aplica a la vista en pantalla, la descarga en PDF, y el envío por correo/WhatsApp.
+                            </small>
                         </div>
                     </div>
 
@@ -134,6 +173,46 @@
                             <label>{{ form.version_sistema.label }}</label>
                             {{ form.version_sistema }}
                         </div>
+                    </div>
+
+                    <div class="dropdown-divider"></div>
+                    <!-- Correo saliente (Fase 1, 16/09/2026): cada
+                         empresa carga aca su propia cuenta de correo
+                         para el boton "Enviar por correo" de las
+                         facturas -- ya no hace falta editar el .env del
+                         servidor a mano por cada cliente. Si se deja
+                         vacio, el sistema usa la configuracion general
+                         del servidor como respaldo. -->
+                    <h6 class="font-weight-bold text-primary">Correo saliente (para enviar facturas al cliente)</h6>
+                    <small class="text-muted d-block mb-2">
+                        Opcional. Si lo deja vacío, se usa la configuración general del servidor.
+                    </small>
+                    <div class="row">
+                        <div class="col-md-8 form-group">
+                            <label>{{ form.email_host.label }}</label>
+                            {{ form.email_host }}
+                        </div>
+                        <div class="col-md-4 form-group">
+                            <label>{{ form.email_port.label }}</label>
+                            {{ form.email_port }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.email_host_user.label }}</label>
+                            {{ form.email_host_user }}
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>{{ form.email_host_password.label }}</label>
+                            {{ form.email_host_password }}
+                            <small class="form-text text-muted">
+                                {% if obj.email_host_password %}Ya hay una contraseña guardada — déjelo en blanco para mantenerla.{% endif %}
+                            </small>
+                        </div>
+                    </div>
+                    <div class="form-group form-check">
+                        {{ form.email_use_tls }}
+                        <label class="form-check-label">{{ form.email_use_tls.label }}</label>
                     </div>
 
                     <div class="dropdown-divider"></div>

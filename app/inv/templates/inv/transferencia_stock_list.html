@@ -1,0 +1,84 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+        <h4 class="m-0 font-weight-bold text-primary">Transferencias de Stock entre Sucursales</h4>
+        <div class="dropdown no-arrow">
+            <a class="dropdown-toggle" href="#" role="button" id="dropdownMenuLink"
+                data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+            </a>
+            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in" aria-labelledby="dropdownMenuLink">
+                <div class="dropdown-header">Acciones:</div>
+                <a class="dropdown-item" href="{% url 'inv:transferencia_stock_new' %}"><i class="fas fa-dolly"></i> Nueva Transferencia</a>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        {% if not obj %}
+            <div class="alert alert-info"><i class="fas fa-dolly mr-2"></i>Todavía no se registró ninguna transferencia de stock entre sucursales. Usa el botón <b>Nueva Transferencia</b> para enviar mercadería de tu sucursal a otra.</div>
+        {% endif %}
+        <div class="buttons-toolbar">
+            <a class="btn btn-success" href="{% url 'inv:transferencia_stock_new' %}"><i class="fas fa-dolly"></i> Nueva Transferencia</a>
+        </div>
+        <table
+         id="table"
+         data-toggle="table"
+         data-pagination="true"
+         data-search="true"
+         data-show-columns="true"
+         data-show-toggle="true"
+         data-show-fullscreen="true"
+         data-toolbar=".buttons-toolbar"
+         data-show-export="True"
+         data-export-types='["csv","txt","xlsx","pdf"]'
+         data-show-pagination-switch="true"
+         data-locale="es-NI"
+         class="table table-striped table-hover" style="width:100%">
+            <thead>
+                <th data-sortable="true" data-field="id">Id</th>
+                <th data-sortable="true" data-field="origen">Origen</th>
+                <th data-sortable="true" data-field="destino">Destino</th>
+                <th data-sortable="true" data-field="fecha_envio">Fecha Envío</th>
+                <th data-sortable="true" data-field="fecha_confirmacion">Fecha Confirmación</th>
+                <th data-sortable="true" data-field="estado">Estado</th>
+                <th class="all">Acciones</th>
+            </thead>
+            <tbody>
+                {% for item in obj %}
+                <tr>
+                    <td>{{ item.id }}</td>
+                    <td>{{ item.sucursal_origen }}</td>
+                    <td>{{ item.sucursal_destino }}</td>
+                    <td>{{ item.fecha_envio|date:"d/m/Y H:i" }}</td>
+                    <td>{{ item.fecha_confirmacion|date:"d/m/Y H:i"|default:"-" }}</td>
+                    <td>
+                        {% if item.estado == 'en_transito' %}
+                            <span class="badge badge-warning">{{ item.get_estado_display }}</span>
+                        {% elif item.estado == 'confirmada' %}
+                            <span class="badge badge-success">{{ item.get_estado_display }}</span>
+                        {% else %}
+                            <span class="badge badge-secondary">{{ item.get_estado_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.estado == 'en_transito' %}
+                            <a class="btn btn-warning btn-circle" href="{% url 'inv:transferencia_stock_edit' item.id %}" title="Ver / Agregar líneas"><i class="far fa-edit"></i></a>
+                            {% if perms.inv.confirmar_transferenciastock %}
+                            <a class="btn btn-success btn-circle" href="{% url 'inv:transferencia_stock_confirmar' item.id %}" title="Confirmar Recepción"><i class="fas fa-check"></i></a>
+                            {% endif %}
+                            {% if perms.inv.cancelar_transferenciastock %}
+                            <a class="btn btn-danger btn-circle" href="{% url 'inv:transferencia_stock_cancelar' item.id %}" title="Cancelar"><i class="fas fa-times"></i></a>
+                            {% endif %}
+                        {% else %}
+                            <a class="btn btn-secondary btn-circle" href="{% url 'inv:transferencia_stock_edit' item.id %}" title="Ver detalle"><i class="fas fa-eye"></i></a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor%}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -40,6 +40,7 @@ from zeep.exceptions import Error as ZeepError
 from zeep.transports import Transport
 from zeep.helpers import serialize_object
 from requests import Session
+from django.db.models import F
 
 from .cuf import calcular_cuf
 from .factura_xml import construir_factura_xml, construir_nota_credito_debito_xml
@@ -48,6 +49,16 @@ from .models import Empresa, Sucursal, PuntoVenta
 WSDL_CODIGOS = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionCodigos?wsdl"
 WSDL_FACTURACION = "https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionCompraVenta?wsdl"
 WSDL_OPERACIONES = "https://pilotosiatservicios.impuestos.gob.bo/v2/FacturacionOperaciones?wsdl"
+# CORREGIDO 12/09/2026 -- confirmado en el PDF "Solicitud de Autorizacion
+# de Sistema Informatico de Facturacion" (Nº 9454) que la Nota de
+# Credito-Debito usa un WSDL COMPLETAMENTE DISTINTO al de facturas
+# normales -- nunca se habia usado este, por eso el error 995
+# ("servicio no disponible") persistia sin importar que otro dato se
+# corrigiera. Operaciones confirmadas dentro de este WSDL (via script
+# de inspeccion, 12/09/2026): recepcionDocumentoAjuste,
+# anulacionDocumentoAjuste, reversionAnulacionDocumentoAjuste,
+# verificacionEstadoDocumentoAjuste, verificarComunicacion.
+WSDL_DOCUMENTO_AJUSTE = "https://pilotosiatservicios.impuestos.gob.bo/v2/ServicioFacturacionDocumentoAjuste?wsdl"
 
 TIMEOUT_CONEXION = 15
 TIMEOUT_OPERACION = 45
@@ -86,6 +97,17 @@ CODIGO_MODALIDAD = 1          # Electronica en Linea
 CODIGO_TIPO_EMISION = 1       # En linea
 CODIGO_DOCUMENTO_SECTOR = 1   # Compra y Venta
 TIPO_FACTURA_DOCUMENTO = 1    # Con derecho a credito fiscal
+# REVERTIDO 12/09/2026 -- el cambio del 10/09/2026 (poner esto en 24,
+# "confirmado" por el soporte) resulto ser INCORRECTO. Con el WSDL
+# correcto (ServicioFacturacionDocumentoAjuste, ver WSDL_DOCUMENTO_AJUSTE
+# mas abajo) el propio SIN respondio explicito: "EL PARAMETRO TIPO
+# FACTURA DOCUMENTO ES INVALIDO Tipo de factura esperado 3, enviado 24"
+# (codigo 915). El consejo de "24 en ambos" probablemente se referia
+# solo a codigoDocumentoSector (que nunca cambio, siempre fue 24) -- se
+# interpreto mal como que TAMBIEN aplicaba a este campo. Ese error
+# quedo OCULTO todo este tiempo porque el 995 (WSDL equivocado) pasaba
+# primero y nunca dejaba llegar la solicitud tan lejos como para
+# validar este dato.
 TIPO_FACTURA_DOCUMENTO_AJUSTE = 3
 CODIGO_DOCUMENTO_SECTOR_NCD = 24
 CODIGO_TIPO_DOC_CI = 1
@@ -101,7 +123,7 @@ class EmisionSinError(Exception):
     pass
 
 
-def _cliente_soap(wsdl, token):
+def _cliente_soap(wsdl, token, history=None):
     session = Session()
     session.headers.update({"apikey": f"TokenApi {token}"})
     transport = Transport(
@@ -109,8 +131,9 @@ def _cliente_soap(wsdl, token):
         timeout=TIMEOUT_CONEXION,
         operation_timeout=TIMEOUT_OPERACION,
     )
+    plugins = [history] if history else []
     try:
-        return Client(wsdl=wsdl, transport=transport)
+        return Client(wsdl=wsdl, transport=transport, plugins=plugins)
     except (RequestException, ZeepError, socket.timeout) as e:
         raise EmisionSinError(
             f"No se pudo conectar con el SIN (servicio no disponible o sin respuesta): {e}"
@@ -213,7 +236,7 @@ def _validar_homologacion(factura_det_qs):
         )
 
 
-def _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_venta, fecha_hora):
+def _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_venta, fecha_hora, leyenda):
     cliente = factura_enc.cliente
     if cliente.nit:
         codigo_tipo_doc = CODIGO_TIPO_DOC_NIT
@@ -247,7 +270,7 @@ def _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_vent
         "tipoCambio": 1,
         "montoTotalMoneda": factura_enc.total,
         "descuentoAdicional": 0,
-        "leyenda": LEYENDA_DEFAULT,
+        "leyenda": leyenda,
         "usuario": "sistema",
         "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR,
     }
@@ -282,7 +305,13 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     """
     from fac.models import FacturaDet
 
-    empresa, sucursal = _obtener_empresa_y_sucursal(0)
+    # Fase 2 (20/09/2026): usa la sucursal REAL de esta factura, no
+    # Casa Matriz fijo -- antes el sistema solo podia emitir contra
+    # codigo_sucursal=0 sin importar cuantas Sucursal hubiera cargadas.
+    # None (dato viejo sin migrar) cae en 0 -- mismo comportamiento de
+    # siempre.
+    codigo_sucursal = factura_enc.sucursal.codigo_sucursal if factura_enc.sucursal else 0
+    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_sucursal)
     cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
     codigo_ambiente = (
         CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
@@ -311,6 +340,16 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
         raise EmisionSinError("La factura no tiene detalle (ningun producto cargado).")
     _validar_homologacion(factura_det_qs)
 
+    # Leyenda (checklist SIN Fase II, punto 4): se elige UNA sola vez por
+    # emision, priorizando la actividad economica del primer producto de
+    # la factura, y se guarda en factura_enc -- asi el texto mandado al
+    # SIN y el que se imprime despues en la representacion grafica son
+    # siempre el mismo (ver comentario del campo en fac/models.py).
+    from catalogos.services import elegir_leyenda_aleatoria
+    actividad_primera_linea = factura_det_qs[0].producto.actividad_economica_sin
+    leyenda = elegir_leyenda_aleatoria(actividad_primera_linea) or LEYENDA_DEFAULT
+    factura_enc.leyenda = leyenda
+
     token = _obtener_token()
     fecha_hora = timezone.localtime(timezone.now())
 
@@ -338,7 +377,7 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
     )
 
     t0 = time.time()
-    cabecera = _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_venta, fecha_hora)
+    cabecera = _armar_cabecera(factura_enc, empresa, sucursal, cuf, cufd, codigo_punto_venta, fecha_hora, leyenda)
     detalle = _armar_detalle(factura_det_qs)
     xml_sin_firmar = construir_factura_xml(cabecera, detalle)
 
@@ -395,6 +434,10 @@ def emitir_factura_sin(factura_enc, codigo_punto_venta=0):
 
     factura_enc.cuf = cuf
     factura_enc.cufd = cufd
+    # codigo_control ya se calculaba (se necesita para derivar el CUF)
+    # pero nunca se guardaba -- agregado 17/09/2026, lo exige el
+    # verificador publico del SIN junto al resto de los datos impresos.
+    factura_enc.codigo_control = codigo_control
     factura_enc.fecha_hora_envio_sin = timezone.now()
     factura_enc.codigo_recepcion_sin = resp.get("codigoRecepcion")
     factura_enc.mensaje_sin = str(resp.get("mensajesList") or "")
@@ -467,7 +510,10 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
     if not detalles_originales:
         raise EmisionSinError("La factura original no tiene detalle (ningun producto cargado).")
 
-    empresa, sucursal = _obtener_empresa_y_sucursal(0)
+    # Fase 2 (20/09/2026): sucursal de la factura ORIGINAL -- la NCD la
+    # corrige, tiene que emitirse desde la misma sucursal.
+    codigo_sucursal = factura_original.sucursal.codigo_sucursal if factura_original.sucursal else 0
+    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_sucursal)
     cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
     codigo_ambiente = (
         CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
@@ -576,7 +622,16 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
     xml_gzip = gzip.compress(xml_bytes)
     hash_archivo = hashlib.sha256(xml_gzip).hexdigest().upper()
 
-    client_facturacion = _cliente_soap(WSDL_FACTURACION, token)
+    # RESUELTO 12/09/2026 -- confirmado con una emision real
+    # (codigoEstado=908, VALIDADA): la NCD usa el WSDL
+    # WSDL_DOCUMENTO_AJUSTE (ServicioFacturacionDocumentoAjuste) con la
+    # operacion recepcionDocumentoAjuste -- NUNCA recepcionFactura del
+    # WSDL de facturas normales, que es lo que se uso por error hasta
+    # esta fecha (causaba el error 995 "SERVICIO NO DISPONIBLE").
+    # tipoFacturaDocumento=3 (con derecho a credito fiscal, igual que
+    # una factura normal) y codigoDocumentoSector=24 son los valores
+    # correctos, confirmados por el propio SIN.
+    client_documento_ajuste = _cliente_soap(WSDL_DOCUMENTO_AJUSTE, token)
     solicitud_envio = {
         "codigoAmbiente": codigo_ambiente,
         "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR_NCD,
@@ -595,19 +650,54 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
     }
     resp = _llamar(
         "envío de la Nota de Crédito-Débito",
-        lambda: serialize_object(client_facturacion.service.recepcionFactura(
-            SolicitudServicioRecepcionFactura=solicitud_envio
+        lambda: serialize_object(client_documento_ajuste.service.recepcionDocumentoAjuste(
+            SolicitudServicioRecepcionDocumentoAjuste=solicitud_envio
         ))
     )
 
     nota_credito_debito.cuf = cuf
     nota_credito_debito.cufd = cufd
+    nota_credito_debito.codigo_control = codigo_control
     nota_credito_debito.codigo_recepcion_sin = resp.get("codigoRecepcion")
     nota_credito_debito.mensaje_sin = str(resp.get("mensajesList") or "")
     nota_credito_debito.xml_firmado = xml_bytes.decode('utf-8')
 
     if resp["transaccion"] and resp.get("codigoEstado") == 908:
         nota_credito_debito.estado_sin = nota_credito_debito.SIN_VALIDADA
+        # NUEVO 12/09/2026: la NCD (devolucion total, unica version
+        # soportada) devuelve el stock al inventario -- mismo
+        # tratamiento que ya usa anular_factura en fac/views.py (es el
+        # mismo evento de negocio, la venta se revierte; solo se
+        # documenta distinto porque Anular ya no era una opcion una
+        # vez que la factura quedo reportada al SIN). Se hace SOLO
+        # aca, condicionado a Validada de verdad (908) -- nunca en
+        # Pendiente ni Observada, para no devolver stock por una NCD
+        # que el SIN todavia no confirmo.
+        # CORREGIDO 16/09/2026 -- revision de seguridad/bugs (Etapa A):
+        # antes era read-modify-write en Python (leer existencia, sumar,
+        # guardar), no atomico -- con caja/sucursal concurrente
+        # vendiendo el mismo producto, se puede perder un ajuste en
+        # silencio. F() lo hace atomico en la base de datos.
+        # AMPLIADO 20/09/2026 (Fase 2): ajustar_stock_sucursal devuelve
+        # el stock a la sucursal REAL de la factura original, no a un
+        # pozo global.
+        from inv.models import ajustar_stock_sucursal
+        for det in detalles_originales:
+            ajustar_stock_sucursal(det.producto_id, factura_original.sucursal, det.cantidad)
+
+        # NUEVO 15/09/2026: mismo hueco que tenia anular_factura antes
+        # de corregirse -- una NCD (devolucion TOTAL) es, en los
+        # hechos, el mismo evento de negocio que anular una factura
+        # (la venta se revierte). Si la factura original era a
+        # credito, hay que limpiar saldo_pendiente igual que ya hace
+        # anular_factura en fac/views.py -- si no, queda un saldo
+        # fantasma cobrable sobre un documento que el SIN ya acepto
+        # como credito fiscal devuelto en su totalidad. Confirmado en
+        # vivo: la factura 777 (a credito) quedo con saldo_pendiente=80
+        # despues de una NCD validada por el SIN.
+        if factura_original.forma_pago == factura_original.FORMA_PAGO_CREDITO:
+            factura_original.saldo_pendiente = 0
+            factura_original.save()
     elif resp["transaccion"] and resp.get("codigoEstado") == 901:
         nota_credito_debito.estado_sin = nota_credito_debito.SIN_PENDIENTE
     else:
@@ -619,6 +709,217 @@ def emitir_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
         raise EmisionSinError(f"El SIN rechazo la Nota de Credito-Debito: {resp['mensajesList']}")
 
     return nota_credito_debito
+
+
+def anular_nota_credito_debito_sin(nota_credito_debito, codigo_motivo, codigo_punto_venta=0):
+    """
+    Anula ante el SIN una Nota de Credito-Debito ya validada (Etapa VII
+    de certificacion, ver instructivo NCD Etapas IV/VII/VIII/XI).
+
+    Mismo patron que anular_factura_sin, con las mismas dos diferencias
+    de fondo que emitir_nota_credito_debito_sin tiene respecto a
+    emitir_factura_sin: WSDL distinto (WSDL_DOCUMENTO_AJUSTE, no
+    WSDL_FACTURACION) y operacion distinta (anulacionDocumentoAjuste,
+    no anulacionFactura). El 'cuf' que viaja en la solicitud es el de
+    la NCD, NO el de la factura original -- se esta anulando el
+    documento de ajuste en si, no la factura que corrige.
+
+    Firma de anulacionDocumentoAjuste confirmada por inspeccion directa
+    del WSDL real (14-15/09/2026, prototipo/sin/
+    inspeccionar_firma_completa_documento_ajuste.py, solo lectura, sin
+    enviar nada al SIN): identica a SolicitudServicioAnulacionFactura
+    (mismos 13 campos) salvo que viaja por el WSDL de Documento Ajuste.
+    """
+    if not nota_credito_debito.cuf:
+        raise EmisionSinError(
+            "La Nota de Credito-Debito no tiene CUF -- nunca fue emitida ante el SIN."
+        )
+    # CORREGIDO 17/09/2026: Validada y Revertida son, a estos efectos,
+    # el mismo estado -- la NCD esta vigente ahora mismo en ambos
+    # casos (revertir una anulacion deja la correccion en efecto de
+    # nuevo). Antes solo aceptaba Validada, asi que no se podia volver
+    # a anular una NCD despues de revertir su anulacion.
+    if nota_credito_debito.estado_sin not in (
+        nota_credito_debito.SIN_VALIDADA, nota_credito_debito.SIN_REVERTIDA
+    ):
+        raise EmisionSinError(
+            "Solo se puede anular una Nota de Credito-Debito que este vigente (Validada o con "
+            f"una anulacion revertida) por el SIN (estado actual: {nota_credito_debito.get_estado_sin_display()})."
+        )
+
+    # Fase 2 (20/09/2026): sucursal de la factura original que esta NCD corrige.
+    codigo_sucursal = (
+        nota_credito_debito.factura_original.sucursal.codigo_sucursal
+        if nota_credito_debito.factura_original.sucursal else 0
+    )
+    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_sucursal)
+    cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
+    codigo_ambiente = (
+        CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
+        else CODIGO_AMBIENTE_PILOTO
+    )
+    token = _obtener_token()
+
+    client_codigos = _cliente_soap(WSDL_CODIGOS, token)
+    cufd, _ = _pedir_cufd(client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente)
+
+    client_documento_ajuste = _cliente_soap(WSDL_DOCUMENTO_AJUSTE, token)
+    solicitud = {
+        "codigoAmbiente": codigo_ambiente,
+        "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR_NCD,
+        "codigoEmision": CODIGO_TIPO_EMISION,
+        "codigoModalidad": CODIGO_MODALIDAD,
+        "codigoPuntoVenta": codigo_punto_venta,
+        "codigoSistema": empresa.codigo_sistema,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "cufd": cufd,
+        "cuis": cuis,
+        "nit": empresa.nit,
+        "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO_AJUSTE,
+        "codigoMotivo": codigo_motivo,
+        "cuf": nota_credito_debito.cuf,
+    }
+    resp = _llamar(
+        "anulación de la Nota de Crédito-Débito",
+        lambda: serialize_object(client_documento_ajuste.service.anulacionDocumentoAjuste(
+            SolicitudServicioAnulacionDocumentoAjuste=solicitud
+        ))
+    )
+
+    nota_credito_debito.codigo_motivo_anulacion_sin = codigo_motivo
+    nota_credito_debito.fecha_anulacion_sin = timezone.now()
+    nota_credito_debito.mensaje_sin = str(resp.get("mensajesList") or "")
+
+    # Mismo codigoEstado=905 que confirma una anulacion de factura
+    # normal (anulacionFactura) -- las dos operaciones comparten el
+    # mismo catalogo de codigoEstado del SIN.
+    if resp.get("transaccion") and resp.get("codigoEstado") == 905:
+        nota_credito_debito.estado_sin = nota_credito_debito.SIN_ANULADA
+
+        # CORREGIDO 15/09/2026 (hallazgo de Carlos probando contra el
+        # SIN real, factura 778): anular la NCD deshace la devolucion
+        # que hizo emitir_nota_credito_debito_sin -- si no se revierte
+        # el stock aca, el producto queda "de mas" en inventario
+        # (entro por la NCD y nunca volvio a salir al anularla). Mismo
+        # criterio inverso al de la emision: se saca del inventario la
+        # misma cantidad que en su momento se devolvio, linea por
+        # linea de la factura original. Idem saldo_pendiente: si la
+        # NCD lo habia dejado en 0 (factura a credito), anularla
+        # revive la deuda original -- la correccion que la habia
+        # saldado ya no existe.
+        from fac.models import FacturaDet
+        from inv.models import ajustar_stock_sucursal
+        factura_original = nota_credito_debito.factura_original
+        detalles_originales = FacturaDet.objects.filter(factura=factura_original).select_related('producto')
+        for det in detalles_originales:
+            # Atomico + sucursal (Fase 2) -- ver comentario en emitir_nota_credito_debito_sin.
+            ajustar_stock_sucursal(det.producto_id, factura_original.sucursal, -det.cantidad)
+        if factura_original.forma_pago == factura_original.FORMA_PAGO_CREDITO:
+            factura_original.saldo_pendiente = factura_original.total
+            factura_original.save()
+
+        nota_credito_debito.save()
+        return nota_credito_debito
+
+    nota_credito_debito.save()
+    raise EmisionSinError(f"El SIN rechazo la anulacion de la NCD: {resp.get('mensajesList')}")
+
+
+def revertir_anulacion_nota_credito_debito_sin(nota_credito_debito, codigo_punto_venta=0):
+    """
+    Revierte ante el SIN la anulacion de una Nota de Credito-Debito
+    (Etapa XI de certificacion, confirmada en el dashboard real del SIN
+    el 15/09/2026 -- la fila especifica de NCD, con
+    codigoDocumentoSector=24/tipoFacturaDocumento=3, pide esta
+    reversion igual que la de una factura normal).
+
+    Mismo patron que revertir_anulacion_sin, con las mismas dos
+    diferencias de fondo que el resto de las operaciones de NCD: WSDL
+    distinto (WSDL_DOCUMENTO_AJUSTE) y operacion distinta
+    (reversionAnulacionDocumentoAjuste). El 'cuf' es el de la NCD.
+
+    Firma confirmada por inspeccion directa del WSDL real
+    (prototipo/sin/inspeccionar_firma_completa_documento_ajuste.py,
+    solo lectura): identica a SolicitudServicioReversionAnulacionFactura
+    (sin codigoMotivo), salvo el WSDL.
+    """
+    if not nota_credito_debito.cuf:
+        raise EmisionSinError(
+            "La Nota de Credito-Debito no tiene CUF -- nunca fue emitida ante el SIN."
+        )
+    if nota_credito_debito.estado_sin != nota_credito_debito.SIN_ANULADA:
+        raise EmisionSinError(
+            "Solo se puede revertir la anulacion de una Nota de Credito-Debito que este "
+            f"anulada ante el SIN (estado actual: {nota_credito_debito.get_estado_sin_display()})."
+        )
+
+    # Fase 2 (20/09/2026): sucursal de la factura original que esta NCD corrige.
+    codigo_sucursal = (
+        nota_credito_debito.factura_original.sucursal.codigo_sucursal
+        if nota_credito_debito.factura_original.sucursal else 0
+    )
+    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_sucursal)
+    cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
+    codigo_ambiente = (
+        CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
+        else CODIGO_AMBIENTE_PILOTO
+    )
+    token = _obtener_token()
+
+    client_codigos = _cliente_soap(WSDL_CODIGOS, token)
+    cufd, _ = _pedir_cufd(client_codigos, empresa, sucursal, cuis, codigo_punto_venta, codigo_ambiente)
+
+    client_documento_ajuste = _cliente_soap(WSDL_DOCUMENTO_AJUSTE, token)
+    solicitud = {
+        "codigoAmbiente": codigo_ambiente,
+        "codigoDocumentoSector": CODIGO_DOCUMENTO_SECTOR_NCD,
+        "codigoEmision": CODIGO_TIPO_EMISION,
+        "codigoModalidad": CODIGO_MODALIDAD,
+        "codigoPuntoVenta": codigo_punto_venta,
+        "codigoSistema": empresa.codigo_sistema,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "cufd": cufd,
+        "cuis": cuis,
+        "nit": empresa.nit,
+        "tipoFacturaDocumento": TIPO_FACTURA_DOCUMENTO_AJUSTE,
+        "cuf": nota_credito_debito.cuf,
+    }
+    resp = _llamar(
+        "reversión de la anulación de la Nota de Crédito-Débito",
+        lambda: serialize_object(client_documento_ajuste.service.reversionAnulacionDocumentoAjuste(
+            SolicitudServicioReversionAnulacionDocumentoAjuste=solicitud
+        ))
+    )
+
+    nota_credito_debito.mensaje_sin = str(resp.get("mensajesList") or "")
+
+    # Mismo codigoEstado=907 que confirma una reversion de anulacion de
+    # factura normal (reversionAnulacionFactura).
+    if resp.get("transaccion") and resp.get("codigoEstado") == 907:
+        nota_credito_debito.estado_sin = nota_credito_debito.SIN_REVERTIDA
+        nota_credito_debito.fecha_reversion_sin = timezone.now()
+
+        # Simetrico a anular_nota_credito_debito_sin: revertir la
+        # anulacion revive la devolucion -- el stock vuelve a entrar
+        # (misma cantidad, misma logica que la emision original) y, si
+        # la factura original era a credito, saldo_pendiente vuelve a
+        # 0 (la correccion que habia saldado la deuda vuelve a regir).
+        from fac.models import FacturaDet
+        from inv.models import ajustar_stock_sucursal
+        factura_original = nota_credito_debito.factura_original
+        detalles_originales = FacturaDet.objects.filter(factura=factura_original).select_related('producto')
+        for det in detalles_originales:
+            # Atomico + sucursal (Fase 2) -- ver comentario en emitir_nota_credito_debito_sin.
+            ajustar_stock_sucursal(det.producto_id, factura_original.sucursal, det.cantidad)
+        if factura_original.forma_pago == factura_original.FORMA_PAGO_CREDITO:
+            factura_original.saldo_pendiente = 0
+            factura_original.save()
+
+        nota_credito_debito.save()
+        return nota_credito_debito
+
+    nota_credito_debito.save()
+    raise EmisionSinError(f"El SIN rechazo la reversion de la anulacion de la NCD: {resp.get('mensajesList')}")
 
 
 def anular_factura_sin(factura_enc, codigo_motivo, codigo_punto_venta=0):
@@ -633,7 +934,9 @@ def anular_factura_sin(factura_enc, codigo_motivo, codigo_punto_venta=0):
             "La factura no tiene CUF -- nunca fue emitida ante el SIN, no hay nada que anular."
         )
 
-    empresa, sucursal = _obtener_empresa_y_sucursal(0)
+    # Fase 2 (20/09/2026): sucursal real de esta factura, ver comentario en emitir_factura_sin.
+    codigo_sucursal = factura_enc.sucursal.codigo_sucursal if factura_enc.sucursal else 0
+    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_sucursal)
     cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
     codigo_ambiente = (
         CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
@@ -697,7 +1000,9 @@ def revertir_anulacion_sin(factura_enc, codigo_punto_venta=0):
             f"anulada ante el SIN (estado actual: {factura_enc.get_estado_sin_display()})."
         )
 
-    empresa, sucursal = _obtener_empresa_y_sucursal(0)
+    # Fase 2 (20/09/2026): sucursal real de esta factura, ver comentario en emitir_factura_sin.
+    codigo_sucursal = factura_enc.sucursal.codigo_sucursal if factura_enc.sucursal else 0
+    empresa, sucursal = _obtener_empresa_y_sucursal(codigo_sucursal)
     cuis = _obtener_cuis_para_punto_venta(sucursal, codigo_punto_venta)
     codigo_ambiente = (
         CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION

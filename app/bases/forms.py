@@ -2,6 +2,8 @@ from django import forms
 from django.contrib.auth.forms import PasswordChangeForm
 from django.contrib.auth.models import User, Group, Permission
 
+from fe.models import Sucursal
+
 
 class CSGPasswordChangeForm(PasswordChangeForm):
     """Envuelve el PasswordChangeForm de Django solo para aplicarle las
@@ -31,6 +33,18 @@ class UsuarioForm(forms.ModelForm):
         widget=forms.CheckboxSelectMultiple,
         label="Roles",
     )
+    # sucursal (20/09/2026, Fase 2): NO es un campo de User -- vive en
+    # PerfilUsuario (OneToOne aparte). Se agrega aca como campo suelto
+    # del formulario (no ModelForm-mapeado) y se guarda a mano en
+    # UsuarioNew/UsuarioEdit (bases/views.py), para no tener que
+    # exponer una pantalla separada solo para esto.
+    sucursal = forms.ModelChoiceField(
+        queryset=Sucursal.objects.all().order_by('codigo_sucursal'),
+        required=False,
+        label="Sucursal",
+        help_text="Sucursal donde opera este usuario. Vacío = se resuelve solo "
+                   "si la empresa tiene una única sucursal.",
+    )
 
     class Meta:
         model = User
@@ -54,6 +68,17 @@ class UsuarioForm(forms.ModelForm):
             'is_active': 'Activo',
             'is_superuser': 'Administrador (acceso total, sin restricciones)',
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['sucursal'].widget.attrs.update({'class': 'form-control'})
+        # Precargar la sucursal actual al EDITAR un usuario que ya
+        # tiene PerfilUsuario -- self.instance existe pero puede no
+        # tener pk todavia (formulario de creacion, User(id=None)).
+        if self.instance and self.instance.pk:
+            perfil = getattr(self.instance, 'perfilusuario', None)
+            if perfil:
+                self.fields['sucursal'].initial = perfil.sucursal_id
 
 
 class PerfilForm(forms.ModelForm):

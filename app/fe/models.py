@@ -52,6 +52,17 @@ class Empresa(ClaseModelo2):
     )
 
     # --- Datos de contacto / branding, para encabezados de factura ---
+    # direccion (19/09/2026, pedido de Carlos): distinta de
+    # Sucursal.direccion -- esa es por-sucursal y todavia no hay forma
+    # de saber desde que sucursal salio cada factura (FacturaEnc no
+    # tiene ese FK, ver Fase 2 pendiente). Esta es la direccion de la
+    # empresa a nivel general, siempre disponible sin depender de esa
+    # relacion; el encabezado de la factura la usa como principal y
+    # solo recurre a la de la sucursal si esta queda vacia.
+    direccion = models.CharField(
+        max_length=250, null=True, blank=True,
+        help_text="Dirección principal de la empresa. Aparece en el encabezado de las facturas."
+    )
     telefono = models.CharField(max_length=30, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
     logo = models.ImageField(
@@ -93,6 +104,76 @@ class Empresa(ClaseModelo2):
                    "Sistemas. Vacio hasta completar ese tramite."
     )
     fecha_autorizacion_sistema = models.DateTimeField(null=True, blank=True)
+
+    # --- Tipo de empresa (agregado 13/09/2026, instructivo de Ajuste
+    # de Inventario) -- decide COMO se calcula Producto.costo_actual,
+    # pero SOLO cuando se registra una entrada por motivo "Producción
+    # Interna". Compras NUNCA se ve afectado por este campo: la compra
+    # de insumos/materia prima es un modulo de costeo aparte, fuera de
+    # alcance por ahora. Se define al registrar la empresa; no se
+    # espera que cambie despues (no hay forma de inferirlo solo -- se
+    # carga a mano por instalacion).
+    COMERCIAL = 'COMERCIAL'
+    INDUSTRIAL = 'INDUSTRIAL'
+    TIPO_EMPRESA_CHOICES = [
+        (COMERCIAL, 'Comercial'),
+        (INDUSTRIAL, 'Industrial'),
+    ]
+    tipo_empresa = models.CharField(
+        max_length=20, choices=TIPO_EMPRESA_CHOICES, default=COMERCIAL,
+        # Texto de ayuda acortado (19/09/2026, pedido de Carlos) -- la
+        # explicacion tecnica completa (por que/como se calcula, que
+        # NO afecta) queda documentada arriba en el comentario del
+        # campo, no en el help_text que ve el usuario del formulario.
+        help_text="Afecta solo el costeo de Producción Interna: Comercial "
+                   "promedia el costo, Industrial usa el último valor cargado."
+    )
+
+    # --- Formato de impresion/envio de facturas (agregado 17/09/2026,
+    # pedido de Carlos: dos opciones oficiales de representacion
+    # grafica -- tamaño carta (factura_pdf.html) o rollo termico/quimico
+    # 58mm (factura_pdf_termico.html, mismo diseño que ya usa la caja
+    # en factura_one.html, pero renderizado a PDF). El administrador
+    # elige UNA sola por instalacion; se usa para los 4 caminos donde
+    # se genera el documento: Ver en Pantalla, Descargar PDF, envio por
+    # correo, y lo que se comparte por WhatsApp (mismo PDF que se
+    # descarga) -- una sola fuente de verdad (generar_pdf_factura_bytes
+    # en fac/reportes.py) para que nunca queden desincronizados.
+    CARTA = 'CARTA'
+    TERMICO = 'TERMICO'
+    FORMATO_FACTURA_CHOICES = [
+        (CARTA, 'Tamaño Carta (hoja A4/carta)'),
+        (TERMICO, 'Rollo térmico/químico (58mm, impresora de tickets)'),
+    ]
+    formato_factura = models.CharField(
+        max_length=10, choices=FORMATO_FACTURA_CHOICES, default=TERMICO,
+        help_text="Formato que se usa para mostrar, descargar, y enviar por "
+                   "correo/WhatsApp las facturas. Por defecto Rollo térmico "
+                   "(el que ya usaba el sistema en la caja)."
+    )
+
+    # --- Correo saliente propio (agregado 16/09/2026, Fase 1) -- cada
+    # empresa/cliente registra SU PROPIA cuenta de correo desde aca en
+    # vez de depender de que alguien edite el .env del servidor a mano.
+    # Queda vacio por defecto: si esta vacio, fac.views.factura_enviar_correo
+    # usa el EMAIL_HOST/EMAIL_HOST_USER/etc de settings.py (.env) como
+    # respaldo -- asi la libreria puede seguir usando lo que ya se cargo
+    # en .env sin tener que volver a escribirlo aca.
+    email_host = models.CharField(
+        max_length=150, null=True, blank=True,
+        help_text="Servidor SMTP saliente (ej. smtp.gmail.com). Vacío = usa la configuración del servidor (.env)."
+    )
+    email_port = models.PositiveIntegerField(default=587, null=True, blank=True)
+    email_host_user = models.CharField(
+        max_length=150, null=True, blank=True,
+        help_text="Cuenta de correo desde la que se envían las facturas."
+    )
+    email_host_password = models.CharField(
+        max_length=150, null=True, blank=True,
+        help_text="Contraseña o 'contraseña de aplicación' de esa cuenta. "
+                   "No se muestra en pantalla una vez guardada."
+    )
+    email_use_tls = models.BooleanField(default=True)
 
     def __str__(self):
         return self.razon_social or "Empresa (sin configurar)"

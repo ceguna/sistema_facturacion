@@ -7,17 +7,18 @@
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-                                Eliminar Detalle
+                                Quitar Producto de la Compra
                             </div>
                             <div class="dropdown-divider"></div>
                                 {% csrf_token %}
                                 <div class="row">
-                                    ¿Eliminar "{{ obj.producto }}" de compra número:  <b>{{ obj.compra.id}}</b> ? 
+                                    ¿Quitar "{{ obj.producto }}" de la compra número <b>{{ obj.compra.id}}</b>?
+                                    Se registra una línea de reversión (la original queda para auditoría).
                                 </div>
                             <div class="dropdown-divider"></div>
                                 <div class="row">
                                     <div class="col">
-                                        <button type="submit" class="btn btn-danger"><span class="fa fa-save"></span> Si, Eliminar</button>
+                                        <button type="submit" class="btn btn-danger"><span class="fa fa-save"></span> Sí, quitar</button>
                                         <button type="button" class="btn btn-success" onclick="return cerrar_modal()">Cancelar</button>
                                     </div>
                                 </div>

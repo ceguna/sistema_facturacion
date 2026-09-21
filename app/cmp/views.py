@@ -13,10 +13,10 @@ import json
 from django.db.models import Sum
 from django.utils import timezone
 
-from .models import Proveedor, ComprasEnc, ComprasDet
+from .models import Proveedor, ComprasEnc, ComprasDet, recalcular_costo_actual
 from cmp.forms import ProveedorForm,ComprasEncForm
-from bases.views import SinPrivilegios
-from inv.models import Producto
+from bases.views import SinPrivilegios, obtener_sucursal_actual
+from inv.models import Producto, StockSucursal, ajustar_stock_sucursal
 
 class ProveedorView(SinPrivilegios, generic.ListView):
     model = Proveedor
@@ -178,7 +178,7 @@ def compras(request,compra_id=None):
         enc = ComprasEnc.objects.filter(pk=compra_id).first()
 
         if enc:
-            det = ComprasDet.objects.filter(compra=enc)
+            det = ComprasDet.objects.filter(compra=enc).order_by('id')
             fecha_compra = datetime.date.isoformat(enc.fecha_compra)
             fecha_factura = datetime.date.isoformat(enc.fecha_factura)
             e = {
@@ -199,7 +199,29 @@ def compras(request,compra_id=None):
                 'fecha_factura': datetime.date.today(),
             })
         
-        contexto={'productos':prod,'encabezado':enc,'detalle':det,'form_enc':form_compras}
+        # Cantidad NETA del detalle (suma de cantidades, contando las
+        # lineas de reversion en negativo). Si es 0, la compra no tiene
+        # ningun producto "util" -- se trata igual que "sin detalle"
+        # para los botones Guardar/Cancelar (ver compras.html).
+        detalle_neto = sum(int(d.cantidad) for d in det) if det else 0
+
+        # Numero de compra a mostrar en la cabecera (12/09/2026): si ya
+        # existe, su id real; si es nueva, una PREVIA del id que le
+        # tocaria (mismo criterio ya usado en facturas() -- siguiente
+        # id de la secuencia). Es una vista previa, no una reserva: si
+        # se crea otra compra antes de guardar esta, el numero real
+        # puede terminar siendo otro.
+        if enc:
+            numero_compra = enc.id
+        else:
+            ultima = ComprasEnc.objects.order_by('-id').first()
+            numero_compra = (ultima.id + 1) if ultima else 1
+
+        contexto={
+            'productos':prod,'encabezado':enc,'detalle':det,'form_enc':form_compras,
+            'compra_sin_detalle_util': bool(enc) and detalle_neto == 0,
+            'numero_compra': numero_compra,
+        }
 
     if request.method=='POST':
         fecha_compra = request.POST.get("fecha_compra")
@@ -215,22 +237,41 @@ def compras(request,compra_id=None):
         # separado). Import local para evitar dependencia circular a
         # nivel de modulo entre cmp y fac. Va ANTES que cualquier otra
         # validacion -- si el dia esta cerrado, no importa si el resto
-        # de los datos es valido. ---
-        if fecha_compra:
-            from fac.models import CierreDia
-            try:
-                fecha_compra_parsed = datetime.date.fromisoformat(fecha_compra)
-            except ValueError:
-                fecha_compra_parsed = None
+        # de los datos es valido.
+        #
+        # ENDURECIDO 10/09/2026: antes esto SOLO miraba la fecha que
+        # venia en el POST. El campo Fecha Compra esta 'readonly' pero
+        # tiene un datetimepicker enganchado, asi que un almacenero
+        # podia cambiarlo a un dia abierto, agregar el detalle igual, y
+        # de paso la vista sobreescribia enc.fecha_compra con esa fecha
+        # nueva. Ahora, para una compra YA EXISTENTE, se valida tambien
+        # la fecha ALMACENADA (la unica que no se puede falsear desde
+        # el navegador) -- mismo criterio que ya usa CompraDetDelete
+        # para borrar lineas. Se chequean las dos: la guardada (que la
+        # linea nueva pertenece a un dia cerrado) y la del POST (que no
+        # se este moviendo la compra HACIA un dia cerrado). ---
+        from fac.models import CierreDia
 
-            if fecha_compra_parsed and CierreDia.objects.filter(fecha=fecha_compra_parsed).exists() \
-                    and not _tiene_permiso_dia_cerrado(request.user):
-                messages.error(
-                    request,
-                    f'El día {fecha_compra_parsed.strftime("%d/%m/%Y")} ya fue cerrado -- '
-                    'no se pueden crear ni editar compras en esa fecha.'
-                )
-                return redirect("cmp:compras_edit", compra_id=compra_id) if compra_id else redirect("cmp:compras_list")
+        fechas_a_validar = []
+        if compra_id:
+            enc_actual = ComprasEnc.objects.filter(pk=compra_id).first()
+            if enc_actual and enc_actual.fecha_compra:
+                fechas_a_validar.append(enc_actual.fecha_compra)
+        if fecha_compra:
+            try:
+                fechas_a_validar.append(datetime.date.fromisoformat(fecha_compra))
+            except ValueError:
+                pass
+
+        if not _tiene_permiso_dia_cerrado(request.user):
+            for f in fechas_a_validar:
+                if CierreDia.objects.filter(fecha=f).exists():
+                    messages.error(
+                        request,
+                        f'El día {f.strftime("%d/%m/%Y")} ya fue cerrado -- '
+                        'no se pueden crear ni editar compras (ni agregar detalles) en esa fecha.'
+                    )
+                    return redirect("cmp:compras_edit", compra_id=compra_id) if compra_id else redirect("cmp:compras_list")
 
         # --- CORREGIDO 02/09/2026 (hallazgo "encabezado huerfano"):
         # todas las validaciones (proveedor, producto, cantidad,
@@ -277,6 +318,18 @@ def compras(request,compra_id=None):
             messages.error(request, 'El precio debe ser mayor a 0.')
             return redirect("cmp:compras_edit", compra_id=compra_id) if compra_id else redirect("cmp:compras_list")
 
+        # Sucursal (Fase 2, 20/09/2026): se resuelve sola segun quien
+        # esta logueado -- se valida ANTES de crear la cabecera, mismo
+        # criterio que el resto de las validaciones de este bloque.
+        sucursal_actual = obtener_sucursal_actual(request)
+        if not compra_id and sucursal_actual is None:
+            messages.error(
+                request,
+                'No se pudo determinar su sucursal. Pida a un Administrador que se la '
+                'asigne en Usuarios y Roles antes de registrar una compra.'
+            )
+            return redirect("cmp:compras_list")
+
         # --- Recien aca, con todo validado, se crea/actualiza el
         # encabezado. ---
         if not compra_id:
@@ -286,7 +339,8 @@ def compras(request,compra_id=None):
                 no_factura=no_factura,
                 fecha_factura=fecha_factura,
                 proveedor=prov,
-                uc = request.user 
+                uc = request.user,
+                sucursal=sucursal_actual,
             )
             enc.save()
             compra_id=enc.id
@@ -309,6 +363,9 @@ def compras(request,compra_id=None):
             precio_prv=precio_num,
             descuento=descuento_num,
             costo=0,
+            # Foto del costo promedio ANTES de que esta compra lo mueva
+            # (para auditoria / posible restauracion exacta al revertir).
+            costo_actual_antes=prod.costo_actual,
             uc = request.user
         )
         det.save()
@@ -382,12 +439,19 @@ def eliminar_compra(request, id):
         for det in detalles:
             cantidad_por_producto[det.producto_id] = cantidad_por_producto.get(det.producto_id, 0) + det.cantidad
 
+        # Stock de la sucursal de ESTA compra (Fase 2, 20/09/2026), no
+        # el total agregado de la empresa.
         productos_en_negativo = []
         for producto_id, cantidad_total in cantidad_por_producto.items():
             prod = Producto.objects.get(pk=producto_id)
-            if prod.existencia - cantidad_total < 0:
+            stock_en_sucursal = StockSucursal.objects.filter(
+                producto=prod, sucursal=enc.sucursal
+            ).first()
+            cantidad_actual = stock_en_sucursal.cantidad if stock_en_sucursal else int(prod.existencia)
+            if cantidad_actual - cantidad_total < 0:
                 productos_en_negativo.append(
-                    f'{prod.descripcion} (stock actual: {prod.existencia}, se revertirían {cantidad_total})'
+                    f'{prod.descripcion} (stock actual en {enc.sucursal or "esta sucursal"}: '
+                    f'{cantidad_actual}, se revertirían {cantidad_total})'
                 )
 
         if productos_en_negativo:
@@ -399,13 +463,20 @@ def eliminar_compra(request, id):
             )
             return redirect('cmp:compras_edit', compra_id=id)
 
-        for det in detalles:
-            prod = det.producto
-            prod.existencia = int(prod.existencia) - int(det.cantidad)
-            prod.save()
-
         enc.estado = False
         enc.save()
+
+        # Revertir stock y recalcular el costo promedio de cada
+        # producto afectado. El costo se recalcula DESPUES de marcar
+        # enc.estado=False, porque recalcular_costo_actual ignora las
+        # lineas de compras con estado=False -- asi la compra eliminada
+        # deja de pesar en el promedio. Stock: atomico + con dimension
+        # de sucursal (Fase 2, 20/09/2026), ver ajustar_stock_sucursal.
+        for producto_id, cantidad_total in cantidad_por_producto.items():
+            prod = Producto.objects.get(pk=producto_id)
+            recalcular_costo_actual(prod)
+            prod.save(update_fields=['costo_actual'])
+            ajustar_stock_sucursal(producto_id, enc.sucursal, -cantidad_total)
 
         messages.success(
             request,
@@ -451,84 +522,82 @@ def _modal_error(request, mensaje):
     return render(request, 'fac/_modal_error.html', {'mensaje': mensaje})
 
 
-class CompraDetDelete(SinPrivilegios, generic.DeleteView):
+class CompraDetDelete(SinPrivilegios, generic.DetailView):
+    """
+    "Quitar un producto de una compra". A pesar del nombre historico
+    (Delete), 10/09/2026 pasa a NO borrar nada: crea una linea NUEVA
+    con cantidad negativa ("contra compra"), dejando la original
+    intacta -- misma mecanica que borrar_detalle_factura en ventas,
+    para tener un solo criterio en todo el sistema. Ver
+    ComprasDet.usuario_reversion y recalcular_costo_actual.
+
+    Antes era un DeleteView con toda la logica de control dentro de un
+    metodo delete(). En Django 5.2 ese metodo YA NO SE LLAMA
+    (BaseDeleteView.post -> form_valid -> object.delete()), asi que
+    TODOS los controles (dia cerrado, ventana de tiempo, stock
+    negativo) quedaron como codigo muerto: cualquier usuario podia
+    quitar una linea de una compra en dia cerrado sin ningun freno.
+    Ahora la logica vive en post(), que si se ejecuta.
+    """
     permission_required = "cmp.delete_comprasdet"
     model = ComprasDet
     template_name = "cmp/compras_det_del.html"
     context_object_name = 'obj'
-    
-    def get_success_url(self):
-          compra_id=self.kwargs['compra_id']
-          return reverse_lazy('cmp:compras_edit', kwargs={'compra_id': compra_id})
 
-    def delete(self, request, *args, **kwargs):
-        """
-        CORREGIDO 07/09/2026 -- dos bloqueos que faltaban, confirmados
-        en vivo por Carlos, MAS un bug de fondo en como se rechazaban:
-        1. Esta vista no chequeaba dia cerrado en absoluto -- se podia
-           eliminar una linea de una compra en un dia ya cerrado
-           (mismo CierreDia de Facturacion, mismo criterio que en
-           compras()).
-        2. Nada impedia dejar una compra con CERO lineas de detalle --
-           confirmado en vivo que al borrar la unica linea, la
-           cabecera quedaba guardada vacia, un estado invalido que no
-           deberia poder existir (una compra necesita al menos un
-           producto).
-        3. (bug de fondo, encontrado al investigar por que 1 y 2 no
-           frenaban nada) Los tres chequeos usaban _modal_error(), que
-           devuelve 200 -- pero el formulario de esta vista YA esta
-           abierto y YA fue enganchado por abrir_modal() cuando se
-           mostro el popup. El JS generico de exito no mira el
-           contenido de la respuesta, solo el codigo HTTP: un 200 se
-           toma como "Guardado Satisfactoriamente" sin importar que la
-           eliminacion se haya rechazado del lado servidor. Se
-           reemplazo por _rechazar_envio_modal() (ver mas arriba), que
-           imita el formato de error que ya usa MixinFormInvalid.
-        """
-        self.object = self.get_object()
-        compra = self.object.compra
+    def post(self, request, *args, **kwargs):
+        self.object = det = self.get_object()
+        compra = det.compra
 
+        if det.cantidad < 0:
+            return _rechazar_envio_modal(
+                request, 'Esta línea ya es una reversión, no se puede revertir de nuevo.'
+            )
+
+        # --- Control 1: dia cerrado (bypass solo con el permiso
+        # editar_compra_dia_cerrado -- Administrador). ---
         from fac.models import CierreDia
         if compra.fecha_compra and CierreDia.objects.filter(fecha=compra.fecha_compra).exists() \
                 and not request.user.has_perm('cmp.editar_compra_dia_cerrado'):
             return _rechazar_envio_modal(
                 request,
                 f'El día {compra.fecha_compra.strftime("%d/%m/%Y")} ya fue cerrado -- '
-                'no se pueden eliminar líneas de esa compra.'
+                'no se pueden quitar productos de esa compra.'
             )
 
-        # NUEVO 08/09/2026: ventana de tiempo escalonada por rol (ver
-        # _puede_eliminar_por_ventana_tiempo) -- independiente del
-        # chequeo de dia cerrado de arriba (son dos preguntas
-        # distintas: "¿esta cerrado del todo?" vs "¿que tan atras
-        # puede llegar este rol?").
-        if not _puede_eliminar_por_ventana_tiempo(request.user, compra.fecha_compra):
+        # NOTA (10/09/2026): la "ventana de tiempo escalonada por rol"
+        # (_puede_eliminar_por_ventana_tiempo: Almacenero solo hoy,
+        # Supervisor mes en curso, ...) NO se aplica al quitar una
+        # linea de detalle. Decision de Carlos (puntos 3, 7 y 8): la
+        # unica pregunta es "¿el dia esta cerrado?" -- si NO lo esta,
+        # cualquier usuario con permiso puede quitar una linea, incluso
+        # la ultima. Esa ventana escalonada sigue vigente solo para
+        # eliminar la COMPRA COMPLETA (ver eliminar_compra).
+
+        # --- Control 2: stock negativo -- para TODOS los usuarios, sin
+        # excepcion (ni Administrador). Revertir esta linea sacaria
+        # `cantidad` unidades del stock; si eso deja negativo, es que
+        # ya se vendio parte de esa mercaderia. ---
+        prod = det.producto
+        if int(prod.existencia) - int(det.cantidad) < 0:
             return _rechazar_envio_modal(
                 request,
-                f'No tiene permisos para eliminar líneas de esta compra: su fecha '
-                f'({compra.fecha_compra.strftime("%d/%m/%Y")}) está fuera de la ventana '
-                'de tiempo permitida para su rol.'
-            )
-
-        # CORREGIDO 07/09/2026 -- decision de Carlos: ya NO se bloquea
-        # llegar a cero detalle aca. En cambio, se permite eliminar la
-        # ultima linea, y es compras.html (boton Cancelar) el que no
-        # deja salir de la pantalla de edicion mientras la compra
-        # tenga cero detalle -- Guardar ya rechazaba esto de por si
-        # (exige producto seleccionado).
-
-        # NUEVO 07/09/2026: mismo criterio que eliminar_compra -- no
-        # dejar el producto en existencia negativa si ya se vendio
-        # parte de lo comprado. Se chequea ANTES de llamar a
-        # super().delete(), que es lo que dispara la señal
-        # detalle_compra_borrar (la que de verdad resta el stock).
-        prod = self.object.producto
-        if prod.existencia - self.object.cantidad < 0:
-            return _rechazar_envio_modal(
-                request,
-                f'No se puede eliminar: "{prod.descripcion}" quedaría con stock negativo '
-                f'(actual: {prod.existencia}, se revertirían {self.object.cantidad}). '
+                f'No se puede quitar: "{prod.descripcion}" quedaría con stock negativo '
+                f'(actual: {prod.existencia}, se revertirían {det.cantidad}). '
                 'Probablemente ya se vendió parte de esta mercadería.'
             )
 
-        return super().delete(request, *args, **kwargs)
+        # --- Contra compra: fila nueva con cantidad negativa. La señal
+        # detalle_compra_guardar recalcula stock, costo promedio y
+        # totales de la cabecera. Mismo patron que ventas
+        # (borrar_detalle_factura). ---
+        det.id = None
+        det.cantidad = -1 * det.cantidad
+        det.descuento = -1 * det.descuento
+        det.costo_actual_antes = None
+        det.usuario_reversion = request.user
+        det.uc = request.user
+        det.save()
+
+        # abrir_modal() (base.html) toma cualquier 2xx como exito y
+        # recarga la pantalla.
+        return HttpResponse(status=204)

@@ -1,0 +1,77 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3">
+    <h4 class="m-0 font-weight-bold text-primary">Carga Inicial de Inventario (Excel)</h4>
+  </div>
+  <div class="card-body">
+    <!-- Mensaje obligatorio ANTES del boton de exportar/importar (pedido
+         explicito de Carlos, ver instructivo seccion 5.1 punto 2): la
+         plantilla NO crea Marca/Subcategoria/Unidad de Medida, solo las
+         busca por nombre -- tienen que existir de antes en Catalogos. -->
+    <div class="alert alert-warning">
+      <i class="fas fa-exclamation-triangle mr-2"></i>
+      <b>Antes de usar esta carga masiva</b>, asegurate de tener ya cargados en
+      <b>Catálogos</b>: <b>Marca</b>, <b>Subcategoría</b> y <b>Unidad de Medida</b> de cada
+      producto nuevo que vayas a agregar. La plantilla de Excel <u>no crea</u> estos
+      catálogos — solo los busca por nombre. Si alguno no existe, esa fila se rechaza
+      al importar.
+    </div>
+
+    <div class="row mb-4">
+      <div class="col-md-6">
+        <div class="card border-left-primary shadow h-100 py-2">
+          <div class="card-body">
+            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Paso 1 — Exportar plantilla</div>
+            <p class="mb-2">Descarga un Excel con una fila por cada producto ya existente (Código y
+              Descripción completos), más filas vacías al final para agregar productos nuevos.</p>
+            <a class="btn btn-outline-primary" href="{% url 'inv:carga_inicial_exportar_plantilla' %}">
+              <i class="fas fa-file-download mr-1"></i>Exportar Plantilla
+            </a>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card border-left-success shadow h-100 py-2">
+          <div class="card-body">
+            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Paso 2 — Importar Excel completado</div>
+            <form method="post" enctype="multipart/form-data" action="{% url 'inv:carga_inicial_importar' %}">
+              {% csrf_token %}
+              <div class="form-group">
+                <input type="file" name="archivo" accept=".xlsx" class="form-control-file" required>
+              </div>
+              <button type="submit" class="btn btn-success">
+                <i class="fas fa-file-upload mr-1"></i>Importar Excel
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if errores %}
+    <div class="alert alert-danger">
+      <b>No se importó nada.</b> Corregí el Excel con estos errores y volvé a subirlo:
+      <ul class="mb-0 mt-2">
+        {% for e in errores %}
+        <li>{{ e }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <div class="alert alert-secondary">
+      <b>Columnas de la plantilla:</b> Código, Descripción, Marca, Categoría, Subcategoría,
+      Unidad de Medida, Cantidad, Costo Unitario, Precio de Venta, Precio Referencial USD,
+      Margen Deseado %.<br>
+      Para un producto <b>ya existente</b>: solo Código, Cantidad y Costo Unitario son
+      obligatorios (el resto se ignora o queda opcional).<br>
+      Para un producto <b>nuevo</b>: además de Código/Cantidad/Costo Unitario, son
+      obligatorios Descripción, Marca, Categoría, Subcategoría, Unidad de Medida y Precio de
+      Venta. La Subcategoría se busca <b>dentro</b> de esa Categoría — si el mismo nombre de
+      subcategoría existe en más de una categoría, la Categoría es lo que desempata.
+    </div>
+  </div>
+</div>
+{% endblock %}

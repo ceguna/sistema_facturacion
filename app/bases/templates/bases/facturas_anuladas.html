@@ -4,7 +4,26 @@
 {% block page_content %}
 
 <h1 class="csg-dashboard-title mb-1">Facturas Anuladas</h1>
-<div class="text-muted mb-4">Historial completo de facturas anuladas, con motivo y responsable</div>
+<div class="text-muted mb-4">Historial de facturas anuladas del período, con motivo y responsable</div>
+
+<div class="card shadow mb-4">
+    <div class="card-header d-flex flex-wrap align-items-center justify-content-between">
+        <span>Período (fecha de anulación)</span>
+        <form method="get" class="form-inline">
+            <select name="mes" class="form-control mr-2">
+                {% for valor, nombre in meses %}
+                <option value="{{ valor|unlocalize }}" {% if valor == mes %}selected{% endif %}>{{ nombre }}</option>
+                {% endfor %}
+            </select>
+            <select name="anio" class="form-control mr-2">
+                {% for a in anios %}
+                <option value="{{ a|unlocalize }}" {% if a == anio %}selected{% endif %}>{{ a|unlocalize }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary">Filtrar</button>
+        </form>
+    </div>
+</div>
 
 <div class="row mb-4">
     <div class="col-md-4">
@@ -60,7 +79,7 @@
                         <td>{{ f.motivo_anulacion|default:"—" }}</td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="6" class="text-center text-muted py-4">No hay facturas anuladas registradas 👍</td></tr>
+                    <tr><td colspan="6" class="text-center text-muted py-4">No hay facturas anuladas en este período 👍</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

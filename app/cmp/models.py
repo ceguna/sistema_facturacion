@@ -1,13 +1,13 @@
 from django.db import models
+from django.contrib.auth.models import User
 
 #Para los signals
-from django.db.models.signals import post_save, post_delete, pre_delete
-from django.core.exceptions import ValidationError
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Sum
 
 from bases.models import ClaseModelo
-from inv.models import Producto
+from inv.models import Producto, ajustar_stock_sucursal
 
 class Proveedor(ClaseModelo):
     descripcion=models.CharField(
@@ -55,6 +55,14 @@ class ComprasEnc(ClaseModelo):
     total=models.FloatField(default=0)
 
     proveedor=models.ForeignKey(Proveedor,on_delete=models.CASCADE)
+    # sucursal (Fase 2, 20/09/2026): que sucursal recibe este stock --
+    # la matriz sigue comprando en general, pero cada sucursal puede
+    # registrar sus propias compras locales tambien (pedido explicito
+    # de Carlos). Null en datos viejos (migrados a la sucursal por
+    # defecto) y en instalaciones todavia sin sucursales.
+    sucursal = models.ForeignKey(
+        'fe.Sucursal', on_delete=models.PROTECT, null=True, blank=True
+    )
     
     def __str__(self):
         return '{}'.format(self.observacion)
@@ -108,8 +116,43 @@ class ComprasDet(ClaseModelo):
     total=models.FloatField(default=0)
     costo=models.FloatField(default=0)
 
+    # --- Reversion de linea de compra ("contra compra"), 10/09/2026 ---
+    # Quitar un producto de una compra ya NO borra la fila: se crea una
+    # linea NUEVA con cantidad negativa (misma mecanica que
+    # FacturaDet/borrar_detalle_factura en ventas, para tener un solo
+    # criterio en todo el sistema). La linea original queda intacta.
+    #
+    # 'uc' (heredado de ClaseModelo) guarda al usuario de la sesion;
+    # 'usuario_reversion' guarda explicitamente a quien autorizo la
+    # reversion -- mismo patron que FacturaDet.usuario_reversion. Queda
+    # null en las lineas normales (la inmensa mayoria).
+    usuario_reversion = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+        help_text="Usuario que autorizó esta línea como reversión de otra. "
+                   "Vacío si la línea no es una reversión."
+    )
+    # Foto del costo_actual del producto JUSTO ANTES de que esta linea
+    # lo moviera. Permite restaurar el costo exacto al revertir la
+    # compra mas reciente, sin recalcular todo el historial. Null en
+    # lineas viejas (anteriores a este cambio) y en las reversiones.
+    costo_actual_antes = models.FloatField(null=True, blank=True)
+
     def __str__(self):
         return '{}'.format(self.producto)
+
+    @property
+    def descuento_pct(self):
+        """
+        Porcentaje de descuento de esta linea, derivado de los montos
+        guardados (12/09/2026: el campo 'descuento' en la base SIGUE
+        siendo un monto en Bs -- no se toco el modelo ni las señales
+        que ya dependen de el -- pero el formulario y la tabla de
+        detalle ahora trabajan en porcentaje, mas natural para cargar
+        una compra). 0 si no hay sub_total (evita division por cero).
+        """
+        if not self.sub_total:
+            return 0
+        return round(abs(self.descuento) / abs(self.sub_total) * 100, 2)
 
     def save(self, *args, **kwargs):
         self.sub_total = float(float(int(self.cantidad)) * float(self.precio_prv))
@@ -120,70 +163,107 @@ class ComprasDet(ClaseModelo):
         verbose_name_plural = "Detalles Compras"
         verbose_name="Detalle Compra"
 
-@receiver(pre_delete, sender=ComprasDet)
-def detalle_compra_prevenir_vacio(sender, instance, **kwargs):
+def recalcular_costo_actual(prod):
     """
-    Agregado 07/09/2026: impide dejar una compra con CERO lineas de
-    detalle -- sin importar por donde se intente borrar la ultima
-    linea (esta app tenia el chequeo solo en la vista CompraDetDelete,
-    que resulto insuficiente por si sola: un bug de JS en abrir_modal
-    hacia que el rechazo del servidor no se viera reflejado bien en
-    pantalla, generando confusion sobre si realmente estaba
-    funcionando). Puesto aca, a nivel de senial pre_delete, es
-    estructuralmente imposible de saltear -- vista, admin de Django,
-    consola, o cualquier codigo futuro quedan cubiertos por igual.
+    Recalcula `costo_actual` de un producto reproduciendo TODAS sus
+    lineas de compra vigentes (ComprasDet de compras con estado=True),
+    en orden cronologico (id), aplicando la formula de Promedio
+    Ponderado movil linea por linea.
 
-    pre_delete corre ANTES del DELETE real en la base -- si esta
-    funcion lanza una excepcion, Django aborta la operacion completa
-    (esta dentro de una transaccion atomica propia del framework), la
-    fila NUNCA llega a borrarse.
+    Se reproduce con una cantidad "solo compras" (no `existencia`, que
+    incluye ventas) -- consistente con la regla del negocio: el costo
+    solo se mueve con entradas. Las lineas de reversion (cantidad
+    negativa, "contra compra") desarman el promedio automaticamente:
+    cuando queda stock despues de la reversion, la formula devuelve
+    exactamente el promedio previo a la compra revertida.
+
+    Reemplaza (10/09/2026) al calculo incremental anterior, que no
+    tenia forma de revertirse al eliminar una compra -- dejaba el
+    `costo_actual` "contaminado" con el precio de una compra que ya
+    no existia (casos reales: CAL-001, BOR-001, AGE-001).
     """
-    if ComprasDet.objects.filter(compra=instance.compra).count() <= 1:
-        raise ValidationError(
-            'No se puede eliminar: la compra debe tener al menos un producto en el detalle.'
-        )
+    lineas = (
+        ComprasDet.objects
+        .filter(producto=prod, compra__estado=True)
+        .order_by('id')
+        .values_list('cantidad', 'precio_prv')
+    )
+    qty = 0
+    avg = 0.0
+    for cantidad, precio_prv in lineas:
+        cantidad = int(cantidad)
+        if qty + cantidad > 0:
+            avg = (qty * avg + cantidad * float(precio_prv)) / (qty + cantidad)
+        qty += cantidad
+    prod.costo_actual = round(avg, 4)
+
+
+def _recalcular_cabecera_compra(id_compra):
+    enc = ComprasEnc.objects.filter(pk=id_compra).first()
+    if not enc:
+        return
+    agg = ComprasDet.objects.filter(compra=id_compra).aggregate(
+        st=Sum('sub_total'), ds=Sum('descuento')
+    )
+    enc.sub_total = agg['st'] or 0.00
+    enc.descuento = agg['ds'] or 0.00
+    enc.save()
+
 
 @receiver(post_delete, sender=ComprasDet)
-def detalle_compra_borrar(sender,instance, **kwargs):
-    id_producto = instance.producto.id
-    id_compra = instance.compra.id
+def detalle_compra_borrar(sender, instance, **kwargs):
+    """
+    Solo se dispara ante un DELETE fisico real (admin de Django,
+    consola). El flujo normal de "quitar un producto de una compra" ya
+    NO borra: crea una linea de reversion con cantidad negativa (ver
+    CompraDetDelete en cmp/views.py, mismo criterio que ventas).
 
-    enc = ComprasEnc.objects.filter(pk=id_compra).first()
-    if enc:
-        sub_total = ComprasDet.objects.filter(compra=id_compra).aggregate(Sum('sub_total'))
-        descuento = ComprasDet.objects.filter(compra=id_compra).aggregate(Sum('descuento'))
-        enc.sub_total = sub_total['sub_total__sum'] or 0.00
-        enc.descuento = descuento['descuento__sum'] or 0.00
-        enc.save()
-    
-    prod=Producto.objects.filter(pk=id_producto).first()
+    CORREGIDO 20/09/2026 (Fase 2): el ajuste de stock ya no es un
+    read-modify-write en Python (`prod.existencia = ...; prod.save()`)
+    -- delegado en ajustar_stock_sucursal (atomico, y ahora con
+    dimension de sucursal). costo_actual sigue siendo GLOBAL a la
+    empresa (no por sucursal, decision de diseño de Fase 2), asi que
+    ese calculo sigue igual, leyendo/escribiendo Producto directo.
+    """
+    _recalcular_cabecera_compra(instance.compra_id)
+    prod = Producto.objects.filter(pk=instance.producto_id).first()
     if prod:
-        cantidad = int(prod.existencia) - int(instance.cantidad)
-        prod.existencia = cantidad
-        prod.save()
+        recalcular_costo_actual(prod)
+        prod.save(update_fields=['costo_actual'])
+        ajustar_stock_sucursal(instance.producto_id, instance.compra.sucursal, -int(instance.cantidad))
+
 
 @receiver(post_save, sender=ComprasDet)
-def detalle_compra_guardar(sender,instance,**kwargs):
-    id_producto = instance.producto.id
-    fecha_compra=instance.compra.fecha_compra
+def detalle_compra_guardar(sender, instance, created, **kwargs):
+    # Solo al CREAR la linea. Las lineas de compra no se editan en esta
+    # app (la vista solo crea, nunca actualiza) -- correr esto en cada
+    # save re-sumaria el stock.
+    if not created:
+        return
 
-    prod=Producto.objects.filter(pk=id_producto).first()
-    if prod:
-        # Costo Promedio Ponderado (agregado 08/09/2026) -- se
-        # recalcula con el stock ANTES de sumar esta compra, para que
-        # el costo solo se mueva con entradas (compras), nunca con
-        # salidas (ventas). Ver help_text del campo en inv/models.py
-        # para la formula y la limitacion conocida (eliminar una
-        # compra vieja no revierte el costo hacia atras).
-        stock_anterior = int(prod.existencia)
-        cantidad_comprada = int(instance.cantidad)
-        if stock_anterior + cantidad_comprada > 0:
-            prod.costo_promedio = round(
-                (stock_anterior * prod.costo_promedio + cantidad_comprada * instance.precio_prv)
-                / (stock_anterior + cantidad_comprada),
-                4
+    prod = Producto.objects.filter(pk=instance.producto_id).first()
+    if not prod:
+        return
+
+    cantidad = int(instance.cantidad)
+
+    if cantidad >= 0:
+        # Linea de compra normal: guardar la foto del costo promedio
+        # previo (para auditoria) y marcar la fecha de ultima compra.
+        if instance.costo_actual_antes is None:
+            ComprasDet.objects.filter(pk=instance.pk).update(
+                costo_actual_antes=prod.costo_actual
             )
+        prod.ultima_compra = instance.compra.fecha_compra
+        prod.save(update_fields=['ultima_compra'])
 
-        prod.existencia = stock_anterior + cantidad_comprada
-        prod.ultima_compra=fecha_compra
-        prod.save()
+    recalcular_costo_actual(prod)
+    prod.save(update_fields=['costo_actual'])
+    # CORREGIDO 20/09/2026 (Fase 2): atomico + con dimension de
+    # sucursal, ver docstring de detalle_compra_borrar arriba.
+    ajustar_stock_sucursal(instance.producto_id, instance.compra.sucursal, cantidad)
+
+    # Mantener los totales de la cabecera en sincronía -- incluye el
+    # caso de la "contra compra" (linea negativa), que entra por aca y
+    # no por el post_delete.
+    _recalcular_cabecera_compra(instance.compra_id)

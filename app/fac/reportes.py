@@ -1,3 +1,6 @@
+import os
+from io import BytesIO
+
 from django.shortcuts import render, get_object_or_404
 from django.utils.dateparse import parse_date
 from django.utils import timezone
@@ -12,27 +15,555 @@ from xhtml2pdf import pisa
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-from .models import FacturaEnc,FacturaDet,Cliente,Pago
-from fe.models import Empresa
+from .models import FacturaEnc,FacturaDet,Cliente,Pago,NotaCreditoDebito
+from fe.models import Empresa, Sucursal, PuntoVenta
+from fe.utils import datos_logo_header
+
+
+# Formato de factura -> plantilla (17/09/2026): UNA sola tabla, para
+# que Ver en Pantalla, Descargar PDF, correo y WhatsApp usen siempre la
+# misma plantilla segun lo que el administrador eligio en Empresa --
+# nunca se repite el nombre de plantilla suelto en varios lugares.
+_PLANTILLA_POR_FORMATO = {
+    Empresa.CARTA: 'fac/factura_pdf.html',
+    Empresa.TERMICO: 'fac/factura_pdf_termico.html',
+}
+
+# Plantilla de la Nota de Credito-Debito, mismo criterio (19/09/2026):
+# UN documento distinto de la factura (no una factura "comprimida" --
+# tiene su propia estructura: datos de la factura original + datos de
+# la devolucion + monto efectivo debito-credito), pero que respeta el
+# mismo formato Carta/Termico que ya eligio el administrador.
+_PLANTILLA_NCD_POR_FORMATO = {
+    Empresa.CARTA: 'fac/ncd_pdf.html',
+    Empresa.TERMICO: 'fac/ncd_pdf_termico.html',
+}
+
+
+def _ncd_vigente(enc):
+    """
+    Devuelve la Nota de Credito-Debito VIGENTE de esta factura ahora
+    mismo (Validada o con una anulacion Revertida -- a estos efectos,
+    el mismo estado: la correccion esta en efecto), o None si no tiene
+    ninguna o si la unica que tuvo esta Anulada (en ese caso la
+    correccion quedo sin efecto, la factura ORIGINAL vuelve a ser el
+    documento vigente). Mismo criterio que _tiene_ncd_validada en
+    fac/views.py -- ver ese comentario para el detalle completo.
+    """
+    return enc.notas_credito_debito.filter(
+        estado_sin__in=[NotaCreditoDebito.SIN_VALIDADA, NotaCreditoDebito.SIN_REVERTIDA]
+    ).order_by('-id').first()
+
+
+def _contexto_documento(enc):
+    """
+    Punto de entrada REAL para los 4 caminos de generacion de
+    documento de una factura (Ver en Pantalla, Descargar PDF, correo,
+    WhatsApp) -- decide si corresponde generar la FACTURA original o
+    la NOTA DE CREDITO-DEBITO que la corrige, segun el estado vigente
+    (agregado 19/09/2026, pedido de Carlos). Devuelve ademas el
+    documento efectivamente representado (la factura o la NCD), para
+    que quien llama pueda nombrar el archivo/adjunto de forma
+    coherente con lo que en verdad se genero.
+    """
+    ncd = _ncd_vigente(enc)
+    if ncd:
+        template_name, context = _contexto_ncd_documento(ncd)
+        return template_name, context, ncd
+    template_name, context = _contexto_factura_documento(enc)
+    return template_name, context, enc
+
+
+def _contexto_factura_documento(enc):
+    """
+    Arma el contexto comun a los 4 caminos donde se genera el
+    documento de una factura (Ver en Pantalla, Descargar PDF, correo,
+    WhatsApp) -- una sola fuente para no duplicar la consulta de
+    detalle ni el chequeo de logo. Devuelve tambien el nombre de
+    plantilla a usar, segun Empresa.formato_factura.
+    """
+    detalle = FacturaDet.objects.filter(factura=enc).select_related('producto')
+    empresa = Empresa.objects.first()
+
+    # xhtml2pdf necesita la ruta de archivo real del logo (no la URL)
+    # para poder embeberlo -- si el archivo llegara a faltar en disco
+    # (borrado a mano, migracion incompleta, etc.), antes esto hacia
+    # fallar TODA la generacion del PDF (y por lo tanto el envio de la
+    # factura por correo) por un problema puramente cosmetico. Se
+    # verifica antes de pasarlo a la plantilla: si no esta, la factura
+    # se sigue generando igual, solo que sin logo. (17/09/2026)
+    logo_valido = bool(empresa and empresa.logo and os.path.exists(empresa.logo.path))
+
+    formato = empresa.formato_factura if empresa else Empresa.TERMICO
+    template_name = _PLANTILLA_POR_FORMATO.get(formato, _PLANTILLA_POR_FORMATO[Empresa.TERMICO])
+
+    context = {'enc': enc, 'detalle': detalle, 'empresa': empresa, 'logo_valido': logo_valido}
+
+    # Datos comunes a AMBOS formatos (20/09/2026 -- antes solo se
+    # calculaban para Carta; al agregar el rediseño termico se
+    # levantaron aca, una sola vez, para no duplicar la misma consulta/
+    # calculo en dos ramas). Todo reutiliza campos que YA existen:
+    #
+    # Sucursal/Punto de Venta: FacturaEnc todavia no tiene FK a
+    # sucursal (eso es Fase 2, multi-sucursal, no construida todavia)
+    # -- mientras tanto se muestra la (unica, en la inmensa mayoria de
+    # instalaciones de hoy) sucursal/punto de venta registrados de la
+    # empresa, no una por-factura real.
+    sucursal = Sucursal.objects.filter(empresa=empresa).order_by('id').first() if empresa else None
+    punto_venta = PuntoVenta.objects.filter(sucursal=sucursal).order_by('id').first() if sucursal else None
+    context['sucursal'] = sucursal
+    context['punto_venta'] = punto_venta
+
+    context['importe_en_letras'] = _importe_en_letras(enc.total)
+
+    # Monto Gift Card: no hay un campo separado para "cuanto de esta
+    # venta se pago con gift card" -- se deriva de forma_pago (si la
+    # venta ENTERA se pago con Gift Card, ese monto es el total; si
+    # no, es 0).
+    context['monto_gift_card'] = round(enc.total, 2) if enc.forma_pago == FacturaEnc.FORMA_PAGO_GIFT_CARD else 0
+
+    # Importe Base Credito Fiscal: el sistema no maneja impuestos
+    # adicionales (ICE/IEHD) que separen esta base del total, asi que
+    # coincide con el Total -- formula estandar del SIN para facturas
+    # sin esos impuestos especificos.
+    context['importe_base_credito_fiscal'] = round(enc.total, 2)
+
+    # QR de verificacion fiscal (19/09/2026): Carlos escaneo el QR de
+    # una factura electronica real de otro emisor y confirmo la URL
+    # exacta que codifica -- ya no es un formato sin confirmar (antes
+    # se habia decidido a proposito NO fabricar un QR por esto mismo,
+    # ver notas del 17/09). Requiere NIT del emisor y CUF real (factura
+    # ya emitida al SIN); si falta alguno de los dos no se genera nada,
+    # no se inventa un QR con datos vacios. Mismo QR para los dos
+    # formatos -- misma funcion, mismo algoritmo, solo cambia el
+    # tamaño/posicion en cada plantilla.
+    if empresa and empresa.nit and enc.cuf:
+        url_verificacion = (
+            f"https://siat.impuestos.gob.bo/consulta/QR"
+            f"?nit={empresa.nit}&cuf={enc.cuf}&numero={enc.id}&t=1"
+        )
+        context['qr_verificacion_data_uri'] = _generar_qr_data_uri(url_verificacion)
+
+    # CORREGIDO 17/09/2026: xhtml2pdf (motor ReportLab) no corta a
+    # mitad de palabra -- word-break/word-wrap en CSS no tienen efecto
+    # ahi, es una limitacion conocida del motor. El CUF/CUFD/Codigo de
+    # Control (cadenas largas sin espacios) se salen de su columna/caja
+    # segun el ancho disponible en cada formato -- se pasa cortado
+    # aparte, el valor real (el que se manda al correo/XML) queda
+    # intacto. Los cortes son mas chicos en termico (58mm) que en carta.
+    if formato == Empresa.TERMICO:
+        context['cuf_cortado'] = _cortar_cada_n(enc.cuf, 20)
+        context['codigo_control_cortado'] = _cortar_cada_n(enc.codigo_control, 20)
+
+        # Altura dinamica del rollo (20/09/2026, pedido de Carlos):
+        # xhtml2pdf/reportlab NO recorta la pagina al contenido solo,
+        # necesita un @page size fijo de antemano -- no existe un
+        # "height: auto" real para el motor de PDF. Se estima aca en
+        # milimetros segun la cantidad de lineas reales (items +
+        # descripciones largas que van a envolver a una segunda linea),
+        # generoso a proposito para nunca cortar contenido; si sobra
+        # espacio en blanco al final es preferible a que se corte algo.
+        context['altura_pagina_mm'] = _estimar_altura_termico_mm(enc, detalle)
+
+        # Marca de agua "ANULADA" (20/09/2026, pedido de Carlos), como
+        # fondo de pagina (@page background-image) -- ver el docstring
+        # de _generar_marca_agua_anulada_data_uri para el porque (un
+        # <img> con position:absolute NO se saca del flujo en
+        # xhtml2pdf, terminaba empujando el resto del contenido hacia
+        # abajo). Se genera del tamaño real de ESTA pagina termica
+        # (58mm de ancho, alto dinamico ya calculado arriba) para que
+        # quede centrada, a 96dpi.
+        if enc.anulado:
+            ancho_px = round(58 / 25.4 * 96)
+            alto_px = round(context['altura_pagina_mm'] / 25.4 * 96)
+            context['marca_agua_anulada_data_uri'] = _generar_marca_agua_anulada_data_uri(
+                ancho_px, alto_px, tamano_fuente=60
+            )
+
+    if formato == Empresa.CARTA:
+        # Tamaño del logo en el encabezado (18/09/2026): xhtml2pdf/
+        # reportlab NO respeta max-height/max-width en <img> -- si no
+        # se le da un width/height EXPLICITO, cae en el tamaño nativo
+        # en pixeles interpretado 1:1 como puntos, lo que en la
+        # practica renderizaba el logo real de Carlos a mas de 30cm de
+        # alto (bug real, descubierto recien al revisar el PDF
+        # generado, no solo el HTML). Se calcula aca el tamaño final en
+        # puntos (unidad nativa del motor) que quepa dentro de una caja
+        # maxima, preservando la proporcion real del archivo -- no
+        # depende de la resolucion/DPI de la imagen que suba cada
+        # cliente.
+        if logo_valido:
+            try:
+                from PIL import Image
+                with Image.open(empresa.logo.path) as img:
+                    ancho_px, alto_px = img.size
+                max_ancho_pt, max_alto_pt = 120, 42
+                escala = min(max_ancho_pt / ancho_px, max_alto_pt / alto_px, 1)
+                context['logo_ancho_pt'] = round(ancho_px * escala, 1)
+                context['logo_alto_pt'] = round(alto_px * escala, 1)
+            except Exception:
+                context['logo_ancho_pt'] = None
+                context['logo_alto_pt'] = None
+
+        # Mismo limite real de xhtml2pdf que en el formato termico (no
+        # corta a mitad de palabra): el CUF (~60 caracteres) y el CUFD
+        # (~55 caracteres, tambien codificado sin espacios) se salian
+        # de sus columnas/cajas en carta tambien -- se ve al abrir el
+        # PDF real, no en el HTML. Mismo mecanismo (<br> cada N
+        # caracteres), valor real intacto.
+        context['cuf_cortado'] = _cortar_cada_n(enc.cuf, 30)
+        context['cufd_cortado'] = _cortar_cada_n(enc.cufd, 22)
+
+        # Marca de agua "ANULADA" (20/09/2026): tamaño real de la
+        # pagina carta (letter) a 96dpi -- ver el docstring de
+        # _generar_marca_agua_anulada_data_uri.
+        if enc.anulado:
+            context['marca_agua_anulada_data_uri'] = _generar_marca_agua_anulada_data_uri()
+
+    return template_name, context
+
+
+def _contexto_ncd_documento(ncd):
+    """
+    Arma el contexto para representar graficamente una Nota de
+    Credito-Debito (agregado 19/09/2026, a partir de un modelo de
+    referencia oficial del SIN que paso Carlos). Estructura DISTINTA a
+    la de una factura -- no es "una factura comprimida": muestra los
+    datos de la factura ORIGINAL, los datos de la devolucion/rescision,
+    y el monto efectivo debito-credito.
+
+    Devolucion TOTAL (unica version soportada, decision del 26/08/2026,
+    ver NotaCreditoDebito.__doc__): "detalle_devuelto" hoy es
+    exactamente el mismo detalle que "detalle_original" -- se
+    consultan por separado (dos variables, misma fuente) a proposito,
+    para que si en el futuro se agrega devolucion PARCIAL, solo haya
+    que cambiar de donde sale detalle_devuelto sin tocar el resto de
+    la plantilla.
+    """
+    factura_original = ncd.factura_original
+    detalle_original = FacturaDet.objects.filter(factura=factura_original).select_related('producto')
+    detalle_devuelto = detalle_original
+
+    empresa = Empresa.objects.first()
+    logo_valido = bool(empresa and empresa.logo and os.path.exists(empresa.logo.path))
+
+    formato = empresa.formato_factura if empresa else Empresa.TERMICO
+    template_name = _PLANTILLA_NCD_POR_FORMATO.get(formato, _PLANTILLA_NCD_POR_FORMATO[Empresa.TERMICO])
+
+    sucursal = Sucursal.objects.filter(empresa=empresa).order_by('id').first() if empresa else None
+    punto_venta = PuntoVenta.objects.filter(sucursal=sucursal).order_by('id').first() if sucursal else None
+
+    context = {
+        'ncd': ncd,
+        'enc': factura_original,
+        'detalle_original': detalle_original,
+        'detalle_devuelto': detalle_devuelto,
+        'empresa': empresa,
+        'logo_valido': logo_valido,
+        'sucursal': sucursal,
+        'punto_venta': punto_venta,
+        'importe_en_letras': _importe_en_letras(ncd.monto_total_devuelto),
+    }
+
+    # QR de verificacion fiscal -- DESACTIVADO A PROPOSITO (20/09/2026,
+    # pedido de Carlos). El parametro "t" para una NCD nunca se
+    # confirmo con un ejemplo real escaneado (a diferencia del QR de
+    # facturas, que si esta confirmado, ver _contexto_factura_documento)
+    # -- se prefiere no mostrar nada antes que mostrar un QR con un
+    # dato sin confirmar. La caja de "Verificacion del documento" (mas
+    # abajo en la plantilla) ocupa el lugar del QR mientras tanto. Para
+    # reactivarlo cuando se tenga la info oficial del SIN, descomentar:
+    #
+    # if empresa and empresa.nit and ncd.cuf:
+    #     url_verificacion = (
+    #         f"https://siat.impuestos.gob.bo/consulta/QR"
+    #         f"?nit={empresa.nit}&cuf={ncd.cuf}&numero={ncd.id}&t=1"
+    #     )
+    #     context['qr_verificacion_data_uri'] = _generar_qr_data_uri(url_verificacion)
+
+    if formato == Empresa.TERMICO:
+        context['cuf_cortado'] = _cortar_cada_n(ncd.cuf, 20)
+        context['codigo_control_cortado'] = _cortar_cada_n(ncd.codigo_control, 20)
+        context['cuf_original_cortado'] = _cortar_cada_n(factura_original.cuf, 20)
+        context['altura_pagina_mm'] = _estimar_altura_termico_ncd_mm(ncd, detalle_original, detalle_devuelto)
+
+    if formato == Empresa.CARTA:
+        if logo_valido:
+            try:
+                from PIL import Image
+                with Image.open(empresa.logo.path) as img:
+                    ancho_px, alto_px = img.size
+                max_ancho_pt, max_alto_pt = 120, 42
+                escala = min(max_ancho_pt / ancho_px, max_alto_pt / alto_px, 1)
+                context['logo_ancho_pt'] = round(ancho_px * escala, 1)
+                context['logo_alto_pt'] = round(alto_px * escala, 1)
+            except Exception:
+                context['logo_ancho_pt'] = None
+                context['logo_alto_pt'] = None
+
+        context['cuf_cortado'] = _cortar_cada_n(ncd.cuf, 30)
+        context['cufd_cortado'] = _cortar_cada_n(ncd.cufd, 22)
+        # N° Autorizacion/CUF de la factura ORIGINAL (distinto del CUF
+        # de la propia NCD, de arriba) -- va en la columna angosta de
+        # datos del cliente (5.9cm), no en el encabezado ancho, asi que
+        # necesita un corte mas apretado que el resto.
+        context['cuf_original_cortado'] = _cortar_cada_n(factura_original.cuf, 22)
+
+    return template_name, context
+
+
+def _estimar_altura_termico_ncd_mm(ncd, detalle_original, detalle_devuelto):
+    """
+    Misma logica que _estimar_altura_termico_mm (factura), pero para
+    NCD -- tiene DOS tablas en vez de una, asi que la base fija es
+    mayor (dos titulos de seccion + dos resumenes de totales en vez de
+    uno).
+    """
+    ANCHO_DESCRIPCION_CARACTERES = 28
+    altura_mm = 110  # encabezado + titulo + datos del documento/cliente/factura original
+    for det in detalle_original:
+        lineas_descripcion = max(1, -(-len(det.producto.descripcion or '') // ANCHO_DESCRIPCION_CARACTERES))
+        altura_mm += 5 * lineas_descripcion + 5
+    altura_mm += 15  # "MONTO TOTAL ORIGINAL Bs"
+    for det in detalle_devuelto:
+        lineas_descripcion = max(1, -(-len(det.producto.descripcion or '') // ANCHO_DESCRIPCION_CARACTERES))
+        altura_mm += 5 * lineas_descripcion + 5
+    altura_mm += 20  # "MONTO TOTAL DEVUELTO Bs" + "MONTO EFECTIVO DEBITO-CREDITO Bs"
+    altura_mm += 15  # "Son: ..."
+    altura_mm += 35  # leyendas fiscales + texto de verificacion (sin QR, ver comentario en _contexto_ncd_documento)
+    return altura_mm
+
+
+def _estimar_altura_termico_mm(enc, detalle):
+    """
+    Estimacion (no exacta) de la altura de pagina necesaria para el
+    ticket termico de 58mm, en milimetros -- ver comentario en
+    _contexto_factura_documento sobre por que hace falta esto (xhtml2pdf
+    no tiene "altura automatica" real). Generosa a proposito.
+    """
+    ANCHO_DESCRIPCION_CARACTERES = 28  # aprox. lo que entra en una linea a 58mm
+    altura_mm = 95  # encabezado + titulo + datos fiscales + datos del cliente
+    for det in detalle:
+        lineas_descripcion = max(1, -(-len(det.producto.descripcion or '') // ANCHO_DESCRIPCION_CARACTERES))
+        altura_mm += 5 * lineas_descripcion  # linea(s) de codigo+descripcion
+        altura_mm += 5  # linea de cantidad x precio - descuento ... subtotal
+    altura_mm += 45  # totales + "Son: ..."
+    altura_mm += 30  # leyendas fiscales + texto de verificacion
+    altura_mm += 45  # QR + margen alrededor
+    return altura_mm
+
+
+def _cortar_cada_n(texto, n):
+    """<br> cada N caracteres -- ver comentario en _contexto_factura_documento."""
+    if not texto:
+        return texto
+    return '<br>'.join(texto[i:i + n] for i in range(0, len(texto), n))
+
+
+def _generar_marca_agua_anulada_data_uri(ancho_px=816, alto_px=1056, tamano_fuente=150):
+    """
+    Imagen PNG del tamaño de la PAGINA (por defecto, proporcion carta
+    a 96dpi) con el texto "ANULADA" en diagonal, semi-transparente,
+    centrada -- para usar como fondo de pagina (@page background-image,
+    ver _contexto_factura_documento) en facturas anuladas (20/09/2026,
+    pedido de Carlos).
+
+    CORREGIDO 20/09/2026: la primera version devolvia un <img> normal
+    posicionado con CSS position:absolute -- resulto que xhtml2pdf NO
+    saca ese elemento del flujo del documento (a diferencia de lo que
+    hace un navegador real), asi que en vez de superponerse quedaba
+    empujando el resto del contenido hacia abajo (bug real, se veia al
+    abrir el PDF, no en el HTML). `@page { background-image: ... }` SI
+    funciona como fondo real, sin afectar el flujo, Y se repite solo
+    en cada pagina -- resuelve de paso la limitacion ya documentada de
+    que la marca solo aparecia en la primera hoja de una factura de
+    varias paginas. Se genera la imagen del tamaño de la pagina (no
+    cuadrada) para que el texto quede centrado en la hoja real, sea
+    cual sea la proporcion con que xhtml2pdf term  ine posicionando el
+    fondo.
+
+    Se genera como IMAGEN, no con CSS -- xhtml2pdf no soporta
+    transform/rotate en CSS (limitacion real ya confirmada con la
+    marca de agua "SIN VALOR LEGAL" del 18-19/09, que por eso se hizo
+    horizontal); PIL si puede rotar texto libremente. Usa
+    ImageFont.load_default(size=...) (Pillow >=10.1, ya cumplido por
+    este proyecto) en vez de una fuente .ttf del sistema operativo --
+    una ruta tipo "arialbd.ttf" solo existe en Windows, y el
+    despliegue real es en Linux (Hetzner).
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    import base64
+
+    lado = max(ancho_px, alto_px) * 2  # de sobra para que rotar no recorte el texto
+    capa_texto = Image.new('RGBA', (lado, lado), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(capa_texto)
+    texto = "ANULADA"
+    fuente = ImageFont.load_default(size=tamano_fuente)
+    bbox = draw.textbbox((0, 0), texto, font=fuente)
+    ancho_texto, alto_texto = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(
+        ((lado - ancho_texto) / 2, (lado - alto_texto) / 2),
+        texto, font=fuente, fill=(130, 130, 130, 140)
+    )
+    rotada = capa_texto.rotate(35, expand=False)
+
+    # Recortar del centro de la capa rotada al tamaño final de pagina,
+    # para que el texto quede centrado tanto horizontal como
+    # verticalmente en la imagen que se usa de fondo.
+    izq = (lado - ancho_px) // 2
+    arriba = (lado - alto_px) // 2
+    pagina = rotada.crop((izq, arriba, izq + ancho_px, arriba + alto_px))
+
+    buffer = BytesIO()
+    pagina.save(buffer, format='PNG')
+    b64 = base64.b64encode(buffer.getvalue()).decode('ascii')
+    return f"data:image/png;base64,{b64}"
+
+
+def _generar_qr_data_uri(url):
+    """
+    Genera el QR de verificacion (URL del portal del SIN, ver comentario
+    en _contexto_factura_documento) como imagen PNG embebida directo en
+    el HTML (data URI) -- asi no hace falta guardar un archivo temporal
+    por factura ni exponer una vista/URL publica nueva solo para servir
+    la imagen. xhtml2pdf soporta 'data:' en <img src>.
+    """
+    import base64
+    import qrcode
+
+    img = qrcode.make(url, box_size=6, border=1)
+    buffer = BytesIO()
+    img.save(buffer, format='PNG')
+    b64 = base64.b64encode(buffer.getvalue()).decode('ascii')
+    return f"data:image/png;base64,{b64}"
+
+
+_UNIDADES = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve',
+             'diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete',
+             'dieciocho', 'diecinueve', 'veinte']
+_DECENAS = ['', '', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa']
+_CENTENAS = ['', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos',
+             'seiscientos', 'setecientos', 'ochocientos', 'novecientos']
+_VEINTIS = ['veinte', 'veintiuno', 'veintidós', 'veintitrés', 'veinticuatro', 'veinticinco',
+            'veintiséis', 'veintisiete', 'veintiocho', 'veintinueve']
+
+
+def _grupo_en_letras(n):
+    """Convierte un numero de 0 a 999 a letras (sin 'mil'/'millones')."""
+    if n == 0:
+        return ''
+    if n == 100:
+        return 'cien'
+    texto = ''
+    if n >= 100:
+        texto += _CENTENAS[n // 100]
+        n %= 100
+        if n:
+            texto += ' '
+    if 21 <= n <= 29:
+        # "veintiuno".."veintinueve" van juntas (no "veinte y uno") --
+        # forma moderna preferida en español; el resto de las decenas
+        # (30+) si usan "y" separado ("treinta y uno").
+        texto += _VEINTIS[n - 20]
+        n = 0
+    elif n >= 30:
+        texto += _DECENAS[n // 10]
+        n %= 10
+        if n:
+            texto += ' y ' + _UNIDADES[n]
+    elif n > 0:
+        texto += _UNIDADES[n]
+    return texto
+
+
+def _numero_en_letras(n):
+    """Convierte un entero (0 a 999.999.999) a letras, en español."""
+    n = int(n)
+    if n == 0:
+        return 'cero'
+    partes = []
+    millones, resto = divmod(n, 1_000_000)
+    miles, unidades = divmod(resto, 1000)
+    if millones:
+        partes.append(('un millón' if millones == 1 else _grupo_en_letras(millones) + ' millones'))
+    if miles:
+        partes.append(('mil' if miles == 1 else _grupo_en_letras(miles) + ' mil'))
+    if unidades:
+        partes.append(_grupo_en_letras(unidades))
+    return ' '.join(partes)
+
+
+def _importe_en_letras(monto):
+    """
+    Convierte un monto (Bs) a su representacion en letras, formato
+    exigido por el SIN en la representacion grafica ("Son: Trescientos
+    nueve 51/100 Bolivianos") -- agregado 18/09/2026 a partir del
+    modelo de referencia oficial que paso Carlos; no existia ningun
+    mecanismo de conversion previo en el sistema.
+    """
+    monto = round(float(monto or 0), 2)
+    entero = int(monto)
+    centavos = round((monto - entero) * 100)
+    texto = _numero_en_letras(entero).capitalize()
+    return f"{texto} {centavos:02d}/100 Bolivianos"
 
 
 @login_required(login_url='/login/')
 @permission_required('fac.view_facturaenc', login_url='bases:sin_privilegios')
-def imprimir_factura_recibo(request,id):
-    template_name="fac/factura_one.html"
-
+def imprimir_factura_recibo(request, id):
     enc = get_object_or_404(FacturaEnc, id=id)
-    det = FacturaDet.objects.filter(factura=id)
-    empresa = Empresa.objects.first()
+    template_name, context, documento = _contexto_documento(enc)
+    context['request'] = request
+    return render(request, template_name, context)
 
-    context={
-        'request':request,
-        'enc':enc,
-        'detalle':det,
-        'empresa':empresa,
-    }
 
-    return render(request,template_name,context)
+def generar_pdf_factura_bytes(enc):
+    """
+    Genera el PDF vigente para esta factura -- la FACTURA original, o
+    la NOTA DE CREDITO-DEBITO que la corrige si tiene una vigente
+    (agregado 19/09/2026, ver _contexto_documento), en el formato que
+    la Empresa tenga elegido (Carta o Termico). Devuelve los bytes del
+    PDF. Usado tanto por la descarga manual (factura_descargar_pdf)
+    como por el envio de correo (Fase 1, 16/09/2026) -- una sola
+    fuente para no duplicar el render, y para que ambos caminos queden
+    siempre en el mismo formato/documento que "Ver en Pantalla".
+    """
+    template_name, context, documento = _contexto_documento(enc)
+    html = render_to_string(template_name, context)
+    buffer = BytesIO()
+    resultado = pisa.CreatePDF(html, dest=buffer)
+    if resultado.err:
+        return None
+    return buffer.getvalue()
+
+
+def nombre_archivo_documento(enc):
+    """
+    Nombre de archivo coherente con lo que generar_pdf_factura_bytes(enc)
+    en verdad produce -- "factura_123.pdf" si no tiene NCD vigente,
+    "nota_credito_debito_45.pdf" si la tiene (agregado 19/09/2026).
+    Usado por la descarga manual y por el adjunto del correo, para que
+    el nombre del archivo nunca contradiga su contenido.
+    """
+    ncd = _ncd_vigente(enc)
+    if ncd:
+        return f"nota_credito_debito_{ncd.id}.pdf"
+    return f"factura_{enc.id}.pdf"
+
+
+@login_required(login_url='/login/')
+@permission_required('fac.view_facturaenc', login_url='bases:sin_privilegios')
+def factura_descargar_pdf(request, id):
+    enc = get_object_or_404(FacturaEnc, id=id)
+    pdf_bytes = generar_pdf_factura_bytes(enc)
+    if pdf_bytes is None:
+        return HttpResponse(
+            "Ocurrió un error al generar el PDF. Contacte al administrador.",
+            status=500
+        )
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{nombre_archivo_documento(enc)}"'
+    return response
 
 
 def _contexto_reporte_facturas(f1, f2):
@@ -54,6 +585,7 @@ def _contexto_reporte_facturas(f1, f2):
         'enc': enc,
         'empresa': empresa,
         'fecha_emision': timezone.localtime(timezone.now()),
+        **datos_logo_header(empresa),
     }
 
 
@@ -200,6 +732,7 @@ def _contexto_reporte_cierre_ventas(f1, f2):
         'cierres_con_observacion': cierres_con_observacion,
         'empresa': empresa,
         'fecha_emision': timezone.localtime(timezone.now()),
+        **datos_logo_header(empresa),
     }
 
 
@@ -295,6 +828,7 @@ def _contexto_cierre_caja(f1, f2):
         'detalle_agrupado': detalle_agrupado,
         'empresa': empresa,
         'fecha_emision': timezone.localtime(timezone.now()),
+        **datos_logo_header(empresa),
     }
 
 @login_required(login_url='/login/')
@@ -500,6 +1034,7 @@ def _contexto_kardex_cliente(cliente_id, f1=None, f2=None):
         'f2': f2,
         'empresa': empresa,
         'fecha_emision': timezone.localtime(timezone.now()),
+        **datos_logo_header(empresa),
     }
 
 

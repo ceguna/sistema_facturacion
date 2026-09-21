@@ -1,0 +1,12 @@
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ns2:recepcionDocumentoAjusteResponse xmlns:ns2="https://siat.impuestos.gob.bo/">
+      <RespuestaServicioFacturacion>
+        <codigoDescripcion>VALIDADA</codigoDescripcion>
+        <codigoEstado>908</codigoEstado>
+        <codigoRecepcion>6e475827-b12d-11f1-95ab-01c874cda449</codigoRecepcion>
+        <transaccion>true</transaccion>
+      </RespuestaServicioFacturacion>
+    </ns2:recepcionDocumentoAjusteResponse>
+  </soap:Body>
+</soap:Envelope>

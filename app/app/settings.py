@@ -76,6 +76,8 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'fe.context_processors.empresa_branding',
+                'bases.context_processors.sucursal_actual',
             ],
         },
     },
@@ -164,3 +166,18 @@ LOGOUT_REDIRECT_URL = '/login/'
 #DATABASES['default'].update(db_from_env)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# --- Correo saliente (Fase 1, 16/09/2026: envio de factura por correo) ---
+# Sin valores por defecto a proposito para host/user/password -- si faltan,
+# EMAIL_HOST queda vacio y el backend SMTP de Django tira una excepcion
+# clara al intentar enviar, en vez de fallar en silencio o mandar con una
+# config insegura. En un .env sin estas variables, el sistema entero sigue
+# funcionando igual -- solo la funcion de enviar por correo no va a poder
+# conectarse hasta que se carguen.
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = config("EMAIL_HOST", default="")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)

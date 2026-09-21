@@ -106,11 +106,11 @@
                         {% endif %}
                     </td>
                     <td>
-                        <button class="btn btn-warning btn-circle" onclick="return abrir_modal('{% url 'inv:producto_edit' item.id %}')">
+                        <button class="btn btn-warning btn-circle" onclick="return abrir_modal('{% url 'inv:producto_edit' item.id %}')" title="Editar">
                          <i class="far fa-edit"></i></button>
                         <a href="{% url 'inv:producto_homologar' item.id %}" class="btn btn-info btn-circle" title="Homologar ante el SIN">
                             <i class="fas fa-file-invoice"></i></a>
-                        <a href="{% url 'inv:producto_inactivar' item.id %}" class="btn btn-danger btn-circle" role="button"><i class="far fa-thumbs-down"></i></a>                 
+                        <a href="{% url 'inv:producto_inactivar' item.id %}" class="btn btn-danger btn-circle" role="button" title="Activar / Inactivar"><i class="far fa-thumbs-down"></i></a>
                     </td>
                 </tr>
                 {% endfor%}

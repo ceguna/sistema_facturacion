@@ -1,0 +1,24 @@
+{% extends 'base/base.html' %}
+
+{% block page_content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3">
+    <h4 class="m-0 font-weight-bold text-danger">Eliminar Ajuste de Inventario</h4>
+  </div>
+  <div class="card-body">
+    <div class="alert alert-warning">
+      <strong>Atención:</strong> esto elimina el Ajuste de Inventario N° {{ enc.id }}
+      (motivo {{ enc.motivo }}, fecha {{ enc.fecha|date:"d/m/Y" }}) y **revierte el
+      stock** de todos los productos que había cargado. Queda registrado en la base
+      para auditoría, pero oculto del uso normal.
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-danger">
+        <i class="far fa-trash-alt mr-1"></i>Sí, Eliminar Ajuste
+      </button>
+      <a href="{% url 'inv:ajuste_inventario_edit' enc.id %}" class="btn btn-secondary ml-2">Cancelar</a>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -338,4 +338,33 @@ def sincronizar_todos_los_catalogos(cliente_soap):
         mensaje=mensaje,
     )
 
+
+def elegir_leyenda_aleatoria(actividad_economica=None):
+    """
+    Elige al azar una leyenda vigente del catalogo LEYENDAS (checklist
+    SIN Fase II, punto 4: "se cambie aleatoriamente con cada emision la
+    segunda leyenda... en cumplimiento a la ley del consumidor N 453").
+
+    Se prioriza una leyenda de la MISMA actividad economica que el
+    producto que se esta facturando (el 'codigo' de este catalogo
+    guarda el codigoActividad, no un id de leyenda -- ver comentario en
+    sincronizar_catalogos sobre 'parametricaLeyendasDto'). Si no hay
+    ninguna para esa actividad puntual (o no se paso actividad), cae a
+    cualquier leyenda vigente. Devuelve None solo si el catalogo esta
+    completamente vacio (nunca se sincronizo) -- el llamador decide el
+    texto de respaldo en ese caso.
+    """
+    import random
+
+    qs = CatalogoSIN.objects.filter(tipo_catalogo=CatalogoSIN.TipoCatalogo.LEYENDAS, vigente=True)
+    if actividad_economica:
+        de_la_actividad = list(qs.filter(codigo=actividad_economica))
+        if de_la_actividad:
+            return random.choice(de_la_actividad).descripcion
+
+    todas = list(qs)
+    if not todas:
+        return None
+    return random.choice(todas).descripcion
+
     return exitosa, mensaje

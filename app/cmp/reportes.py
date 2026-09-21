@@ -7,12 +7,26 @@ from django.contrib.staticfiles import finders
 from django.utils import timezone
 
 from .models import ComprasEnc, ComprasDet
+from fe.models import Empresa
+from fe.utils import datos_logo_header
 
 def link_callback(uri, rel):
     """
     Convert HTML URIs to absolute system paths so xhtml2pdf can access those
     resources
+
+    CORREGIDO 20/09/2026: al agregar el logo de la empresa al
+    encabezado (base/reporte_logo_header.html), el <img src="..."> pasa
+    la ruta de archivo REAL en disco (empresa.logo.path, ej.
+    "D:\...\media\empresa\logos\X.jpg"), no una URL de /static/ o
+    /media/ -- finders.find() (pensado solo para archivos static)
+    reventaba con SuspiciousFileOperation al recibir una ruta absoluta
+    de Windows. Si el uri ya es una ruta de archivo existente, se
+    devuelve tal cual, sin pasar por la resolucion de static/media.
     """
+    if os.path.isfile(uri):
+        return uri
+
     result = finders.find(uri)
     if result:
         if not isinstance(result, (list, tuple)):
@@ -44,10 +58,13 @@ def reporte_compras(request):
     today = timezone.now()
 
     compras = ComprasEnc.objects.all()
+    empresa = Empresa.objects.first()
     context = {
         'obj': compras,
         'today': today,
-        'request': request
+        'request': request,
+        'empresa': empresa,
+        **datos_logo_header(empresa),
     }
 
     # Create a Django response object, and specify content_type as pdf
@@ -76,11 +93,14 @@ def imprimir_compra(request, compra_id):
     else:
         detalle={}
 
+    empresa = Empresa.objects.first()
     context = {
         'detalle': detalle,
         'encabezado': enc,
         'today': today,
-        'request': request
+        'request': request,
+        'empresa': empresa,
+        **datos_logo_header(empresa),
     }
 
     # Create a Django response object, and specify content_type as pdf
