@@ -1,0 +1,114 @@
+{% extends 'base/base.html' %}
+{% load l10n %}
+
+{% block page_content %}
+
+<h1 class="csg-dashboard-title mb-1">Notas de Crédito-Débito</h1>
+<div class="text-muted mb-4">Historial de NCD emitidas del período, con factura original, motivo y estado</div>
+
+<div class="card shadow mb-4">
+    <div class="card-header d-flex flex-wrap align-items-center justify-content-between">
+        <span>Período (fecha de emisión)</span>
+        <form method="get" class="form-inline">
+            <select name="mes" class="form-control mr-2">
+                {% for valor, nombre in meses %}
+                <option value="{{ valor|unlocalize }}" {% if valor == mes %}selected{% endif %}>{{ nombre }}</option>
+                {% endfor %}
+            </select>
+            <select name="anio" class="form-control mr-2">
+                {% for a in anios %}
+                <option value="{{ a|unlocalize }}" {% if a == anio %}selected{% endif %}>{{ a|unlocalize }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary">Filtrar</button>
+        </form>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card border-left-warning shadow h-100 py-2">
+            <div class="card-body">
+                <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-warning);">Total Devuelto (vigentes)</div>
+                <div class="h5 mb-0 font-weight-bold">Bs. {{ total_devuelto_fmt }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-primary);">Cantidad de NCD Emitidas</div>
+                <div class="h5 mb-0 font-weight-bold">{{ ncds|length }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-left-danger shadow h-100 py-2">
+            <div class="card-body">
+                <div class="text-xs font-weight-bold text-uppercase mb-1" style="color: var(--csg-danger);">NCD Anuladas</div>
+                <div class="h5 mb-0 font-weight-bold">{{ cantidad_anuladas }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow">
+    <div class="card-header">Historial de Notas de Crédito-Débito</div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0"
+                data-toggle="table"
+                data-pagination="true"
+                data-search="true"
+                data-show-columns="true"
+                data-show-toggle="true"
+                data-show-fullscreen="true"
+                data-show-export="True"
+                data-export-types='["csv","txt","xlsx","pdf"]'
+                data-locale="es-NI">
+                <thead>
+                    <tr>
+                        <th data-sortable="true" data-field="id">No. NCD</th>
+                        <th data-sortable="true" data-field="factura">Factura Original</th>
+                        <th data-sortable="true" data-field="cliente">Cliente</th>
+                        <th data-sortable="true" data-field="fecha">Fecha Emisión</th>
+                        <th data-sortable="true" data-field="motivo">Motivo</th>
+                        <th data-sortable="true" data-field="monto">Monto Devuelto</th>
+                        <th data-sortable="true" data-field="estado">Estado</th>
+                        <th data-sortable="true" data-field="autorizado_por">Autorizado Por</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for n in ncds %}
+                    <tr>
+                        <td data-tableexport-cellformat="">{{ n.id|stringformat:"d" }}</td>
+                        <td><a href="{% url 'fac:factura_edit' n.factura_original_id %}">{{ n.factura_original_id|stringformat:"d" }}</a></td>
+                        <td>{{ n.factura_original.cliente }}</td>
+                        <td>{{ n.fecha|date:"d/m/Y H:i" }}</td>
+                        <td>{{ n.motivo|default:"—" }}</td>
+                        <td data-tableexport-cellformat="">Bs. {{ n.monto_total_devuelto_fmt }}</td>
+                        <td>
+                            {% if n.anulada %}
+                                <span class="badge badge-secondary">Anulada</span>
+                            {% elif n.estado_sin == 'validada' %}
+                                <span class="badge badge-success">Validada SIN</span>
+                            {% elif n.estado_sin == 'observada' %}
+                                <span class="badge badge-warning">Observada SIN</span>
+                            {% elif n.estado_sin == 'pendiente' %}
+                                <span class="badge badge-info">Pendiente SIN</span>
+                            {% else %}
+                                <span class="badge badge-light">{{ n.get_estado_sin_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ n.usuario_autorizacion|default:"—" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="8" class="text-center text-muted py-4">No hay Notas de Crédito-Débito emitidas en este período 👍</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

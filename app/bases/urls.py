@@ -2,7 +2,7 @@ from django.urls import path
 from django.contrib.auth import views as auth_views
 
 from bases.views import Home, HomeSinPrivilegios, ChartsView, TablesView, \
-    LibroVentasView, LibroComprasView, FacturasAnuladasView, \
+    LibroVentasView, LibroComprasView, FacturasAnuladasView, NotasCreditoDebitoReporteView, \
     UsuarioListView, UsuarioNew, UsuarioEdit, UsuarioResetPassword, \
     UsuarioToggleActivo, GrupoListView, GrupoNew, GrupoEdit, GrupoDel, \
     MiPerfilView, MiCambiarPasswordView, estado_inventario, kardex_inventario, \
@@ -19,6 +19,7 @@ urlpatterns = [
     path('reportes/libro-ventas/', LibroVentasView.as_view(), name='libro_ventas'),
     path('reportes/libro-compras/', LibroComprasView.as_view(), name='libro_compras'),
     path('reportes/facturas-anuladas/', FacturasAnuladasView.as_view(), name='facturas_anuladas'),
+    path('reportes/notas-credito-debito/', NotasCreditoDebitoReporteView.as_view(), name='notas_credito_debito_reporte'),
     path('reportes/estado-inventario', estado_inventario, name='estado_inventario'),
     path('reportes/estado-inventario/pdf', estado_inventario_pdf, name='estado_inventario_pdf'),
     path('reportes/estado-inventario/excel', estado_inventario_excel, name='estado_inventario_excel'),

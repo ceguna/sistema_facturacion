@@ -14,7 +14,12 @@
     <tr>
         <td style="border:none; padding:0; vertical-align:middle; width:3.5cm;">
             {% if logo_valido %}
+            {% if es_pdf %}
             <img src="{{ empresa.logo.path }}" alt="{{ empresa.razon_social }}" style="width:{{ logo_ancho_pt }}pt; height:{{ logo_alto_pt }}pt;">
+            {% else %}
+            {# CORREGIDO 22/09/2026: .path es una ruta de archivo, no funciona en el navegador -- .url si. #}
+            <img src="{{ empresa.logo.url }}" alt="{{ empresa.razon_social }}" style="width:{{ logo_ancho_pt }}pt; height:{{ logo_alto_pt }}pt;">
+            {% endif %}
             {% endif %}
         </td>
         <td style="border:none; padding:0; vertical-align:middle;">

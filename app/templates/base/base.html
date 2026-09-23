@@ -220,6 +220,9 @@
                         {% if perms.fac.view_facturaenc %}
                         <a class="collapse-item" href="{% url 'bases:facturas_anuladas' %}">Facturas Anuladas</a>
                         {% endif %}
+                        {% if perms.fac.view_notacreditodebito %}
+                        <a class="collapse-item" href="{% url 'bases:notas_credito_debito_reporte' %}">Notas de Crédito-Débito</a>
+                        {% endif %}
                         <!-- La vista real de Cierre de Ventas/Caja ya exige
                              fac.ver_reportes_financieros, no view_facturaenc (ver
                              fac/reportes.py) -- antes el menu mostraba el link igual a
@@ -241,10 +244,20 @@
                         {% endif %}
 
                         <!-- Fase 4 del instructivo de Inspeccion SIN (21/09/2026):
-                             movido desde "Catálogos de Facturación" -- ni la vista
-                             ni los permisos cambiaron (fac.gestionar_creditos sigue
-                             protegiendo el acceso), solo la ubicacion en el menu. -->
-                        {% if perms.fac.gestionar_creditos %}
+                             movido desde "Catálogos de Facturación", solo la
+                             ubicacion en el menu.
+
+                             CORREGIDO 22/09/2026: el gate real de las DOS vistas
+                             de aca abajo (cartera_creditos, kardex_cliente_selector)
+                             es 'fac.ver_creditos', no 'fac.gestionar_creditos' (ver
+                             @permission_required en fac/views.py y fac/reportes.py) --
+                             ese era el permiso equivocado desde antes de la Fase 4,
+                             solo se arrastro al mover el bloque. Con el permiso
+                             viejo, un rol de solo lectura sobre creditos (ej.
+                             Contador, que tiene ver_creditos pero no
+                             gestionar_creditos a proposito) nunca veia este menu
+                             pese a tener acceso real a las pantallas. -->
+                        {% if perms.fac.ver_creditos %}
                         <h6 class="collapse-header">Cartera</h6>
                         <a class="collapse-item" href="{% url 'fac:cartera_creditos' %}">Cartera de Créditos</a>
                         <a class="collapse-item" href="{% url 'fac:kardex_cliente_selector' %}">Kardex de Cliente</a>
@@ -344,7 +357,7 @@
                     <!-- Tamaño de letra aumentado (20/09/2026, pedido de
                          Carlos) -- 1.3rem cabe comodo dentro de la altura
                          fija de .topbar (4.375rem) sin agrandar la barra. -->
-                    <span class="ml-3 font-weight-bold text-gray-800 d-none d-md-inline" style="font-size: 1.3rem;">{{ empresa_actual.razon_social }}</span>
+                    <span id="empresaRazonSocialTopbar" class="ml-3 font-weight-bold text-gray-800 d-none d-md-inline" style="font-size: 1.3rem;">{{ empresa_actual.razon_social }}</span>
                     {% endif %}
 
                     <!-- Sucursal actual (20/09/2026, Fase 2): indicador
@@ -498,6 +511,47 @@
      <script src="https://unpkg.com/tableexport.jquery.plugin/tableExport.min.js"></script> 
      <script src="https://unpkg.com/bootstrap-table@1.22.1/dist/bootstrap-table-locale-all.min.js"></script>
      <script src="https://unpkg.com/bootstrap-table@1.22.1/dist/extensions/export/bootstrap-table-export.min.js"></script>
+
+     <script>
+        // CORREGIDO 22/09/2026 (pedido de Carlos): "Export Data" -> PDF salia
+        // sin ningun encabezado (solo la tabla pelada). Workaround SOLO para
+        // PDF -- CSV/TXT/Excel no tienen concepto de "pagina" para dibujar un
+        // encabezado y agregarles filas extra rompería la reimportación de
+        // esos formatos. Se aplica globalmente via el default de bootstrap-table,
+        // asi que corre automatico en cualquier tabla con data-show-export="true"
+        // sin tener que tocar cada template.
+        $.fn.bootstrapTable.defaults.exportOptions = {
+            jspdf: {
+                orientation: 'l',
+                margins: { left: 20, right: 10, top: 65, bottom: 10 },
+                // CORREGIDO 22/09/2026: onDocCreated va ANIDADO dentro de
+                // "jspdf" en la version real de tableExport.jquery.plugin que
+                // se carga por CDN -- la doc publica que se consulto primero
+                // lo mostraba como hermano de "jspdf" y por eso el callback
+                // nunca se ejecutaba (verificado leyendo el .min.js servido).
+                onDocCreated: function (doc) {
+                    var razonSocial = $('#empresaRazonSocialTopbar').text().trim() || 'CGS Gestión';
+                    // El titulo de cada listado vive en el h4 del card-header (patron
+                    // SB Admin 2 usado en las 29 pantallas con tablas exportables) --
+                    // se usa document.title solo como respaldo si esa convencion falla.
+                    var titulo = $('.card-header h4').first().text().trim() || (document.title || '').trim();
+                    var fecha = new Date().toLocaleString('es-BO');
+                    doc.setFontSize(13);
+                    doc.setFont(undefined, 'bold');
+                    doc.text(razonSocial, 20, 22);
+                    doc.setFontSize(10);
+                    doc.setFont(undefined, 'normal');
+                    if (titulo) {
+                        doc.text(titulo, 20, 36);
+                    }
+                    doc.setFontSize(8);
+                    doc.text('Fecha de exportación: ' + fecha, 20, 48);
+                    doc.setLineWidth(0.5);
+                    doc.line(20, 54, doc.internal.pageSize.getWidth() - 20, 54);
+                }
+            }
+        };
+    </script>
 
      <!-- Select2 from a CDN -->
      <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>

@@ -425,6 +425,55 @@ class FacturasAnuladasView(LoginRequiredMixin, generic.TemplateView):
         return context
 
 
+class NotasCreditoDebitoReporteView(LoginRequiredMixin, generic.TemplateView):
+    """
+    Reporte de Notas de Credito-Debito emitidas (22/09/2026, pedido de
+    Carlos, mismo tratamiento que Facturas Anuladas -- filtro de
+    periodo, tarjetas de resumen, tabla exportable). Columnas alineadas
+    a lo que ya usan sistemas de facturacion/contables de referencia
+    (Accoxi, Output Books, Manager.io): numero de NCD, fecha, cliente,
+    factura original, motivo, monto devuelto, estado.
+    """
+    template_name = 'bases/notas_credito_debito_reporte.html'
+    login_url = 'bases:login'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fac.models import NotaCreditoDebito
+
+        hoy = timezone.localtime(timezone.now()).date()
+        mes = _parse_int_localizado(self.request.GET.get('mes'), hoy.month)
+        anio = _parse_int_localizado(self.request.GET.get('anio'), hoy.year)
+
+        ncds = NotaCreditoDebito.objects.filter(
+            fecha__year=anio, fecha__month=mes
+        ).select_related(
+            'factura_original', 'factura_original__cliente', 'usuario_autorizacion'
+        ).order_by('-fecha')
+
+        for n in ncds:
+            n.monto_total_devuelto_fmt = "{:,.2f}".format(n.monto_total_devuelto)
+
+        vigentes = [n for n in ncds if not n.anulada]
+        total_devuelto = sum(n.monto_total_devuelto for n in vigentes)
+
+        context.update({
+            'ncds': ncds,
+            'total_devuelto': total_devuelto,
+            'total_devuelto_fmt': "{:,.2f}".format(total_devuelto),
+            'cantidad_anuladas': sum(1 for n in ncds if n.anulada),
+            'mes': mes,
+            'anio': anio,
+            'meses': [
+                (1, 'Enero'), (2, 'Febrero'), (3, 'Marzo'), (4, 'Abril'),
+                (5, 'Mayo'), (6, 'Junio'), (7, 'Julio'), (8, 'Agosto'),
+                (9, 'Septiembre'), (10, 'Octubre'), (11, 'Noviembre'), (12, 'Diciembre'),
+            ],
+            'anios': range(hoy.year - 3, hoy.year + 1),
+        })
+        return context
+
+
 class TablesView(LoginRequiredMixin, generic.TemplateView):
     template_name = 'bases/tables.html'
     login_url = 'bases:login'
@@ -816,6 +865,7 @@ def estado_inventario_pdf(request):
     from django.http import HttpResponse as _HttpResponse
 
     contexto = _contexto_estado_inventario(request)
+    contexto['es_pdf'] = True
     html = render_to_string('bases/estado_inventario_print.html', contexto)
 
     response = _HttpResponse(content_type='application/pdf')
@@ -1217,6 +1267,7 @@ def kardex_inventario_pdf(request):
     if error:
         return _HttpResponse(error, status=404)
 
+    contexto['es_pdf'] = True
     html = render_to_string('bases/kardex_inventario_print.html', contexto)
     response = _HttpResponse(content_type='application/pdf')
     response['Content-Disposition'] = 'attachment; filename="kardex_inventario.pdf"'
