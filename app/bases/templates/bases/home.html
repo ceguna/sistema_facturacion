@@ -140,7 +140,7 @@
                     <tbody>
                         {% for f in ultimas_facturas %}
                         <tr>
-                            <td><a href="{% url 'fac:factura_edit' f.id %}">{{ f.id }}</a></td>
+                            <td><a href="{% url 'fac:factura_edit' f.id %}">{{ f.id|stringformat:"d" }}</a></td>
                             <td>{{ f.cliente }}</td>
                             <td>Bs. {{ f.total|floatformat:2 }}</td>
                             <td>

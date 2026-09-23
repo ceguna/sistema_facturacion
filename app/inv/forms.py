@@ -200,6 +200,25 @@ class ProductoForm(forms.ModelForm):
                 raise forms.ValidationError("Cambio No permitido, coincide con otro registro")
         except Producto.DoesNotExist:
             pass
+
+        # CORREGIDO 23/09/2026: codigo_barra NO tenia ninguna restriccion
+        # de unicidad real -- unique_together=('codigo','codigo_barra')
+        # en el modelo es redundante (codigo YA es unique=True por si
+        # solo), asi que dos productos distintos podian terminar con el
+        # MISMO codigo_barra sin que nada lo impidiera. Eso rompe el
+        # lector de codigo de barra de Facturas/Compras: la busqueda
+        # Q(codigo=x)|Q(codigo_barra=x) espera un solo resultado, y con
+        # un duplicado tira MultipleObjectsReturned (error 500) en vez
+        # de encontrar el producto correcto.
+        codigo_barra = cleaned.get('codigo_barra')
+        if codigo_barra:
+            otro = Producto.objects.filter(codigo_barra=codigo_barra).exclude(pk=self.instance.pk).first()
+            if otro:
+                self.add_error(
+                    'codigo_barra',
+                    f'Este código de barra ya está registrado en el producto '
+                    f'"{otro.codigo} - {otro.descripcion}".'
+                )
         return cleaned
 
 

@@ -89,6 +89,22 @@
                                     <!-- Fin Izquierda -->
                                     <!-- Inicio Derecha -->
                                     <div class="col-6">
+                                        <!-- Busqueda por codigo/codigo de barra (23/09/2026, pedido
+                                             de Carlos): hasta ahora Compras solo tenia seleccion por
+                                             clic en la tabla de abajo -- sin forma de usar un lector
+                                             de codigo de barra. Reutiliza el mismo endpoint que ya usa
+                                             Facturas (api:producto_list + codigo, que ya busca por
+                                             codigo interno O codigo_barra, ver api/views.py). Un
+                                             lector de codigo de barra funciona como un teclado rapido
+                                             + Enter, por eso el submit es por keypress Enter, no un
+                                             boton. -->
+                                        <div class="row p-2">
+                                            <label for="id_buscar_codigo_barra" class="col-sm-3 col-form-label">Cód. / Barras:</label>
+                                            <div class="col-sm-9">
+                                                <input type="text" class="form-control" id="id_buscar_codigo_barra"
+                                                       placeholder="Escanee o escriba el código y presione Enter" autocomplete="off">
+                                            </div>
+                                        </div>
                                         <div class="row">
                                             <div class="col">
                                                 <table class="table table-striped table-hover dt-responsive table-sm nowrap tbl-productos" style="width:100%; table-layout:fixed;">
@@ -116,12 +132,16 @@
                                                 </table>
                                             </div>
                                         </div>
+                                        <!-- CORREGIDO 22/09/2026 (pedido de Carlos): el codigo (Id) es
+                                             1-2 digitos, no necesitaba col-sm-2 -- se achico junto con
+                                             la etiqueta "Producto" para darle ese espacio a la
+                                             descripcion, que es lo que mas se necesita leer completo. -->
                                         <div class="form-group row">
-                                            <label for="id_id_producto" class="col-sm-3 col-form-label">Producto</label>
-                                            <div class="col-sm-2">
+                                            <label for="id_id_producto" class="col-sm-2 col-form-label">Producto</label>
+                                            <div class="col-sm-1">
                                                 <input type="text" readonly class="form-control-plaintext" name="id_id_producto" id="id_id_producto" value="" required>
                                             </div>
-                                            <div class="col-sm-5">
+                                            <div class="col-sm-7">
                                                 <input type="text" readonly class="form-control-plaintext" id="id_descripcion_producto" value="" required>
                                             </div>
                                             <div class="col-sm-2">
@@ -443,6 +463,44 @@
 
         $('.tbl-productos').DataTable().search('').draw();
     }
+
+    // Busqueda por codigo/codigo de barra (23/09/2026): mismo endpoint
+    // y mismo criterio de "producto inactivo" que ya usa facturas.html
+    // (buscarProducto()) -- se reutiliza selectProducto() para no
+    // duplicar la logica de que hacer con un producto encontrado.
+    function buscarProductoPorCodigoBarra() {
+        var codigo = $('#id_buscar_codigo_barra').val().trim();
+        if (codigo === '') {
+            return;
+        }
+
+        var path = "{% url 'api:producto_list' %}" + encodeURIComponent(codigo);
+
+        $.ajax({
+            type: 'GET',
+            url: path,
+            success: function (r) {
+                if (!r.estado) {
+                    $.alert({ type: 'orange', title: '', content: 'Producto inactivo, no se puede comprar.' });
+                    $('#id_buscar_codigo_barra').val('').focus();
+                    return;
+                }
+                selectProducto(r.id, r.descripcion, r.unidad_medida_descripcion);
+                $('#id_buscar_codigo_barra').val('');
+            },
+            error: function () {
+                $.alert({ type: 'red', title: '', content: 'Producto no encontrado para el código "' + codigo + '".' });
+                $('#id_buscar_codigo_barra').val('').focus();
+            }
+        });
+    }
+
+    $('#id_buscar_codigo_barra').keypress(function (e) {
+        if (e.keyCode === 13) {
+            e.preventDefault();
+            buscarProductoPorCodigoBarra();
+        }
+    });
 
     function calcular_detalle()
     {

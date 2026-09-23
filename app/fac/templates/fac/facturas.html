@@ -271,7 +271,7 @@
                         <tbody>
                             {% for item in det%}
                             <tr>
-                                <td>{{ item.id }}</td>
+                                <td>{{ item.id|stringformat:"d" }}</td>
                                 <td>{{ item.producto.codigo }}</td>
                                 <td>{{ item.producto.descripcion }}</td>
                                 <td>{{ item.cantidad }}</td>

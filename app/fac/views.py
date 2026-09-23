@@ -16,7 +16,7 @@ from django.contrib import messages
 
 from django.contrib.auth import authenticate
 from django.utils import timezone
-from django.db.models import Sum, F
+from django.db.models import Sum, F, Q
 
 from bases.views import SinPrivilegios, obtener_sucursal_actual
 
@@ -352,7 +352,12 @@ def facturas(request,id=None):
         descuento = request.POST.get("descuento_detalle")
         total = request.POST.get("total_detalle")
 
-        prod = Producto.objects.filter(codigo=codigo).first()
+        # CORREGIDO 23/09/2026: acepta tambien codigo_barra -- defensa en
+        # profundidad, ya que el flujo normal (buscarProducto() en JS)
+        # ya normaliza a codigo interno antes de enviar el form, pero
+        # esta revalidacion server-side no debia quedar mas restrictiva
+        # que la busqueda AJAX que el propio formulario ofrece.
+        prod = Producto.objects.filter(Q(codigo=codigo) | Q(codigo_barra=codigo)).first()
         if not prod:
             messages.error(request, 'El producto ingresado no existe')
             return redirect("fac:factura_edit", id=id) if id else redirect("fac:factura_new")

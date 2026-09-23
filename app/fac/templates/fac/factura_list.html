@@ -148,8 +148,14 @@
                adjunta al correo -- mismo criterio que ya usa el boton
                de Descargar XML de mas arriba. -->
           {% if item.xml_firmado %}
-          <a href="{% url 'fac:factura_descargar_pdf' item.id %}" class="href btn btn-outline-primary btn-circle" title="Descargar PDF">
-              <i class="fas fa-file-pdf"></i>
+          <!-- CORREGIDO 22/09/2026 (pedido de Carlos): mismo icono/rotulo
+               que ya usa "Imprimir" en Compras (fa-print) -- antes decia
+               "Descargar PDF" con icono de PDF, mismo comportamiento de
+               siempre (descarga el archivo, el SO lo abre con el visor
+               por defecto configurado), solo cambia el icono/titulo para
+               que se lea como la accion de imprimir que en la practica ya es. -->
+          <a href="{% url 'fac:factura_descargar_pdf' item.id %}" class="href btn btn-outline-primary btn-circle" title="Imprimir Factura">
+              <i class="fas fa-print"></i>
           </a>
           {% if item.cliente.email %}
           <a href="#" class="href btn btn-info btn-circle" title="Enviar por correo a {{ item.cliente.email }}"

@@ -92,6 +92,20 @@
     .badge-info { background-color: #17a2b8; }
     .badge-warning { background-color: #ffc107; color: #212529; }
     .badge-secondary { background-color: #6c757d; }
+    .btn-reporte {
+        display: inline-block;
+        padding: 8px 18px;
+        margin: 0 6px;
+        border-radius: 4px;
+        text-decoration: none;
+        color: #fff;
+        font-weight: bold;
+        font-size: 0.9em;
+    }
+    .btn-reporte-pdf { background-color: #28a745; }
+    .btn-reporte-pdf:hover { background-color: #218838; }
+    .btn-reporte-volver { background-color: #17a2b8; }
+    .btn-reporte-volver:hover { background-color: #138496; }
     </style>
 </head>
 <body>
@@ -125,7 +139,7 @@
                 <tbody>
                     {% for item in enc %}
                     <tr>
-                        <td>{{ item.id }}</td>
+                        <td>{{ item.id|stringformat:"d" }}</td>
                         <td>{{ item.fecha | date:"d/m/Y"  }}</td>
                         <td>{{ item.cliente }}</td>
                         <td>{{ item.total }}</td>
@@ -150,7 +164,8 @@
             </table>
             {% if not es_pdf %}
             <p style="margin-top: 20px; text-align: center;">
-                <a href="{{ url_descargar_pdf }}">Descargar esta versión como PDF</a>
+                <a href="{{ url_descargar_pdf }}" class="btn-reporte btn-reporte-pdf">Descargar esta versión como PDF</a>
+                <a href="/fac/facturas/" class="btn-reporte btn-reporte-volver">Volver a Facturas</a>
             </p>
             {% endif %}
         </div>

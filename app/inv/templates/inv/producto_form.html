@@ -245,11 +245,52 @@
         // formulario entero. Ahora Enter en este campo pasa el foco a
         // Descripcion (siguiente campo logico), como si fuera Tab, para
         // que escanear un producto fluya sin tocar el mouse.
+        //
+        // CORREGIDO 23/09/2026: antes de saltar el foco, se chequea con
+        // el mismo endpoint que ya usan Facturas y Compras
+        // (api:producto_list + codigo, busca por codigo O codigo_barra)
+        // si ese codigo de barra YA pertenece a otro producto -- antes
+        // nada lo impedia (codigo_barra no tenia ninguna restriccion de
+        // unicidad real, ver ProductoForm.clean en inv/forms.py), asi
+        // que dos productos distintos podian terminar con el mismo
+        // codigo de barra fisico sin que nadie se diera cuenta hasta
+        // que el lector, en Facturas o Compras, encontraba dos
+        // coincidencias y tiraba error. Al EDITAR un producto, no se
+        // avisa si el codigo escaneado es el mismo que ya tenia este
+        // producto (no es un duplicado real).
+        var idProductoActual = {{ obj.pk|default:"null" }};
         $('#id_codigo_barra').on('keydown', function(e){
-            if (e.key === 'Enter' || e.keyCode === 13) {
-                e.preventDefault();
-                $('#id_descripcion').focus().select();
+            if (e.key !== 'Enter' && e.keyCode !== 13) {
+                return;
             }
+            e.preventDefault();
+            var codigoBarra = $(this).val().trim();
+            var $campo = $(this);
+            if (codigoBarra === '') {
+                $('#id_descripcion').focus().select();
+                return;
+            }
+            $.ajax({
+                type: 'GET',
+                url: "{% url 'api:producto_list' %}" + encodeURIComponent(codigoBarra),
+                success: function (r) {
+                    if (r.codigo_barra === codigoBarra && r.id !== idProductoActual) {
+                        $.alert({
+                            type: 'red', title: '',
+                            content: 'Este código de barra ya está registrado en el producto "'
+                                + r.codigo + ' - ' + r.descripcion + '".'
+                        });
+                        $campo.focus().select();
+                        return;
+                    }
+                    $('#id_descripcion').focus().select();
+                },
+                error: function () {
+                    // 404: ningun producto (ni por codigo ni por codigo_barra)
+                    // coincide -- es un codigo de barra nuevo, se puede seguir.
+                    $('#id_descripcion').focus().select();
+                }
+            });
         });
 
         // Vista previa en vivo: al elegir un archivo nuevo, se muestra
