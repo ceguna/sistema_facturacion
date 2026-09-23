@@ -5,6 +5,7 @@ from django.template.loader import get_template
 from xhtml2pdf import pisa
 from django.contrib.staticfiles import finders
 from django.utils import timezone
+from django.contrib.auth.decorators import login_required, permission_required
 
 from .models import ComprasEnc, ComprasDet
 from fe.models import Empresa
@@ -53,6 +54,15 @@ def link_callback(uri, rel):
             )
         return path
 
+# CORREGIDO 23/09/2026 (Etapa B): reporte_compras e imprimir_compra no
+# tenian NINGUN control de acceso -- cualquiera sin sesion podia bajar
+# el PDF con TODO el historial de compras (proveedores, cantidades,
+# costos) o una compra puntual por ID secuencial adivinable. Mismo tipo
+# de hallazgo que las 2 vistas sin @login_required de Etapa A
+# (fac/views.py), y mismo patron de proteccion que ya usa cada vista de
+# fac/reportes.py (login + permiso especifico, no is_superuser).
+@login_required(login_url='/login/')
+@permission_required('cmp.view_comprasenc', login_url='bases:sin_privilegios')
 def reporte_compras(request):
     template_path = 'cmp/compras_print_all.html'
     today = timezone.now()
@@ -64,6 +74,7 @@ def reporte_compras(request):
         'today': today,
         'request': request,
         'empresa': empresa,
+        'es_pdf': True,
         **datos_logo_header(empresa),
     }
 
@@ -83,6 +94,8 @@ def reporte_compras(request):
        return HttpResponse('We had some errors <pre>' + html + '</pre>')
     return response
 
+@login_required(login_url='/login/')
+@permission_required('cmp.view_comprasenc', login_url='bases:sin_privilegios')
 def imprimir_compra(request, compra_id):
     template_path = 'cmp/compras_print_one.html'
     today = timezone.now()
@@ -100,6 +113,7 @@ def imprimir_compra(request, compra_id):
         'today': today,
         'request': request,
         'empresa': empresa,
+        'es_pdf': True,
         **datos_logo_header(empresa),
     }
 

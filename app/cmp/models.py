@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth.models import User
 
 #Para los signals
@@ -198,6 +198,27 @@ def recalcular_costo_actual(prod):
     prod.costo_actual = round(avg, 4)
 
 
+def recalcular_costo_actual_atomico(producto_id):
+    """
+    Envoltorio atomico de recalcular_costo_actual -- bloquea la fila del
+    producto (select_for_update) durante todo el ciclo lectura-calculo-
+    guardado. CORREGIDO 23/09/2026 (Etapa B): sin este lock, dos lineas
+    de compra del MISMO producto guardadas casi al mismo tiempo podian
+    recalcular cada una a partir de un estado previo, y la que termina
+    de guardar ultima pisa el resultado de la otra en vez de reflejar
+    ambas -- mismo tipo de condicion de carrera que ya se habia
+    corregido para `existencia` en Etapa A (16/09/2026), pero sobre
+    costo_actual, que ese arreglo no cubria.
+    """
+    with transaction.atomic():
+        prod = Producto.objects.select_for_update().filter(pk=producto_id).first()
+        if not prod:
+            return None
+        recalcular_costo_actual(prod)
+        prod.save(update_fields=['costo_actual'])
+    return prod
+
+
 def _recalcular_cabecera_compra(id_compra):
     enc = ComprasEnc.objects.filter(pk=id_compra).first()
     if not enc:
@@ -222,14 +243,16 @@ def detalle_compra_borrar(sender, instance, **kwargs):
     read-modify-write en Python (`prod.existencia = ...; prod.save()`)
     -- delegado en ajustar_stock_sucursal (atomico, y ahora con
     dimension de sucursal). costo_actual sigue siendo GLOBAL a la
-    empresa (no por sucursal, decision de diseño de Fase 2), asi que
-    ese calculo sigue igual, leyendo/escribiendo Producto directo.
+    empresa (no por sucursal, decision de diseño de Fase 2).
+
+    CORREGIDO 23/09/2026 (Etapa B): el recalculo de costo_actual ahora
+    pasa por recalcular_costo_actual_atomico (select_for_update), ver
+    su docstring -- este era el mismo tipo de condicion de carrera que
+    ya se habia cerrado para `existencia`, pero seguia abierta aca.
     """
     _recalcular_cabecera_compra(instance.compra_id)
-    prod = Producto.objects.filter(pk=instance.producto_id).first()
+    prod = recalcular_costo_actual_atomico(instance.producto_id)
     if prod:
-        recalcular_costo_actual(prod)
-        prod.save(update_fields=['costo_actual'])
         ajustar_stock_sucursal(instance.producto_id, instance.compra.sucursal, -int(instance.cantidad))
 
 
@@ -241,24 +264,30 @@ def detalle_compra_guardar(sender, instance, created, **kwargs):
     if not created:
         return
 
-    prod = Producto.objects.filter(pk=instance.producto_id).first()
-    if not prod:
-        return
-
     cantidad = int(instance.cantidad)
 
-    if cantidad >= 0:
-        # Linea de compra normal: guardar la foto del costo promedio
-        # previo (para auditoria) y marcar la fecha de ultima compra.
-        if instance.costo_actual_antes is None:
-            ComprasDet.objects.filter(pk=instance.pk).update(
-                costo_actual_antes=prod.costo_actual
-            )
-        prod.ultima_compra = instance.compra.fecha_compra
-        prod.save(update_fields=['ultima_compra'])
+    # CORREGIDO 23/09/2026 (Etapa B): la foto de "costo antes", la fecha
+    # de ultima compra y el recalculo de costo_actual quedan todos bajo
+    # el mismo select_for_update -- antes se leia/escribia prod suelto,
+    # y dos lineas del mismo producto guardadas casi juntas podian
+    # pisarse (ver docstring de recalcular_costo_actual_atomico).
+    with transaction.atomic():
+        prod = Producto.objects.select_for_update().filter(pk=instance.producto_id).first()
+        if not prod:
+            return
 
-    recalcular_costo_actual(prod)
-    prod.save(update_fields=['costo_actual'])
+        if cantidad >= 0:
+            # Linea de compra normal: guardar la foto del costo promedio
+            # previo (para auditoria) y marcar la fecha de ultima compra.
+            if instance.costo_actual_antes is None:
+                ComprasDet.objects.filter(pk=instance.pk).update(
+                    costo_actual_antes=prod.costo_actual
+                )
+            prod.ultima_compra = instance.compra.fecha_compra
+
+        recalcular_costo_actual(prod)
+        prod.save(update_fields=['costo_actual', 'ultima_compra'])
+
     # CORREGIDO 20/09/2026 (Fase 2): atomico + con dimension de
     # sucursal, ver docstring de detalle_compra_borrar arriba.
     ajustar_stock_sucursal(instance.producto_id, instance.compra.sucursal, cantidad)

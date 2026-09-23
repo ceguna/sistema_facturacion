@@ -13,7 +13,7 @@ import json
 from django.db.models import Sum
 from django.utils import timezone
 
-from .models import Proveedor, ComprasEnc, ComprasDet, recalcular_costo_actual
+from .models import Proveedor, ComprasEnc, ComprasDet, recalcular_costo_actual_atomico
 from cmp.forms import ProveedorForm,ComprasEncForm
 from bases.views import SinPrivilegios, obtener_sucursal_actual
 from inv.models import Producto, StockSucursal, ajustar_stock_sucursal
@@ -472,10 +472,10 @@ def eliminar_compra(request, id):
         # lineas de compras con estado=False -- asi la compra eliminada
         # deja de pesar en el promedio. Stock: atomico + con dimension
         # de sucursal (Fase 2, 20/09/2026), ver ajustar_stock_sucursal.
+        # Costo: recalcular_costo_actual_atomico (select_for_update),
+        # mismo motivo que en cmp/models.py (Etapa B, 23/09/2026).
         for producto_id, cantidad_total in cantidad_por_producto.items():
-            prod = Producto.objects.get(pk=producto_id)
-            recalcular_costo_actual(prod)
-            prod.save(update_fields=['costo_actual'])
+            recalcular_costo_actual_atomico(producto_id)
             ajustar_stock_sucursal(producto_id, enc.sucursal, -cantidad_total)
 
         messages.success(

@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.contrib.auth.models import User
@@ -495,17 +495,26 @@ def detalle_ajuste_guardar(sender, instance, created, **kwargs):
     ajustar_stock_sucursal (atomico, y ahora con dimension de
     sucursal). costo_actual sigue siendo GLOBAL a la empresa (no por
     sucursal, decision de diseño de Fase 2 -- el costo de compra/
-    produccion no se separa por sucursal), asi que ese calculo sigue
-    igual que siempre, leyendo/escribiendo Producto directo.
+    produccion no se separa por sucursal).
+
+    CORREGIDO 23/09/2026 (Etapa B): el bloque que lee stock_anterior y
+    costo_actual para calcular el nuevo promedio, y despues guarda, va
+    ahora bajo select_for_update -- antes leia `prod` (via
+    instance.producto, ya cacheado en Python) sin ningun lock, asi que
+    dos ajustes del MISMO producto guardados casi al mismo tiempo (dos
+    cajas de Produccion Interna, o una compra y un ajuste juntos)
+    podian calcular cada uno su propio promedio a partir del mismo
+    costo_actual viejo, y el que termina de guardar ultimo pisaba el
+    resultado del otro -- mismo problema que ya se habia cerrado para
+    `existencia` en Etapa A, pero seguia abierto aca. Ver tambien
+    recalcular_costo_actual_atomico en cmp/models.py (mismo criterio).
     """
     if not created:
         return
 
     from fe.models import Empresa  # import local, evita acoplar apps al importar el modulo
 
-    prod = instance.producto
     motivo = instance.ajuste.motivo
-    stock_anterior = int(prod.existencia)
     cantidad = int(instance.cantidad)
 
     if motivo.afecta_costo_actual:
@@ -515,16 +524,19 @@ def detalle_ajuste_guardar(sender, instance, created, **kwargs):
             and empresa
             and empresa.tipo_empresa == Empresa.INDUSTRIAL
         )
-        if es_industrial_y_produccion:
-            prod.costo_actual = instance.costo_unitario
-        elif stock_anterior + cantidad > 0:
-            prod.costo_actual = round(
-                (stock_anterior * prod.costo_actual + cantidad * instance.costo_unitario)
-                / (stock_anterior + cantidad),
-                4
-            )
-        prod.ultima_compra = instance.ajuste.fecha
-        prod.save(update_fields=['costo_actual', 'ultima_compra'])
+        with transaction.atomic():
+            prod = Producto.objects.select_for_update().get(pk=instance.producto_id)
+            stock_anterior = int(prod.existencia)
+            if es_industrial_y_produccion:
+                prod.costo_actual = instance.costo_unitario
+            elif stock_anterior + cantidad > 0:
+                prod.costo_actual = round(
+                    (stock_anterior * prod.costo_actual + cantidad * instance.costo_unitario)
+                    / (stock_anterior + cantidad),
+                    4
+                )
+            prod.ultima_compra = instance.ajuste.fecha
+            prod.save(update_fields=['costo_actual', 'ultima_compra'])
 
     ajustar_stock_sucursal(instance.producto_id, instance.ajuste.sucursal, cantidad)
 

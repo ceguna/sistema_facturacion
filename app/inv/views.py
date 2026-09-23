@@ -381,6 +381,7 @@ def producto_homologar(request, id):
 
 
 @login_required(login_url='/login/')
+@permission_required('inv.view_producto', login_url='bases:sin_privilegios')
 def producto_homologar_pendientes(request):
     productos = Producto.objects.filter(estado=True).select_related('unidad_medida')
     pendientes = [p for p in productos if not p.homologado_sin]
