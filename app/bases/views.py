@@ -274,9 +274,19 @@ def _parse_int_localizado(valor, por_defecto):
         return por_defecto
 
 
-class LibroVentasView(LoginRequiredMixin, generic.TemplateView):
+class LibroVentasView(SinPrivilegios, generic.TemplateView):
+    """
+    CORREGIDO 23/09/2026 (Etapa C): solo tenia LoginRequiredMixin -- el
+    control de acceso real dependia UNICAMENTE de que el link del menu
+    estuviera oculto (base.html ya lo gatea con perms.fac.view_facturaenc),
+    pero la vista en si no exigia nada. Cualquier usuario con sesion
+    iniciada, sin importar su rol, podia entrar por URL directa y ver el
+    Libro de Ventas completo (IVA discriminado). Se usa el mismo permiso
+    que el menu ya asume, para no cambiar el diseño, solo cerrar el hueco.
+    """
     template_name = 'bases/libro_ventas.html'
     login_url = 'bases:login'
+    permission_required = 'fac.view_facturaenc'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -329,9 +339,11 @@ class LibroVentasView(LoginRequiredMixin, generic.TemplateView):
         return context
 
 
-class LibroComprasView(LoginRequiredMixin, generic.TemplateView):
+class LibroComprasView(SinPrivilegios, generic.TemplateView):
+    """CORREGIDO 23/09/2026 (Etapa C), ver docstring de LibroVentasView."""
     template_name = 'bases/libro_compras.html'
     login_url = 'bases:login'
+    permission_required = 'cmp.view_comprasenc'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -384,9 +396,11 @@ class LibroComprasView(LoginRequiredMixin, generic.TemplateView):
         return context
 
 
-class FacturasAnuladasView(LoginRequiredMixin, generic.TemplateView):
+class FacturasAnuladasView(SinPrivilegios, generic.TemplateView):
+    """CORREGIDO 23/09/2026 (Etapa C), ver docstring de LibroVentasView."""
     template_name = 'bases/facturas_anuladas.html'
     login_url = 'bases:login'
+    permission_required = 'fac.view_facturaenc'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -425,7 +439,7 @@ class FacturasAnuladasView(LoginRequiredMixin, generic.TemplateView):
         return context
 
 
-class NotasCreditoDebitoReporteView(LoginRequiredMixin, generic.TemplateView):
+class NotasCreditoDebitoReporteView(SinPrivilegios, generic.TemplateView):
     """
     Reporte de Notas de Credito-Debito emitidas (22/09/2026, pedido de
     Carlos, mismo tratamiento que Facturas Anuladas -- filtro de
@@ -433,9 +447,14 @@ class NotasCreditoDebitoReporteView(LoginRequiredMixin, generic.TemplateView):
     a lo que ya usan sistemas de facturacion/contables de referencia
     (Accoxi, Output Books, Manager.io): numero de NCD, fecha, cliente,
     factura original, motivo, monto devuelto, estado.
+
+    CORREGIDO 23/09/2026 (Etapa C): copiaba el mismo patron sin permiso
+    de FacturasAnuladasView (LoginRequiredMixin nada mas), heredando el
+    mismo hueco -- ver su docstring.
     """
     template_name = 'bases/notas_credito_debito_reporte.html'
     login_url = 'bases:login'
+    permission_required = 'fac.view_notacreditodebito'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
