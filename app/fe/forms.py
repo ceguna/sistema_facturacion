@@ -112,12 +112,12 @@ class SucursalForm(forms.ModelForm):
         fields = ['codigo_sucursal', 'nombre', 'direccion', 'departamento']
         widgets = {
             'codigo_sucursal': forms.NumberInput(attrs={'class': 'form-control'}),
-            'nombre': forms.TextInput(attrs={'class': 'form-control'}),
+            'nombre': forms.TextInput(attrs={'class': 'form-control no-uppercase'}),
             # no-uppercase (21/09/2026, pedido de Carlos): mismo criterio que
             # Empresa.direccion -- una direccion se escribe naturalmente, no
             # tiene sentido forzarla a mayusculas.
             'direccion': forms.TextInput(attrs={'class': 'form-control no-uppercase'}),
-            'departamento': forms.TextInput(attrs={'class': 'form-control'}),
+            'departamento': forms.TextInput(attrs={'class': 'form-control no-uppercase'}),
         }
         labels = {
             'codigo_sucursal': 'Código de Sucursal (SIN)',
