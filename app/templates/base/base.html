@@ -553,6 +553,38 @@
         };
     </script>
 
+     <script>
+        // 24/09/2026 (pedido de Carlos): en el Excel exportado, las columnas
+        // ID/NIT/CI/Telefono deben verse como numero ENTERO -- tableExport
+        // les fija formato "0.00" (salia "12.00"). Se envuelve XLSX.write:
+        // en cada hoja, toda columna numerica cuyos valores sean TODOS
+        // enteros pasa a formato "0" (una columna de importes con algun
+        // decimal conserva su formato, no se toca).
+        if (window.XLSX && XLSX.write && !XLSX.__enteroPatch) {
+            var _write = XLSX.write;
+            XLSX.write = function (wb) {
+                try {
+                    (wb.SheetNames || []).forEach(function (n) {
+                        var ws = wb.Sheets[n], cols = {};
+                        Object.keys(ws).forEach(function (k) {
+                            if (k[0] === '!') return;
+                            var c = ws[k], col = k.replace(/[0-9]+/g, '');
+                            if (!c || c.t !== 'n') return;
+                            var info = cols[col] || (cols[col] = {ok: true, cells: []});
+                            if (!Number.isInteger(c.v)) info.ok = false;
+                            info.cells.push(c);
+                        });
+                        Object.keys(cols).forEach(function (col) {
+                            if (cols[col].ok) cols[col].cells.forEach(function (c) { c.z = '0'; });
+                        });
+                    });
+                } catch (e) {}
+                return _write.apply(this, arguments);
+            };
+            XLSX.__enteroPatch = true;
+        }
+    </script>
+
      <!-- Select2 from a CDN -->
      <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 

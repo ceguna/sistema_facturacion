@@ -49,7 +49,7 @@
             <tbody>
                 {% for item in obj %}
                 <tr>
-                    <td>{{ item.id }}</td>
+                    <td data-tableexport-msonumberformat="0">{{ item.id|stringformat:"d" }}</td>
                     <td>{{ item.descripcion }}</td>
                     <td>
                         {% if item.estado %}

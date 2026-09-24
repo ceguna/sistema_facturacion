@@ -51,12 +51,12 @@
             <tbody>
                 {% for item in obj %}
                 <tr>
-                    <td>{{ item.id }}</td>
+                    <td data-tableexport-msonumberformat="0">{{ item.id|stringformat:"d" }}</td>
                     <td>{{ item.descripcion }}</td>
-                    <td>{{ item.nit}}</td>
+                    <td data-tableexport-msonumberformat="0">{{ item.nit }}</td>
                     <td>{{ item.direccion }}</td>
                     <td>{{ item.contacto }}</td>
-                    <td>{{ item.telefono }}</td>
+                    <td data-tableexport-msonumberformat="0">{{ item.telefono }}</td>
                     <td>{{ item.email }}</td>
                     <td>
                         {% if item.estado %}

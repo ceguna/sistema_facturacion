@@ -60,14 +60,14 @@
             <tbody>
                 {% for item in obj %}
                 <tr>
-                    <td>{{ item.id }}</td>
+                    <td data-tableexport-msonumberformat="0">{{ item.id|stringformat:"d" }}</td>
                     <td>{{ item.nombres }}</td>
                     <td>{{ item.apellidos }}</td>
                     <td>{{ item.tipo }}</td>
-                    <td>{{ item.ci }}</td>
-                    <td>{{ item.nit}}</td>
+                    <td data-tableexport-msonumberformat="0">{{ item.ci }}</td>
+                    <td data-tableexport-msonumberformat="0">{{ item.nit }}</td>
                     <td>{{ item.razon }}</td>
-                    <td>{{ item.celular }}</td>
+                    <td data-tableexport-msonumberformat="0">{{ item.celular }}</td>
                     <td>{{ item.email }}</td>
                     <td>
                         <div onclick="inactivar({{item.id|unlocalize}})" style="cursor:pointer;" title="Clic para cambiar el estado">
