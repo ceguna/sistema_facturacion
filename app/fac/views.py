@@ -18,6 +18,8 @@ from django.contrib.auth import authenticate
 from django.utils import timezone
 from django.db.models import Sum, F, Q
 
+from bases.alcance import filtrar_por_sucursal, contexto_filtro_sucursal, puede_ver_sucursal, q_alcance
+from bases.alcance import requiere_alcance, AlcanceObjetoMixin
 from bases.views import SinPrivilegios, obtener_sucursal_actual
 
 from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, Pago, NotaCreditoDebito, \
@@ -39,6 +41,14 @@ class ClienteView(SinPrivilegios, generic.ListView):
     template_name = "fac/cliente_list.html"
     context_object_name = "obj"
     permission_required="fac.view_cliente"
+
+    def get_queryset(self):
+        return filtrar_por_sucursal(Cliente.objects.all(), self.request)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(contexto_filtro_sucursal(self.request))
+        return context
 
 class VistaBaseCreate(SuccessMessageMixin,SinPrivilegios, \
     generic.CreateView):
@@ -141,12 +151,27 @@ class FacturaView(SinPrivilegios, generic.ListView):
         self.f1 = f1
         self.f2 = f2
 
-        return FacturaEnc.objects.filter(
+        # Filtro por sucursal (24/09/2026, pedido de Carlos): el alcance
+        # del usuario (PerfilUsuario.alcance) siempre manda; el selector
+        # de pantalla solo puede achicarlo, y se recuerda en sesion igual
+        # que el rango de fechas (sobrevive a los redirects planos).
+        if 'sucursal' in self.request.GET:
+            self.request.session['fac_sucursal'] = self.request.GET.get('sucursal') or ''
+        elegida = self.request.session.get('fac_sucursal') or ''
+        self.sucursal_sel = int(elegida) if str(elegida).isdigit() else None
+
+        qs = FacturaEnc.objects.filter(
             estado=True, fecha__date__gte=f1, fecha__date__lte=f2
         ).order_by('-id')
+        qs = filtrar_por_sucursal(qs, self.request, usar_filtro_pantalla=False)
+        if self.sucursal_sel:
+            qs = qs.filter(sucursal=self.sucursal_sel)
+        return qs
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context.update(contexto_filtro_sucursal(self.request))
+        context['sucursal_sel'] = self.sucursal_sel
         fechas_cerradas = set(CierreDia.objects.values_list('fecha', flat=True))
         for item in context['obj']:
             item.dia_cerrado = timezone.localtime(item.fecha).date() in fechas_cerradas
@@ -202,6 +227,7 @@ class FacturaView(SinPrivilegios, generic.ListView):
 
 @login_required(login_url='/login/')
 @permission_required('fac.change_facturaenc', login_url='bases:sin_privilegios')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def facturas(request,id=None):
     template_name='fac/facturas.html'
 
@@ -461,6 +487,7 @@ def facturas(request,id=None):
 
 @login_required(login_url='/login/')
 @require_POST
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def factura_actualizar_datos(request, id):
     """
     Actualiza SOLO Cliente y Forma de Pago de una factura ya existente,
@@ -538,6 +565,7 @@ class ProductoView(inv.ProductoView):
     template_name="fac/buscar_producto.html"
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def borrar_detalle_factura(request, id):
     template_name = "fac/factura_borrar_detalle.html"
 
@@ -581,7 +609,9 @@ def borrar_detalle_factura(request, id):
     
     return render(request,template_name,context)
 
-class FacturaDetDelete(SinPrivilegios, generic.DeleteView):
+class FacturaDetDelete(AlcanceObjetoMixin, SinPrivilegios, generic.DeleteView):
+    alcance_modelo = "fac.FacturaEnc"
+    alcance_kwarg = "id"
     """
     CORREGIDO 23/09/2026 (Etapa D, encontrado ampliando el banco de
     pruebas): en Django 5.2, DeleteView.post() llama a form_valid(),
@@ -766,6 +796,7 @@ def _modal_error(request, mensaje):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def anular_factura(request, id):
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
@@ -866,6 +897,7 @@ def anular_factura(request, id):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def revertir_anulacion(request, id):
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
@@ -920,6 +952,7 @@ def revertir_anulacion(request, id):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def emitir_ncd(request, id):
     """
     Emite una Nota de Credito-Debito sobre una factura ya validada --
@@ -1008,6 +1041,7 @@ def emitir_ncd(request, id):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.NotaCreditoDebito', ('factura_original__sucursal_id',), 'id')
 def anular_ncd(request, id):
     """
     Anula ante el SIN una Nota de Credito-Debito ya validada (Etapa VII
@@ -1088,6 +1122,7 @@ def anular_ncd(request, id):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.NotaCreditoDebito', ('factura_original__sucursal_id',), 'id')
 def revertir_anulacion_ncd(request, id):
     """
     Revierte ante el SIN la anulacion de una Nota de Credito-Debito
@@ -1141,6 +1176,7 @@ def revertir_anulacion_ncd(request, id):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def eliminar_factura(request, id):
     # Antes exigia is_superuser directo -- ahora usa un permiso real
     # (fac.eliminar_facturaenc), asignable por rol sin necesitar que la
@@ -1232,6 +1268,7 @@ def eliminar_factura(request, id):
 
 @login_required(login_url='/login/')
 @require_POST
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def factura_emitir_sin(request, id):
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc:
@@ -1397,6 +1434,7 @@ def cierre_dia_detalle(request, fecha):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def factura_descargar_xml(request, id):
     enc = FacturaEnc.objects.filter(pk=id).first()
     if not enc or not enc.xml_firmado:
@@ -1432,6 +1470,7 @@ def _conexion_correo_empresa(empresa):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def factura_enviar_correo(request, id):
     """
     Envia el PDF y el XML de la factura por correo al cliente -- Fase 1
@@ -1589,6 +1628,7 @@ def cierre_ventas_selector(request):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def factura_mostrar_qr(request, id):
     from fe.models import Empresa
 
@@ -1625,6 +1665,7 @@ def cartera_creditos(request):
     facturas = FacturaEnc.objects.filter(
         forma_pago=FacturaEnc.FORMA_PAGO_CREDITO, anulado=False, estado=True, saldo_pendiente__gt=0
     ).select_related('cliente').order_by('fecha_vencimiento')
+    facturas = filtrar_por_sucursal(facturas, request)
 
     filas = []
     for f in facturas:
@@ -1640,6 +1681,7 @@ def cartera_creditos(request):
     vigentes = [f for f in filas if f['estado_credito'] == 'vigente']
 
     return render(request, 'fac/cartera_creditos.html', {
+        **contexto_filtro_sucursal(request),
         'vencidas': vencidas,
         'por_vencer': por_vencer,
         'vigentes': vigentes,
@@ -1651,6 +1693,7 @@ def cartera_creditos(request):
 
 @login_required(login_url='/login/')
 @permission_required('fac.gestionar_creditos', login_url='bases:sin_privilegios')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def registrar_pago(request, id):
     """Registra un abono a una venta a credito."""
     enc = FacturaEnc.objects.filter(pk=id, forma_pago=FacturaEnc.FORMA_PAGO_CREDITO).first()
@@ -1734,6 +1777,7 @@ def pago_confirmacion(request, pago_id):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('fac.Pago', ('factura__sucursal_id',), 'id')
 def revertir_pago(request, id):
     """
     Revierte (soft-delete) un abono cargado por error -- Caso 1 de la
@@ -1813,8 +1857,9 @@ class EventosSignificativosListView(SinPrivilegios, generic.ListView):
     permission_required = 'fac.view_eventosignificativo'
 
     def get_queryset(self):
-        return (
+        return filtrar_por_sucursal(
             EventoSignificativo.objects.select_related('sucursal')
             .prefetch_related('paquetes', 'facturas')
-            .order_by('-fecha_hora_inicio')
+            .order_by('-fecha_hora_inicio'),
+            self.request, usar_filtro_pantalla=False,
         )

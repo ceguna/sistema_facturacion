@@ -118,7 +118,12 @@ class Home(LoginRequiredMixin, generic.TemplateView):
         hoy = timezone.localtime(timezone.now()).date()
         inicio_mes = hoy.replace(day=1)
 
-        facturas_activas = FacturaEnc.objects.filter(anulado=False)
+        from bases.alcance import (filtrar_por_sucursal, contexto_filtro_sucursal,
+                                   mapa_stock)
+        # Alcance por sucursal (24/09/2026): todo el dashboard respeta
+        # PerfilUsuario.alcance y el selector ?sucursal= de la pagina.
+        req = self.request
+        facturas_activas = filtrar_por_sucursal(FacturaEnc.objects.filter(anulado=False), req)
 
         ventas_hoy = facturas_activas.filter(fecha__date=hoy) \
             .aggregate(total=Sum('total'))['total'] or 0
@@ -127,14 +132,24 @@ class Home(LoginRequiredMixin, generic.TemplateView):
         ventas_mes = facturas_mes.aggregate(total=Sum('total'))['total'] or 0
         cantidad_facturas_mes = facturas_mes.count()
 
-        productos_stock_bajo = Producto.objects.filter(
-            estado=True, existencia__lte=self.STOCK_BAJO_UMBRAL
-        ).order_by('existencia')
+        mapa = mapa_stock(req)
+        if mapa is None:
+            productos_stock_bajo = list(Producto.objects.filter(
+                estado=True, existencia__lte=self.STOCK_BAJO_UMBRAL
+            ).order_by('existencia'))
+        else:
+            productos_stock_bajo = sorted(
+                [p for p in Producto.objects.filter(estado=True)
+                 if mapa.get(p.id, 0) <= self.STOCK_BAJO_UMBRAL],
+                key=lambda p: mapa.get(p.id, 0))
+            for p in productos_stock_bajo:
+                p.existencia = mapa.get(p.id, 0)
 
-        clientes_nuevos_mes = Cliente.objects.filter(fc__date__gte=inicio_mes).count()
+        clientes_nuevos_mes = filtrar_por_sucursal(
+            Cliente.objects.filter(fc__date__gte=inicio_mes), req).count()
 
-        ultimas_facturas = FacturaEnc.objects.select_related('cliente') \
-            .order_by('-fecha')[:6]
+        ultimas_facturas = filtrar_por_sucursal(
+            FacturaEnc.objects.select_related('cliente'), req).order_by('-fecha')[:6]
 
         # Ventas de los ultimos 7 dias, para el grafico (ventas netas
         # activas, como ya estaba) mas el monto anulado por dia -- para
@@ -145,9 +160,9 @@ class Home(LoginRequiredMixin, generic.TemplateView):
             .annotate(dia=TruncDate('fecha')) \
             .values('dia').annotate(total=Sum('total')).order_by('dia')
 
-        anulado_por_dia = FacturaEnc.objects.filter(
+        anulado_por_dia = filtrar_por_sucursal(FacturaEnc.objects.filter(
             anulado=True, fecha__date__gte=hace_7_dias
-        ).annotate(dia=TruncDate('fecha')) \
+        ), req).annotate(dia=TruncDate('fecha')) \
          .values('dia').annotate(total=Sum('total')).order_by('dia')
 
         ventas_dict = {v['dia']: float(v['total']) for v in ventas_por_dia}
@@ -167,7 +182,8 @@ class Home(LoginRequiredMixin, generic.TemplateView):
             'ventas_mes': ventas_mes,
             'cantidad_facturas_mes': cantidad_facturas_mes,
             'productos_stock_bajo': productos_stock_bajo[:6],
-            'cantidad_stock_bajo': productos_stock_bajo.count(),
+            'cantidad_stock_bajo': len(productos_stock_bajo),
+            **contexto_filtro_sucursal(req),
             'clientes_nuevos_mes': clientes_nuevos_mes,
             'ultimas_facturas': ultimas_facturas,
             'chart_labels': chart_labels,
@@ -212,7 +228,8 @@ class ChartsView(LoginRequiredMixin, generic.TemplateView):
         from fac.models import FacturaEnc, FacturaDet
 
         hoy = timezone.localtime(timezone.now()).date()
-        facturas_activas = FacturaEnc.objects.filter(anulado=False)
+        from bases.alcance import filtrar_por_sucursal, contexto_filtro_sucursal
+        facturas_activas = filtrar_por_sucursal(FacturaEnc.objects.filter(anulado=False), self.request)
 
         # Ventas de los ultimos 6 meses
         meses_labels = []
@@ -230,7 +247,8 @@ class ChartsView(LoginRequiredMixin, generic.TemplateView):
             meses_data.append(float(total))
 
         # Top 5 productos mas vendidos (por cantidad)
-        top_productos = FacturaDet.objects.filter(factura__anulado=False) \
+        top_productos = filtrar_por_sucursal(
+            FacturaDet.objects.filter(factura__anulado=False), self.request, 'factura__sucursal') \
             .values('producto__descripcion') \
             .annotate(total_cantidad=Sum('cantidad')) \
             .order_by('-total_cantidad')[:5]
@@ -247,6 +265,7 @@ class ChartsView(LoginRequiredMixin, generic.TemplateView):
             'top_productos_data': [float(p['total_cantidad']) for p in top_productos],
             'top_clientes_labels': [f"{c['cliente__nombres']} {c['cliente__apellidos']}" for c in top_clientes],
             'top_clientes_data': [float(c['total_comprado']) for c in top_clientes],
+            **contexto_filtro_sucursal(self.request),
         })
         return context
 
@@ -296,9 +315,10 @@ class LibroVentasView(SinPrivilegios, generic.TemplateView):
         mes = _parse_int_localizado(self.request.GET.get('mes'), hoy.month)
         anio = _parse_int_localizado(self.request.GET.get('anio'), hoy.year)
 
-        facturas = FacturaEnc.objects.filter(
+        from bases.alcance import filtrar_por_sucursal, contexto_filtro_sucursal
+        facturas = filtrar_por_sucursal(FacturaEnc.objects.filter(
             anulado=False, fecha__year=anio, fecha__month=mes
-        ).select_related('cliente').order_by('fecha')
+        ), self.request).select_related('cliente').order_by('fecha')
 
         filas = []
         total_importe = 0.0
@@ -335,6 +355,7 @@ class LibroVentasView(SinPrivilegios, generic.TemplateView):
                 (9, 'Septiembre'), (10, 'Octubre'), (11, 'Noviembre'), (12, 'Diciembre'),
             ],
             'anios': range(hoy.year - 3, hoy.year + 1),
+            **contexto_filtro_sucursal(self.request),
         })
         return context
 
@@ -353,9 +374,10 @@ class LibroComprasView(SinPrivilegios, generic.TemplateView):
         mes = _parse_int_localizado(self.request.GET.get('mes'), hoy.month)
         anio = _parse_int_localizado(self.request.GET.get('anio'), hoy.year)
 
-        compras = ComprasEnc.objects.filter(
+        from bases.alcance import filtrar_por_sucursal, contexto_filtro_sucursal
+        compras = filtrar_por_sucursal(ComprasEnc.objects.filter(
             fecha_compra__year=anio, fecha_compra__month=mes
-        ).select_related('proveedor').order_by('fecha_compra')
+        ), self.request).select_related('proveedor').order_by('fecha_compra')
 
         filas = []
         total_importe = 0.0
@@ -392,6 +414,7 @@ class LibroComprasView(SinPrivilegios, generic.TemplateView):
                 (9, 'Septiembre'), (10, 'Octubre'), (11, 'Noviembre'), (12, 'Diciembre'),
             ],
             'anios': range(hoy.year - 3, hoy.year + 1),
+            **contexto_filtro_sucursal(self.request),
         })
         return context
 
@@ -416,9 +439,10 @@ class FacturasAnuladasView(SinPrivilegios, generic.TemplateView):
         mes = _parse_int_localizado(self.request.GET.get('mes'), hoy.month)
         anio = _parse_int_localizado(self.request.GET.get('anio'), hoy.year)
 
-        anuladas = FacturaEnc.objects.filter(
+        from bases.alcance import filtrar_por_sucursal, contexto_filtro_sucursal
+        anuladas = filtrar_por_sucursal(FacturaEnc.objects.filter(
             anulado=True, fecha_anulacion__year=anio, fecha_anulacion__month=mes
-        ).select_related('cliente', 'usuario_anulacion').order_by('-fecha_anulacion')
+        ), self.request).select_related('cliente', 'usuario_anulacion').order_by('-fecha_anulacion')
 
         for f in anuladas:
             f.total_fmt = "{:,.2f}".format(f.total)
@@ -435,6 +459,7 @@ class FacturasAnuladasView(SinPrivilegios, generic.TemplateView):
                 (9, 'Septiembre'), (10, 'Octubre'), (11, 'Noviembre'), (12, 'Diciembre'),
             ],
             'anios': range(hoy.year - 3, hoy.year + 1),
+            **contexto_filtro_sucursal(self.request),
         })
         return context
 
@@ -464,9 +489,10 @@ class NotasCreditoDebitoReporteView(SinPrivilegios, generic.TemplateView):
         mes = _parse_int_localizado(self.request.GET.get('mes'), hoy.month)
         anio = _parse_int_localizado(self.request.GET.get('anio'), hoy.year)
 
-        ncds = NotaCreditoDebito.objects.filter(
+        from bases.alcance import filtrar_por_sucursal, contexto_filtro_sucursal
+        ncds = filtrar_por_sucursal(NotaCreditoDebito.objects.filter(
             fecha__year=anio, fecha__month=mes
-        ).select_related(
+        ), self.request, 'factura_original__sucursal').select_related(
             'factura_original', 'factura_original__cliente', 'usuario_autorizacion'
         ).order_by('-fecha')
 
@@ -489,6 +515,7 @@ class NotasCreditoDebitoReporteView(SinPrivilegios, generic.TemplateView):
                 (9, 'Septiembre'), (10, 'Octubre'), (11, 'Noviembre'), (12, 'Diciembre'),
             ],
             'anios': range(hoy.year - 3, hoy.year + 1),
+            **contexto_filtro_sucursal(self.request),
         })
         return context
 
@@ -504,9 +531,21 @@ class TablesView(LoginRequiredMixin, generic.TemplateView):
         from fac.models import FacturaDet
         from cmp.models import ComprasDet
 
-        productos = Producto.objects.filter(estado=True).select_related(
+        from bases.alcance import filtrar_por_sucursal, contexto_filtro_sucursal, mapa_stock
+        # Alcance por sucursal (24/09/2026): la existencia mostrada es la
+        # de las sucursales que el usuario puede ver / eligio en pantalla.
+        mapa = mapa_stock(self.request)
+
+        def _con_stock_visible(prods):
+            prods = list(prods)
+            if mapa is not None:
+                for p in prods:
+                    p.existencia = mapa.get(p.id, 0)
+            return prods
+
+        productos = _con_stock_visible(Producto.objects.filter(estado=True).select_related(
             'marca', 'subcategoria', 'subcategoria__categoria', 'unidad_medida'
-        )
+        ))
         for p in productos:
             p.valor_total = p.existencia * p.precio
 
@@ -521,10 +560,10 @@ class TablesView(LoginRequiredMixin, generic.TemplateView):
         kardex_detalle = None
         kardex_resumen = []
 
-        todos_productos_activos = Producto.objects.filter(estado=True).order_by('descripcion')
+        todos_productos_activos = _con_stock_visible(Producto.objects.filter(estado=True).order_by('descripcion'))
 
         if producto_id:
-            producto_seleccionado = Producto.objects.filter(pk=producto_id).first()
+            producto_seleccionado = (_con_stock_visible(Producto.objects.filter(pk=producto_id)) or [None])[0]
 
         productos_a_procesar = [producto_seleccionado] if producto_seleccionado else todos_productos_activos
 
@@ -532,13 +571,13 @@ class TablesView(LoginRequiredMixin, generic.TemplateView):
             if not prod:
                 continue
 
-            compras_mes = ComprasDet.objects.filter(
+            compras_mes = filtrar_por_sucursal(ComprasDet.objects.filter(
                 producto=prod, compra__fecha_compra__gte=inicio_mes, compra__fecha_compra__lte=hoy
-            )
-            ventas_mes = FacturaDet.objects.filter(
+            ), self.request, 'compra__sucursal')
+            ventas_mes = filtrar_por_sucursal(FacturaDet.objects.filter(
                 producto=prod, factura__anulado=False,
                 factura__fecha__date__gte=inicio_mes, factura__fecha__date__lte=hoy
-            )
+            ), self.request, 'factura__sucursal')
 
             total_compras = compras_mes.aggregate(t=Sum('cantidad'))['t'] or 0
             total_ventas = ventas_mes.aggregate(t=Sum('cantidad'))['t'] or 0
@@ -591,6 +630,7 @@ class TablesView(LoginRequiredMixin, generic.TemplateView):
             'kardex_resumen': kardex_resumen,
             'inicio_mes': inicio_mes,
             'hoy': hoy,
+            **contexto_filtro_sucursal(self.request),
         })
         return context
 
@@ -668,7 +708,10 @@ class UsuarioNew(SuccessMessageMixin, SinPrivilegios, generic.CreateView):
         # self.object (el User) ya tiene pk.
         from bases.models import PerfilUsuario
         PerfilUsuario.objects.update_or_create(
-            user=self.object, defaults={'sucursal': form.cleaned_data.get('sucursal')}
+            user=self.object, defaults={
+                'sucursal': form.cleaned_data.get('sucursal'),
+                'alcance': form.cleaned_data.get('alcance') or 'TODAS',
+            }
         )
         messages.success(
             self.request,
@@ -691,7 +734,10 @@ class UsuarioEdit(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
         response = super().form_valid(form)
         from bases.models import PerfilUsuario
         PerfilUsuario.objects.update_or_create(
-            user=self.object, defaults={'sucursal': form.cleaned_data.get('sucursal')}
+            user=self.object, defaults={
+                'sucursal': form.cleaned_data.get('sucursal'),
+                'alcance': form.cleaned_data.get('alcance') or 'TODAS',
+            }
         )
         return response
 
@@ -828,7 +874,10 @@ def _contexto_estado_inventario(request):
     filas = []
     total_valor_venta = 0
     total_valor_costo = 0
+    from bases.alcance import mapa_stock, existencia_de, contexto_filtro_sucursal
+    mapa = mapa_stock(request)
     for prod in productos:
+        prod.existencia = existencia_de(prod, mapa)
         valor_venta = round(prod.existencia * prod.precio, 2)
         valor_costo = round(prod.existencia * prod.costo_actual, 2)
         total_valor_venta += valor_venta
@@ -851,6 +900,7 @@ def _contexto_estado_inventario(request):
         'categoria_id': categoria_id,
         'categoria_nombre': categoria_obj.descripcion if categoria_obj else 'Todas',
         'buscar': buscar,
+        **contexto_filtro_sucursal(request),
         'total_valor_venta': round(total_valor_venta, 2),
         'total_valor_costo': round(total_valor_costo, 2),
         'empresa': empresa,
@@ -939,7 +989,7 @@ def estado_inventario_excel(request):
     return response
 
 
-def _movimientos_producto_qs(producto, fecha_desde=None, fecha_hasta=None):
+def _movimientos_producto_qs(producto, fecha_desde=None, fecha_hasta=None, sucursal_ids=None):
     """
     Devuelve (compras_qs, ventas_qs) para un producto, ya filtrados
     por rango de fecha si se indica. Excluye compras eliminadas
@@ -953,6 +1003,9 @@ def _movimientos_producto_qs(producto, fecha_desde=None, fecha_hasta=None):
     ventas_qs = FacturaDet.objects.filter(
         producto=producto, factura__anulado=False, factura__estado=True
     )
+    if sucursal_ids is not None:
+        compras_qs = compras_qs.filter(compra__sucursal_id__in=sucursal_ids)
+        ventas_qs = ventas_qs.filter(factura__sucursal_id__in=sucursal_ids)
     if fecha_desde:
         compras_qs = compras_qs.filter(compra__fecha_compra__gte=fecha_desde)
         ventas_qs = ventas_qs.filter(factura__fecha__date__gte=fecha_desde)
@@ -962,7 +1015,7 @@ def _movimientos_producto_qs(producto, fecha_desde=None, fecha_hasta=None):
     return compras_qs.select_related('compra'), ventas_qs.select_related('factura')
 
 
-def _eventos_ncd_producto(producto):
+def _eventos_ncd_producto(producto, sucursal_ids=None):
     """
     Movimientos de stock generados por Notas de Credito-Debito sobre
     `producto`, calculados sobre las lineas de la factura original
@@ -984,6 +1037,7 @@ def _eventos_ncd_producto(producto):
     """
     ncds = NotaCreditoDebito.objects.filter(
         factura_original__facturadet__producto=producto,
+        **({'factura_original__sucursal_id__in': sucursal_ids} if sucursal_ids is not None else {}),
         estado_sin__in=[
             NotaCreditoDebito.SIN_VALIDADA,
             NotaCreditoDebito.SIN_ANULADA,
@@ -1021,7 +1075,7 @@ def _eventos_ncd_producto(producto):
     return eventos
 
 
-def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
+def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta, sucursal_ids=None):
     """
     Calcula el Kardex de un producto para el rango [fecha_desde,
     fecha_hasta]: saldo inicial (cantidad y valor), lista de
@@ -1053,12 +1107,12 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
     # Movimientos de NCD (agregado 15/09/2026, ver _eventos_ncd_producto)
     # -- se calculan una sola vez, y se reparten igual que
     # compras/ventas entre saldo inicial, rango y neto historico.
-    eventos_ncd = _eventos_ncd_producto(producto)
+    eventos_ncd = _eventos_ncd_producto(producto, sucursal_ids)
 
     # Saldo inicial = suma de TODOS los movimientos reales anteriores a
     # fecha_desde (entradas - salidas), acumulado desde cero.
     dia_antes = fecha_desde - datetime.timedelta(days=1)
-    compras_antes, ventas_antes = _movimientos_producto_qs(producto, fecha_hasta=dia_antes)
+    compras_antes, ventas_antes = _movimientos_producto_qs(producto, fecha_hasta=dia_antes, sucursal_ids=sucursal_ids)
     saldo_inicial_cantidad = (
         sum(c.cantidad for c in compras_antes) - sum(v.cantidad for v in ventas_antes)
         + sum(e['cantidad'] for e in eventos_ncd if e['fecha'] <= dia_antes)
@@ -1067,7 +1121,7 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
 
     # Movimientos dentro del rango elegido, para el detalle.
     compras_rango, ventas_rango = _movimientos_producto_qs(
-        producto, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta
+        producto, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, sucursal_ids=sucursal_ids
     )
     eventos_ncd_rango = [e for e in eventos_ncd if fecha_desde <= e['fecha'] <= fecha_hasta]
 
@@ -1167,12 +1221,22 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
     # existencia a mano. Es constante -- no depende del rango elegido.
     # Se expone explicito para que el saldo final del Kardex nunca
     # parezca "no cerrar" contra el Estado de Inventario.
-    compras_todas, ventas_todas = _movimientos_producto_qs(producto)
+    compras_todas, ventas_todas = _movimientos_producto_qs(producto, sucursal_ids=sucursal_ids)
     neto_historico = (
         sum(c.cantidad for c in compras_todas) - sum(v.cantidad for v in ventas_todas)
         + sum(e['cantidad'] for e in eventos_ncd)
     )
-    ajuste_no_identificado = producto.existencia - neto_historico
+    # Con alcance/filtro por sucursal, la existencia de referencia es la
+    # de esas sucursales (StockSucursal), no el total de la empresa.
+    if sucursal_ids is None:
+        existencia_ref = producto.existencia
+    else:
+        from django.db.models import Sum as _Sum
+        from inv.models import StockSucursal
+        existencia_ref = StockSucursal.objects.filter(
+            producto=producto, sucursal_id__in=sucursal_ids
+        ).aggregate(t=_Sum('cantidad'))['t'] or 0
+    ajuste_no_identificado = existencia_ref - neto_historico
 
     return {
         'producto': producto,
@@ -1185,7 +1249,7 @@ def _calcular_kardex_producto(producto, fecha_desde, fecha_hasta):
         'saldo_final_valor': round(valor_corriente, 2),
         'ajuste_no_identificado': ajuste_no_identificado,
         'ajuste_no_identificado_valor': round(ajuste_no_identificado * costo_actual, 2),
-        'existencia_sistema': producto.existencia,
+        'existencia_sistema': existencia_ref,
     }
 
 
@@ -1206,6 +1270,16 @@ def _contexto_kardex_inventario(request):
     producto_id = request.GET.get('producto_id', '').strip()
     categoria_id = request.GET.get('categoria_id', '').strip()
 
+    # Alcance por sucursal (24/09/2026): ids de sucursal a considerar
+    # (visibles para el usuario, achicados por el selector), o None.
+    from bases.alcance import sucursales_visibles_ids, sucursal_elegida, contexto_filtro_sucursal
+    _vis = sucursales_visibles_ids(request.user)
+    _sel = sucursal_elegida(request)
+    if _sel:
+        sucursal_ids = [_sel] if (_vis is None or _sel in _vis) else []
+    else:
+        sucursal_ids = _vis
+
     from fe.models import Empresa
     from fe.utils import datos_logo_header
     empresa = Empresa.objects.first()
@@ -1216,6 +1290,7 @@ def _contexto_kardex_inventario(request):
         'categorias': Categoria.objects.filter(estado=True).order_by('descripcion'),
         'producto_id': producto_id,
         'categoria_id': categoria_id,
+        **contexto_filtro_sucursal(request),
         'empresa': empresa,
         'fecha_emision': timezone.localtime(timezone.now()),
         **datos_logo_header(empresa),
@@ -1225,7 +1300,7 @@ def _contexto_kardex_inventario(request):
         producto = Producto.objects.filter(pk=producto_id, estado=True).first()
         if not producto:
             return None, 'Producto no encontrado.'
-        base.update({'modo': 'detalle', 'kardex': _calcular_kardex_producto(producto, fecha_desde, fecha_hasta)})
+        base.update({'modo': 'detalle', 'kardex': _calcular_kardex_producto(producto, fecha_desde, fecha_hasta, sucursal_ids)})
         return base, None
 
     productos = Producto.objects.filter(estado=True).order_by('descripcion')
@@ -1234,7 +1309,7 @@ def _contexto_kardex_inventario(request):
 
     resumen = []
     for prod in productos:
-        k = _calcular_kardex_producto(prod, fecha_desde, fecha_hasta)
+        k = _calcular_kardex_producto(prod, fecha_desde, fecha_hasta, sucursal_ids)
         resumen.append({
             'producto': prod,
             'saldo_inicial_cantidad': k['saldo_inicial_cantidad'],

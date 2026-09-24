@@ -42,6 +42,7 @@
         <label for="f2">Fecha Fin:</label>
         <input type="text" class="form-control" name="f2" id="f2" value="{{ f2|date:'Y-m-d' }}" readonly>
       </div>
+      {% include 'base/filtro_sucursal.html' %}
       <div class="col-md-2 d-flex align-items-end">
         <button type="submit" class="btn btn-primary mb-1"><i class="fas fa-filter mr-1"></i>Filtrar</button>
       </div>
@@ -265,27 +266,28 @@ $(function(){
   // antes esto se recalculaba en JS de cero, lo cual podia
   // desincronizarse del filtro real que aplica la consulta.
   function _rangoFechas() {
-    return {f1: $("#f1").val(), f2: $("#f2").val()};
+    return {f1: $("#f1").val(), f2: $("#f2").val(),
+            q: $("#sucursal").val() ? "?sucursal=" + $("#sucursal").val() : ""};
   }
 
   $("#btnPrint").click(function(e){
     e.preventDefault();
     var r = _rangoFechas();
-    var url = "imprimir-todas/" + r.f1 + "/" + r.f2;
+    var url = "imprimir-todas/" + r.f1 + "/" + r.f2 + r.q;
     window.open(url, '_blank');
   });
 
   $("#btnPrintPdf").click(function(e){
     e.preventDefault();
     var r = _rangoFechas();
-    var url = "imprimir-todas-pdf/" + r.f1 + "/" + r.f2;
+    var url = "imprimir-todas-pdf/" + r.f1 + "/" + r.f2 + r.q;
     window.location.href = url;
   });
 
   $("#btnDescargarExcel").click(function(e){
     e.preventDefault();
     var r = _rangoFechas();
-    var url = "imprimir-todas-excel/" + r.f1 + "/" + r.f2;
+    var url = "imprimir-todas-excel/" + r.f1 + "/" + r.f2 + r.q;
     window.location.href = url;
   });
 

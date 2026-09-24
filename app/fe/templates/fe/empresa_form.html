@@ -250,6 +250,13 @@
                                     <span class="badge badge-success">Autorizada</span>
                                 {% else %}
                                     <span class="badge badge-secondary">Pendiente</span>
+                                    {% if perms.fe.change_sucursal %}
+                                    <form method="post" action="{% url 'fe:sucursal_solicitar_cuis' suc.id %}" class="d-inline"
+                                          onsubmit="return confirm('Se va a pedir el CUIS al SIN para la sucursal {{ suc.nombre|escapejs }}. ¿Continuar?');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-primary py-0 ml-1" title="Solicitar CUIS al SIN">Solicitar</button>
+                                    </form>
+                                    {% endif %}
                                 {% endif %}
                             </td>
                             <td>

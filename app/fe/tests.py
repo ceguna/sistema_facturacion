@@ -171,3 +171,72 @@ class ConstruirFacturaXmlTests(TestCase):
         del detalle_sin_descuento["montoDescuento"]
         root = construir_factura_xml(self._cabecera_valida(), [detalle_sin_descuento])
         self.assertEqual(root.find("detalle").find("montoDescuento").text, "0")
+
+
+class SolicitarCuisSucursalTests(TestCase):
+    """Boton "Solicitar CUIS" por sucursal (24/09/2026). El SIN se
+    simula (nunca se toca la red real): se reemplaza _cliente_soap por
+    un cliente falso que devuelve la respuesta que se quiera."""
+
+    def setUp(self):
+        from fe.models import Empresa, Sucursal
+        self.empresa = Empresa.objects.create(
+            razon_social="EMPRESA CUIS", nit="123456789", codigo_sistema="SISTEMA-TEST")
+        self.sucursal = Sucursal.objects.create(
+            empresa=self.empresa, codigo_sucursal=1, nombre="Cochabamba")
+
+    def _cliente_falso(self, respuesta):
+        from unittest.mock import MagicMock
+        cliente = MagicMock()
+        cliente.service.cuis.return_value = respuesta
+        return cliente
+
+    def test_guarda_cuis_y_vigencia_cuando_el_sin_lo_entrega(self):
+        from unittest.mock import patch
+        from fe import services
+        resp = {"transaccion": True, "codigo": "CUIS-NUEVO",
+                "fechaVigencia": datetime.datetime(2027, 9, 24, 12, 0), "mensajesList": None}
+        cliente = self._cliente_falso(resp)
+        with patch.object(services, "_cliente_soap", return_value=cliente), \
+             patch.object(services, "_obtener_token", return_value="TOKEN"):
+            codigo = services.solicitar_cuis_sucursal_sin(self.sucursal)
+        self.assertEqual(codigo, "CUIS-NUEVO")
+        self.sucursal.refresh_from_db()
+        self.assertEqual(self.sucursal.codigo_cuis, "CUIS-NUEVO")
+        self.assertIsNotNone(self.sucursal.fecha_vigencia_cuis)
+        solicitud = cliente.service.cuis.call_args.kwargs["SolicitudCuis"]
+        self.assertEqual(solicitud["codigoSucursal"], 1)
+        self.assertEqual(solicitud["codigoPuntoVenta"], 0)
+
+    def test_rechazo_del_sin_muestra_su_mensaje_y_no_guarda_nada(self):
+        from unittest.mock import patch
+        from fe import services
+        resp = {"transaccion": False, "codigo": None,
+                "mensajesList": [{"codigo": 1, "descripcion": "SUCURSAL NO REGISTRADA"}]}
+        with patch.object(services, "_cliente_soap", return_value=self._cliente_falso(resp)), \
+             patch.object(services, "_obtener_token", return_value="TOKEN"):
+            with self.assertRaises(services.EmisionSinError) as ctx:
+                services.solicitar_cuis_sucursal_sin(self.sucursal)
+        self.assertIn("SUCURSAL NO REGISTRADA", str(ctx.exception))
+        self.sucursal.refresh_from_db()
+        self.assertFalse(self.sucursal.codigo_cuis)
+
+    def test_no_vuelve_a_pedir_si_el_cuis_sigue_vigente(self):
+        from unittest.mock import patch
+        from django.utils import timezone
+        from fe import services
+        self.sucursal.codigo_cuis = "CUIS-VIGENTE"
+        self.sucursal.fecha_vigencia_cuis = timezone.now() + datetime.timedelta(days=100)
+        self.sucursal.save()
+        cliente = self._cliente_falso({})
+        with patch.object(services, "_cliente_soap", return_value=cliente):
+            with self.assertRaises(services.EmisionSinError):
+                services.solicitar_cuis_sucursal_sin(self.sucursal)
+        cliente.service.cuis.assert_not_called()
+
+    def test_requiere_codigo_de_sistema_de_la_empresa(self):
+        from fe import services
+        self.empresa.codigo_sistema = None
+        self.empresa.save()
+        with self.assertRaises(services.EmisionSinError):
+            services.solicitar_cuis_sucursal_sin(self.sucursal)

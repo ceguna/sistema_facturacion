@@ -24,6 +24,7 @@ from .models import (
 from .forms import CategoriaForm, SubCategoriaForm, MarcaForm, UnidadMedidaForm, ProductoForm, TipoCambioForm, \
     AjusteInventarioEncForm
 
+from bases.alcance import requiere_alcance, AlcanceObjetoMixin
 from bases.views import SinPrivilegios, obtener_sucursal_actual
 
 class CategoriaView(SinPrivilegios,generic.ListView):
@@ -538,11 +539,22 @@ class AjusteInventarioView(SinPrivilegios, generic.ListView):
     context_object_name = "obj"
 
     def get_queryset(self):
-        return AjusteInventarioEnc.objects.filter(estado=True).select_related('motivo').order_by('-id')
+        from bases.alcance import filtrar_por_sucursal
+        return filtrar_por_sucursal(
+            AjusteInventarioEnc.objects.filter(estado=True).select_related('motivo').order_by('-id'),
+            self.request,
+        )
+
+    def get_context_data(self, **kwargs):
+        from bases.alcance import contexto_filtro_sucursal
+        context = super().get_context_data(**kwargs)
+        context.update(contexto_filtro_sucursal(self.request))
+        return context
 
 
 @login_required(login_url='/login/')
 @permission_required('inv.change_ajusteinventarioenc', login_url='bases:sin_privilegios')
+@requiere_alcance('inv.AjusteInventarioEnc', ('sucursal_id',), 'ajuste_id')
 def ajuste_inventario(request, ajuste_id=None):
     """
     Pantalla de Produccion Interna -- misma mecanica de interaccion
@@ -680,6 +692,7 @@ def ajuste_inventario(request, ajuste_id=None):
 
 @login_required(login_url='/login/')
 @permission_required('inv.delete_ajusteinventariodet', login_url='bases:sin_privilegios')
+@requiere_alcance('inv.AjusteInventarioEnc', ('sucursal_id',), 'ajuste_id')
 def ajuste_inventario_det_eliminar(request, ajuste_id, pk):
     """
     Quita una linea de un Ajuste de Inventario. A diferencia de
@@ -726,6 +739,7 @@ def ajuste_inventario_det_eliminar(request, ajuste_id, pk):
 
 @login_required(login_url='/login/')
 @permission_required('inv.eliminar_ajusteinventarioenc', login_url='bases:sin_privilegios')
+@requiere_alcance('inv.AjusteInventarioEnc', ('sucursal_id',), 'id')
 def eliminar_ajuste_inventario(request, id):
     """Elimina (soft-delete) un Ajuste de Inventario completo, revirtiendo
     el stock de cada linea -- mismo patron que eliminar_compra."""
@@ -1066,14 +1080,26 @@ class TransferenciaStockListView(SinPrivilegios, generic.ListView):
         qs = TransferenciaStockEnc.objects.select_related(
             'sucursal_origen', 'sucursal_destino'
         ).order_by('-id')
-        if not self.request.user.is_superuser:
-            sucursal_actual = obtener_sucursal_actual(self.request)
-            qs = qs.filter(Q(sucursal_origen=sucursal_actual) | Q(sucursal_destino=sucursal_actual))
+        # Alcance por sucursal (24/09/2026): antes cualquier no-superusuario
+        # veia solo las de su sucursal actual; ahora lo decide
+        # PerfilUsuario.alcance (Todas / Solo su sucursal).
+        from bases.alcance import q_alcance, sucursal_elegida
+        qs = qs.filter(q_alcance(self.request.user, 'sucursal_origen', 'sucursal_destino'))
+        elegida = sucursal_elegida(self.request)
+        if elegida:
+            qs = qs.filter(Q(sucursal_origen=elegida) | Q(sucursal_destino=elegida))
         return qs
+
+    def get_context_data(self, **kwargs):
+        from bases.alcance import contexto_filtro_sucursal
+        context = super().get_context_data(**kwargs)
+        context.update(contexto_filtro_sucursal(self.request))
+        return context
 
 
 @login_required(login_url='/login/')
 @permission_required('inv.add_transferenciastockenc', login_url='bases:sin_privilegios')
+@requiere_alcance('inv.TransferenciaStockEnc', ('sucursal_origen_id','sucursal_destino_id'), 'transferencia_id')
 def transferencia_stock_new(request, transferencia_id=None):
     """
     Envia stock de la sucursal actual (origen, fija -- no se elige) a
@@ -1187,6 +1213,7 @@ def transferencia_stock_new(request, transferencia_id=None):
 
 @login_required(login_url='/login/')
 @permission_required('inv.confirmar_transferenciastock', login_url='bases:sin_privilegios')
+@requiere_alcance('inv.TransferenciaStockEnc', ('sucursal_origen_id','sucursal_destino_id'), 'id')
 def transferencia_confirmar_recepcion(request, id):
     """
     Confirma que la sucursal DESTINO recibio la mercaderia -- recien
@@ -1229,6 +1256,7 @@ def transferencia_confirmar_recepcion(request, id):
 
 @login_required(login_url='/login/')
 @permission_required('inv.cancelar_transferenciastock', login_url='bases:sin_privilegios')
+@requiere_alcance('inv.TransferenciaStockEnc', ('sucursal_origen_id','sucursal_destino_id'), 'id')
 def transferencia_cancelar(request, id):
     """
     Cancela una transferencia todavia EN TRANSITO -- el stock que ya

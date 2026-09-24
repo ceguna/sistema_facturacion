@@ -1,0 +1,17 @@
+{% comment %}
+Selector de sucursal para pantallas de listado/reportes (24/09/2026).
+Solo se muestra si el usuario puede ver 2+ sucursales. Espera en el
+contexto: sucursales_filtro (lista) y sucursal_sel (id elegido o None),
+armados por bases.alcance.contexto_filtro_sucursal().
+{% endcomment %}
+{% if sucursales_filtro %}
+<div class="col-md-3">
+  <label for="sucursal">Sucursal:</label>
+  <select name="sucursal" id="sucursal" class="form-control">
+    <option value="">Todas</option>
+    {% for s in sucursales_filtro %}
+    <option value="{{ s.id|stringformat:'d' }}" {% if sucursal_sel == s.id %}selected{% endif %}>{{ s.nombre }}</option>
+    {% endfor %}
+  </select>
+</div>
+{% endif %}

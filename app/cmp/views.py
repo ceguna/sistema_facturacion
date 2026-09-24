@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from .models import Proveedor, ComprasEnc, ComprasDet, recalcular_costo_actual_atomico
 from cmp.forms import ProveedorForm,ComprasEncForm
+from bases.alcance import requiere_alcance, AlcanceObjetoMixin
 from bases.views import SinPrivilegios, obtener_sucursal_actual
 from inv.models import Producto, StockSucursal, ajustar_stock_sucursal
 
@@ -112,7 +113,14 @@ class ComprasView(SinPrivilegios, generic.ListView):
         # filtro, una compra eliminada (estado=False) seguia
         # apareciendo en el listado normal -- antes no importaba
         # porque no existia ninguna forma de eliminar una compra.
-        return ComprasEnc.objects.filter(estado=True).order_by('-id')
+        from bases.alcance import filtrar_por_sucursal
+        return filtrar_por_sucursal(ComprasEnc.objects.filter(estado=True).order_by('-id'), self.request)
+
+    def get_context_data(self, **kwargs):
+        from bases.alcance import contexto_filtro_sucursal
+        context = super().get_context_data(**kwargs)
+        context.update(contexto_filtro_sucursal(self.request))
+        return context
 
 
 def _tiene_permiso_dia_cerrado(user):
@@ -158,6 +166,7 @@ def _puede_eliminar_por_ventana_tiempo(user, fecha_compra):
 
 @login_required(login_url='/login/')
 @permission_required('cmp.change_comprasenc', login_url='bases:sin_privilegios')
+@requiere_alcance('cmp.ComprasEnc', ('sucursal_id',), 'compra_id')
 def compras(request,compra_id=None):
     """
     CORREGIDO 02/09/2026 -- el permiso paso de 'cmp.view_comprasenc' a
@@ -382,6 +391,7 @@ def compras(request,compra_id=None):
 
 
 @login_required(login_url='/login/')
+@requiere_alcance('cmp.ComprasEnc', ('sucursal_id',), 'id')
 def eliminar_compra(request, id):
     """
     Elimina (soft-delete) una compra completa. Agregado 02/09/2026 --
@@ -522,7 +532,9 @@ def _modal_error(request, mensaje):
     return render(request, 'fac/_modal_error.html', {'mensaje': mensaje})
 
 
-class CompraDetDelete(SinPrivilegios, generic.DetailView):
+class CompraDetDelete(AlcanceObjetoMixin, SinPrivilegios, generic.DetailView):
+    alcance_modelo = "cmp.ComprasEnc"
+    alcance_kwarg = "compra_id"
     """
     "Quitar un producto de una compra". A pesar del nombre historico
     (Delete), 10/09/2026 pasa a NO borrar nada: crea una linea NUEVA

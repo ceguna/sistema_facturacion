@@ -71,6 +71,7 @@
     <div class="card-header d-flex flex-wrap align-items-center justify-content-between">
         <span>Estado de Inventario — {{ inicio_mes|date:"d/m/Y" }} al {{ hoy|date:"d/m/Y" }}</span>
         <form method="get" class="form-inline">
+            {% include 'base/filtro_sucursal_inline.html' %}
             <select name="producto_id" class="form-control mr-2" onchange="this.form.submit()">
                 <option value="">Todos los productos</option>
                 {% for p in todos_productos_activos %}

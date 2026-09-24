@@ -1,13 +1,14 @@
 from django.urls import path
 
 from fe.views import EmpresaConfigView, SucursalNew, SucursalEdit, SucursalDel, \
-    PuntoVentaNew, PuntoVentaEdit, PuntoVentaDel
+    PuntoVentaNew, PuntoVentaEdit, PuntoVentaDel, SucursalSolicitarCuis
 
 urlpatterns = [
     path('', EmpresaConfigView.as_view(), name='empresa_config'),
 
     path('sucursales/nueva/', SucursalNew.as_view(), name='sucursal_new'),
     path('sucursales/<int:pk>/editar/', SucursalEdit.as_view(), name='sucursal_edit'),
+    path('sucursales/<int:pk>/solicitar-cuis/', SucursalSolicitarCuis.as_view(), name='sucursal_solicitar_cuis'),
     path('sucursales/<int:pk>/eliminar/', SucursalDel.as_view(), name='sucursal_del'),
 
     path('sucursales/<int:sucursal_id>/puntos-venta/nuevo/', PuntoVentaNew.as_view(), name='puntoventa_new'),

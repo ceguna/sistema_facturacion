@@ -1489,3 +1489,71 @@ def registrar_punto_venta_sin(sucursal, nombre_punto_venta, descripcion, codigo_
         raise EmisionSinError(f"El SIN rechazo el registro del punto de venta: {resp.get('mensajesList')}")
 
     return resp.get("codigoPuntoVenta")
+
+def solicitar_cuis_sucursal_sin(sucursal, forzar=False):
+    """
+    Pide al SIN el CUIS de una Sucursal (servicio cuis, WSDL
+    FacturacionCodigos, punto de venta 0) y lo guarda en la Sucursal.
+    Agregado 24/09/2026 (pedido de Carlos: boton por sucursal, listo
+    para cuando haga falta facturar desde una sucursal nueva).
+
+    Requisitos: que el SIN ya tenga registrada esa sucursal para el NIT
+    (con ese mismo codigo_sucursal) -- si no, el SIN rechaza la solicitud
+    y se muestra su mensaje tal cual. Para no pedir CUIS de mas (el
+    prototipo ya advertia de riesgo al pedirlo de nuevo), si la
+    sucursal ya tiene un CUIS que todavia no esta por vencer, NO se
+    vuelve a pedir salvo que se fuerce; el SIN permite renovarlo desde
+    5 dias antes de su vencimiento.
+    """
+    empresa = Empresa.objects.first()
+    if not empresa:
+        raise EmisionSinError("No hay configuracion de Empresa cargada (completar en /fe/).")
+    if not empresa.nit:
+        raise EmisionSinError("La Empresa no tiene NIT cargado.")
+    if not empresa.codigo_sistema:
+        raise EmisionSinError("La Empresa no tiene codigo_sistema cargado "
+                               "(Autorizacion de Sistemas pendiente ante el SIN).")
+
+    ahora = timezone.now()
+    if (not forzar and sucursal.codigo_cuis and sucursal.fecha_vigencia_cuis
+            and sucursal.fecha_vigencia_cuis - timedelta(days=5) > ahora):
+        raise EmisionSinError(
+            f"La sucursal ya tiene un CUIS vigente hasta "
+            f"{timezone.localtime(sucursal.fecha_vigencia_cuis):%d/%m/%Y %H:%M}. "
+            "Recien se puede renovar desde 5 dias antes de esa fecha."
+        )
+
+    codigo_ambiente = (
+        CODIGO_AMBIENTE_PRODUCCION if empresa.ambiente == Empresa.PRODUCCION
+        else CODIGO_AMBIENTE_PILOTO
+    )
+    client = _cliente_soap(WSDL_CODIGOS, _obtener_token())
+    solicitud = {
+        "codigoAmbiente": codigo_ambiente,
+        "codigoModalidad": CODIGO_MODALIDAD,
+        "codigoSistema": empresa.codigo_sistema,
+        "codigoSucursal": sucursal.codigo_sucursal,
+        "nit": empresa.nit,
+        "codigoPuntoVenta": 0,
+    }
+    resp = _llamar(
+        "solicitud de CUIS",
+        lambda: serialize_object(client.service.cuis(SolicitudCuis=solicitud))
+    )
+
+    if not resp.get("transaccion") or not resp.get("codigo"):
+        mensajes = resp.get("mensajesList") or []
+        detalle = "; ".join(
+            str(m.get("descripcion", m)) if isinstance(m, dict) else str(m) for m in mensajes
+        ) or "sin detalle"
+        raise EmisionSinError(f"El SIN rechazo la solicitud de CUIS: {detalle}")
+
+    vigencia = resp.get("fechaVigencia")
+    if vigencia is not None and timezone.is_naive(vigencia):
+        vigencia = timezone.make_aware(vigencia)
+
+    sucursal.codigo_cuis = resp["codigo"]
+    sucursal.fecha_autorizacion_cuis = ahora
+    sucursal.fecha_vigencia_cuis = vigencia
+    sucursal.save(update_fields=["codigo_cuis", "fecha_autorizacion_cuis", "fecha_vigencia_cuis"])
+    return sucursal.codigo_cuis

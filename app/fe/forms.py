@@ -109,7 +109,7 @@ class EmpresaForm(forms.ModelForm):
 class SucursalForm(forms.ModelForm):
     class Meta:
         model = Sucursal
-        fields = ['codigo_sucursal', 'nombre', 'direccion', 'departamento']
+        fields = ['codigo_sucursal', 'nombre', 'direccion', 'departamento', 'municipio']
         widgets = {
             'codigo_sucursal': forms.NumberInput(attrs={'class': 'form-control'}),
             'nombre': forms.TextInput(attrs={'class': 'form-control no-uppercase'}),
@@ -118,12 +118,14 @@ class SucursalForm(forms.ModelForm):
             # tiene sentido forzarla a mayusculas.
             'direccion': forms.TextInput(attrs={'class': 'form-control no-uppercase'}),
             'departamento': forms.TextInput(attrs={'class': 'form-control no-uppercase'}),
+            'municipio': forms.TextInput(attrs={'class': 'form-control no-uppercase'}),
         }
         labels = {
             'codigo_sucursal': 'Código de Sucursal (SIN)',
             'nombre': 'Nombre',
             'direccion': 'Dirección',
             'departamento': 'Departamento',
+            'municipio': 'Municipio',
         }
 
 

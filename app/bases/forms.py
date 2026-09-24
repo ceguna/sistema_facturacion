@@ -46,6 +46,13 @@ class UsuarioForm(forms.ModelForm):
                    "si la empresa tiene una única sucursal.",
     )
 
+    alcance = forms.ChoiceField(
+        choices=[('TODAS', 'Todas las sucursales'), ('SUCURSAL', 'Solo su sucursal asignada')],
+        required=False, initial='TODAS', label="Puede ver datos de",
+        help_text="Limita facturas, compras, inventario, reportes y dashboard "
+                   "a la sucursal asignada arriba. Los administradores ven todo.",
+    )
+
     class Meta:
         model = User
         fields = ['username', 'first_name', 'last_name', 'email',
@@ -72,6 +79,7 @@ class UsuarioForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['sucursal'].widget.attrs.update({'class': 'form-control'})
+        self.fields['alcance'].widget.attrs.update({'class': 'form-control'})
         # Precargar la sucursal actual al EDITAR un usuario que ya
         # tiene PerfilUsuario -- self.instance existe pero puede no
         # tener pk todavia (formulario de creacion, User(id=None)).
@@ -79,6 +87,14 @@ class UsuarioForm(forms.ModelForm):
             perfil = getattr(self.instance, 'perfilusuario', None)
             if perfil:
                 self.fields['sucursal'].initial = perfil.sucursal_id
+                self.fields['alcance'].initial = perfil.alcance
+
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('alcance') == 'SUCURSAL' and not cleaned.get('sucursal'):
+            self.add_error('alcance', "Para limitar a una sucursal, primero elegí la Sucursal del usuario.")
+        return cleaned
 
 
 class PerfilForm(forms.ModelForm):

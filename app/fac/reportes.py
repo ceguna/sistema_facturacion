@@ -15,6 +15,7 @@ from xhtml2pdf import pisa
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
+from bases.alcance import requiere_alcance
 from .models import FacturaEnc,FacturaDet,Cliente,Pago,NotaCreditoDebito
 from fe.models import Empresa, Sucursal, PuntoVenta
 from fe.utils import datos_logo_header
@@ -510,6 +511,7 @@ def _importe_en_letras(monto):
 
 @login_required(login_url='/login/')
 @permission_required('fac.view_facturaenc', login_url='bases:sin_privilegios')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def imprimir_factura_recibo(request, id):
     enc = get_object_or_404(FacturaEnc, id=id)
     template_name, context, documento = _contexto_documento(enc)
@@ -553,6 +555,7 @@ def nombre_archivo_documento(enc):
 
 @login_required(login_url='/login/')
 @permission_required('fac.view_facturaenc', login_url='bases:sin_privilegios')
+@requiere_alcance('fac.FacturaEnc', ('sucursal_id',), 'id')
 def factura_descargar_pdf(request, id):
     enc = get_object_or_404(FacturaEnc, id=id)
     pdf_bytes = generar_pdf_factura_bytes(enc)
@@ -566,7 +569,7 @@ def factura_descargar_pdf(request, id):
     return response
 
 
-def _contexto_reporte_facturas(f1, f2):
+def _contexto_reporte_facturas(f1, f2, request=None):
     f1_parsed = parse_date(f1)
     f2_parsed = parse_date(f2)
     f2_con_margen = f2_parsed + timedelta(days=1)
@@ -576,6 +579,10 @@ def _contexto_reporte_facturas(f1, f2):
     enc = FacturaEnc.objects.filter(
         fecha__gte=f1_parsed, fecha__lt=f2_con_margen, estado=True
     ).order_by('id')
+    # Alcance por sucursal (24/09/2026): el del usuario + ?sucursal=N.
+    if request is not None:
+        from bases.alcance import filtrar_por_sucursal
+        enc = filtrar_por_sucursal(enc, request)
 
     empresa = Empresa.objects.first()
 
@@ -594,10 +601,10 @@ def _contexto_reporte_facturas(f1, f2):
 def imprimir_factura_list(request,f1,f2):
     template_name="fac/facturas_print_all.html"
 
-    context = _contexto_reporte_facturas(f1, f2)
+    context = _contexto_reporte_facturas(f1, f2, request)
     context['request'] = request
     context['es_pdf'] = False
-    context['url_descargar_pdf'] = f"/fac/facturas/imprimir-todas-pdf/{f1}/{f2}"
+    context['url_descargar_pdf'] = f"/fac/facturas/imprimir-todas-pdf/{f1}/{f2}" + (f"?sucursal={request.GET['sucursal']}" if request.GET.get('sucursal', '').isdigit() else "")
 
     return render(request,template_name,context)
 
@@ -607,7 +614,7 @@ def imprimir_factura_list(request,f1,f2):
 def imprimir_factura_list_pdf(request, f1, f2):
     template_name = "fac/facturas_print_all.html"
 
-    context = _contexto_reporte_facturas(f1, f2)
+    context = _contexto_reporte_facturas(f1, f2, request)
     context['request'] = request
     context['es_pdf'] = True
     context['url_ver_en_pantalla'] = f"/fac/facturas/imprimir-todas/{f1}/{f2}"
@@ -631,7 +638,7 @@ def imprimir_factura_list_pdf(request, f1, f2):
 @login_required(login_url='/login/')
 @permission_required('fac.view_facturaenc', login_url='bases:sin_privilegios')
 def imprimir_factura_list_excel(request, f1, f2):
-    context = _contexto_reporte_facturas(f1, f2)
+    context = _contexto_reporte_facturas(f1, f2, request)
     facturas = context['enc']
 
     wb = Workbook()
@@ -663,7 +670,7 @@ def imprimir_factura_list_excel(request, f1, f2):
     return response
 
 
-def _contexto_reporte_cierre_ventas(f1, f2):
+def _contexto_reporte_cierre_ventas(f1, f2, request=None):
     f1_parsed = parse_date(f1)
     f2_parsed = parse_date(f2)
     f2_con_margen = f2_parsed + timedelta(days=1)
@@ -672,6 +679,9 @@ def _contexto_reporte_cierre_ventas(f1, f2):
     facturas = FacturaEnc.objects.filter(
         fecha__gte=f1_parsed, fecha__lt=f2_con_margen, estado=True
     )
+    if request is not None:
+        from bases.alcance import filtrar_por_sucursal
+        facturas = filtrar_por_sucursal(facturas, request)
 
     por_dia = (
         facturas.annotate(dia=TruncDate('fecha'))
@@ -741,7 +751,7 @@ def _contexto_reporte_cierre_ventas(f1, f2):
 def reporte_cierre_ventas(request, f1, f2):
     template_name = "fac/cierre_ventas_reporte.html"
 
-    context = _contexto_reporte_cierre_ventas(f1, f2)
+    context = _contexto_reporte_cierre_ventas(f1, f2, request)
     context['request'] = request
     context['es_pdf'] = False
     context['url_descargar_pdf'] = f"/fac/reportes/cierre-ventas/pdf/{f1}/{f2}"
@@ -754,7 +764,7 @@ def reporte_cierre_ventas(request, f1, f2):
 def reporte_cierre_ventas_pdf(request, f1, f2):
     template_name = "fac/cierre_ventas_reporte.html"
 
-    context = _contexto_reporte_cierre_ventas(f1, f2)
+    context = _contexto_reporte_cierre_ventas(f1, f2, request)
     context['request'] = request
     context['es_pdf'] = True
 
@@ -767,7 +777,7 @@ def reporte_cierre_ventas_pdf(request, f1, f2):
         return HttpResponse("Ocurrió un error al generar el PDF.", status=500)
     return response
 
-def _contexto_cierre_caja(f1, f2):
+def _contexto_cierre_caja(f1, f2, request=None):
     """
     Cierre de Caja: desglose de ingresos por forma de pago (Resumen) y
     listado factura por factura AGRUPADO por forma de pago, con
@@ -784,6 +794,9 @@ def _contexto_cierre_caja(f1, f2):
     facturas_activas = FacturaEnc.objects.filter(
         fecha__gte=f1_parsed, fecha__lt=f2_con_margen, anulado=False, estado=True
     )
+    if request is not None:
+        from bases.alcance import filtrar_por_sucursal
+        facturas_activas = filtrar_por_sucursal(facturas_activas, request)
 
     resumen_qs = (
         facturas_activas.values('forma_pago')
@@ -834,7 +847,7 @@ def _contexto_cierre_caja(f1, f2):
 @login_required(login_url='/login/')
 @permission_required('fac.ver_reportes_financieros', login_url='bases:sin_privilegios')
 def cierre_caja_resumen(request, f1, f2):
-    context = _contexto_cierre_caja(f1, f2)
+    context = _contexto_cierre_caja(f1, f2, request)
     context['request'] = request
     context['es_pdf'] = False
     context['url_descargar_pdf'] = f"/fac/reportes/cierre-caja/resumen/pdf/{f1}/{f2}/"
@@ -843,7 +856,7 @@ def cierre_caja_resumen(request, f1, f2):
 @login_required(login_url='/login/')
 @permission_required('fac.ver_reportes_financieros', login_url='bases:sin_privilegios')
 def cierre_caja_resumen_pdf(request, f1, f2):
-    context = _contexto_cierre_caja(f1, f2)
+    context = _contexto_cierre_caja(f1, f2, request)
     context['request'] = request
     context['es_pdf'] = True
     html = render_to_string('fac/cierre_caja_resumen.html', context)
@@ -857,7 +870,7 @@ def cierre_caja_resumen_pdf(request, f1, f2):
 @login_required(login_url='/login/')
 @permission_required('fac.ver_reportes_financieros', login_url='bases:sin_privilegios')
 def cierre_caja_detallado(request, f1, f2):
-    context = _contexto_cierre_caja(f1, f2)
+    context = _contexto_cierre_caja(f1, f2, request)
     context['request'] = request
     context['es_pdf'] = False
     context['url_descargar_pdf'] = f"/fac/reportes/cierre-caja/detallado/pdf/{f1}/{f2}/"
@@ -866,7 +879,7 @@ def cierre_caja_detallado(request, f1, f2):
 @login_required(login_url='/login/')
 @permission_required('fac.ver_reportes_financieros', login_url='bases:sin_privilegios')
 def cierre_caja_detallado_pdf(request, f1, f2):
-    context = _contexto_cierre_caja(f1, f2)
+    context = _contexto_cierre_caja(f1, f2, request)
     context['request'] = request
     context['es_pdf'] = True
     html = render_to_string('fac/cierre_caja_detallado.html', context)
@@ -886,12 +899,19 @@ def cierre_caja_detallado_pdf(request, f1, f2):
 @permission_required('fac.ver_creditos', login_url='bases:sin_privilegios')
 def kardex_cliente_selector(request):
     """Selector: elegir un cliente para ver su Kardex de credito."""
-    clientes = Cliente.objects.filter(estado=True).order_by('apellidos', 'nombres')
+    from bases.alcance import filtrar_por_sucursal
+    clientes = filtrar_por_sucursal(
+        Cliente.objects.filter(estado=True), request, usar_filtro_pantalla=False
+    ).order_by('apellidos', 'nombres')
     return render(request, 'fac/kardex_cliente_selector.html', {'clientes': clientes})
 
 
-def _contexto_kardex_cliente(cliente_id, f1=None, f2=None):
-    cliente = get_object_or_404(Cliente, pk=cliente_id)
+def _contexto_kardex_cliente(cliente_id, f1=None, f2=None, request=None):
+    clientes_qs = Cliente.objects.all()
+    if request is not None:
+        from bases.alcance import filtrar_por_sucursal
+        clientes_qs = filtrar_por_sucursal(clientes_qs, request, usar_filtro_pantalla=False)
+    cliente = get_object_or_404(clientes_qs, pk=cliente_id)
 
     # Se arma el historial COMPLETO primero (sin filtro de fechas
     # todavia) -- necesario para poder calcular un saldo de apertura
@@ -1045,7 +1065,7 @@ def kardex_cliente(request, cliente_id):
     f1 = parse_date(request.GET.get('f1')) if request.GET.get('f1') else None
     f2 = parse_date(request.GET.get('f2')) if request.GET.get('f2') else None
 
-    context = _contexto_kardex_cliente(cliente_id, f1, f2)
+    context = _contexto_kardex_cliente(cliente_id, f1, f2, request)
     context['request'] = request
     context['es_pdf'] = False
     return render(request, 'fac/kardex_cliente.html', context)
@@ -1057,7 +1077,7 @@ def kardex_cliente_pdf(request, cliente_id):
     f1 = parse_date(request.GET.get('f1')) if request.GET.get('f1') else None
     f2 = parse_date(request.GET.get('f2')) if request.GET.get('f2') else None
 
-    context = _contexto_kardex_cliente(cliente_id, f1, f2)
+    context = _contexto_kardex_cliente(cliente_id, f1, f2, request)
     context['request'] = request
     context['es_pdf'] = True
 

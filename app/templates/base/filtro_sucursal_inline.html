@@ -1,0 +1,8 @@
+{% if sucursales_filtro %}
+<select name="sucursal" class="form-control mr-2" title="Sucursal">
+  <option value="">Todas las sucursales</option>
+  {% for s in sucursales_filtro %}
+  <option value="{{ s.id|stringformat:'d' }}" {% if sucursal_sel == s.id %}selected{% endif %}>{{ s.nombre }}</option>
+  {% endfor %}
+</select>
+{% endif %}

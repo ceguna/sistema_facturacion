@@ -7,6 +7,7 @@ from django.contrib.staticfiles import finders
 from django.utils import timezone
 from django.contrib.auth.decorators import login_required, permission_required
 
+from bases.alcance import requiere_alcance
 from .models import ComprasEnc, ComprasDet
 from fe.models import Empresa
 from fe.utils import datos_logo_header
@@ -67,7 +68,8 @@ def reporte_compras(request):
     template_path = 'cmp/compras_print_all.html'
     today = timezone.now()
 
-    compras = ComprasEnc.objects.all()
+    from bases.alcance import filtrar_por_sucursal
+    compras = filtrar_por_sucursal(ComprasEnc.objects.all(), request)
     empresa = Empresa.objects.first()
     context = {
         'obj': compras,
@@ -96,11 +98,13 @@ def reporte_compras(request):
 
 @login_required(login_url='/login/')
 @permission_required('cmp.view_comprasenc', login_url='bases:sin_privilegios')
+@requiere_alcance('cmp.ComprasEnc', ('sucursal_id',), 'compra_id')
 def imprimir_compra(request, compra_id):
     template_path = 'cmp/compras_print_one.html'
     today = timezone.now()
 
-    enc = ComprasEnc.objects.filter(id=compra_id).first()
+    from bases.alcance import filtrar_por_sucursal
+    enc = filtrar_por_sucursal(ComprasEnc.objects.filter(id=compra_id), request, usar_filtro_pantalla=False).first()
     if enc:
         detalle = ComprasDet.objects.filter(compra_id=compra_id)
     else:

@@ -10,6 +10,7 @@
     <div class="card-header d-flex flex-wrap align-items-center justify-content-between">
         <span>Período (fecha de emisión)</span>
         <form method="get" class="form-inline">
+            {% include 'base/filtro_sucursal_inline.html' %}
             <select name="mes" class="form-control mr-2">
                 {% for valor, nombre in meses %}
                 <option value="{{ valor|unlocalize }}" {% if valor == mes %}selected{% endif %}>{{ nombre }}</option>

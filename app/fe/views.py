@@ -1,13 +1,14 @@
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
 from django.views import generic
+from django.contrib import messages
 from django.contrib.messages.views import SuccessMessageMixin
 
 from bases.views import SinPrivilegios
 
 from .models import Empresa, Sucursal, PuntoVenta
 from .forms import EmpresaForm, SucursalForm, PuntoVentaForm
-from .services import registrar_punto_venta_sin, EmisionSinError
+from .services import registrar_punto_venta_sin, solicitar_cuis_sucursal_sin, EmisionSinError
 
 
 class EmpresaConfigView(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
@@ -66,6 +67,22 @@ class SucursalEdit(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
         context = super().get_context_data(**kwargs)
         context["puntos_venta"] = self.object.puntos_venta.all().order_by("codigo_punto_venta")
         return context
+
+
+class SucursalSolicitarCuis(SinPrivilegios, generic.View):
+    """Boton "Solicitar CUIS" de una sucursal (solo POST): pide el CUIS
+    al SIN y lo guarda. Ver solicitar_cuis_sucursal_sin."""
+    permission_required = "fe.change_sucursal"
+
+    def post(self, request, pk):
+        sucursal = get_object_or_404(Sucursal, pk=pk)
+        try:
+            solicitar_cuis_sucursal_sin(sucursal)
+        except EmisionSinError as e:
+            messages.error(request, str(e))
+        else:
+            messages.success(request, f"CUIS obtenido y guardado para la sucursal '{sucursal.nombre}'.")
+        return redirect("fe:empresa_config")
 
 
 class SucursalDel(SinPrivilegios, generic.DeleteView):

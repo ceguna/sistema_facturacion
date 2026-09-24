@@ -37,6 +37,11 @@
                             <label>{{ form.departamento.label }}</label>
                             {{ form.departamento }}
                         </div>
+                        <div class="col-md-4 form-group">
+                            <label>{{ form.municipio.label }}</label>
+                            {{ form.municipio }}
+                            <small class="form-text text-muted">Obligatorio para emitir facturas desde esta sucursal.</small>
+                        </div>
                     </div>
 
                     {% if obj.codigo_cuis %}

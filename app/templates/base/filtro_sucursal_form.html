@@ -1,0 +1,6 @@
+{% if sucursales_filtro %}
+<form method="get" class="form-row mb-3 align-items-end">
+  {% include 'base/filtro_sucursal.html' %}
+  <div class="col-auto"><button type="submit" class="btn btn-primary"><i class="fas fa-filter mr-1"></i>Filtrar</button></div>
+</form>
+{% endif %}

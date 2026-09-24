@@ -22,6 +22,7 @@
     </div>
     <!-- Card Body -->
     <div class="card-body">
+    {% include 'base/filtro_sucursal_form.html' %}
         {% if not obj %}
             <div class="alert alert-info"><i class="fas fa-shopping-cart mr-2"></i>Todavía no registraste ninguna compra. Usa el botón <b>Nueva</b> para comenzar.</div>
         {% endif %}

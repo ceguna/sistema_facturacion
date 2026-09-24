@@ -19,6 +19,7 @@
         </div>
     </div>
     <div class="card-body">
+    {% include 'base/filtro_sucursal_form.html' %}
         {% if not obj %}
             <div class="alert alert-info"><i class="fas fa-boxes mr-2"></i>Todavía no registraste ningún ajuste de inventario. Usa el botón <b>Nuevo</b> para una Producción Interna, o <b>Carga Inicial</b> para el inventario de arranque.</div>
         {% endif %}

@@ -42,6 +42,20 @@ class PerfilUsuario(models.Model):
                    "varias, hay que asignarla acá explícitamente."
     )
 
+    ALCANCE_TODAS = 'TODAS'
+    ALCANCE_SUCURSAL = 'SUCURSAL'
+    ALCANCE_CHOICES = [
+        (ALCANCE_TODAS, 'Todas las sucursales'),
+        (ALCANCE_SUCURSAL, 'Solo su sucursal asignada'),
+    ]
+    alcance = models.CharField(
+        max_length=10, choices=ALCANCE_CHOICES, default=ALCANCE_TODAS,
+        help_text="Que datos ve este usuario en listados y reportes "
+                   "(facturas, compras, inventario, dashboard...). "
+                   "'Solo su sucursal asignada' exige tener una sucursal "
+                   "cargada arriba. Los superusuarios siempre ven todo."
+    )
+
     def __str__(self):
         return f"Perfil de {self.user.username}"
 

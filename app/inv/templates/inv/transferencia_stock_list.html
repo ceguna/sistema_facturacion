@@ -16,6 +16,7 @@
         </div>
     </div>
     <div class="card-body">
+    {% include 'base/filtro_sucursal_form.html' %}
         {% if not obj %}
             <div class="alert alert-info"><i class="fas fa-dolly mr-2"></i>Todavía no se registró ninguna transferencia de stock entre sucursales. Usa el botón <b>Nueva Transferencia</b> para enviar mercadería de tu sucursal a otra.</div>
         {% endif %}
