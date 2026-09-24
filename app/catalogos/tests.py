@@ -1,25 +1,61 @@
 """
 Tests de la lógica de sincronización de catálogos, usando el
 MockSOAPClient (no requieren conexión real al SIN).
-
-Para incluir estos tests en la suite del proyecto, copiar el
-contenido de este archivo dentro de app/catalogos/tests.py
-(o renombrar este archivo a tests.py, reemplazando el que
-generó `startapp`).
 """
 
 from django.test import TestCase
 
 from .models import CatalogoSIN, SincronizacionLog
-from .services import MockSOAPClient, sincronizar_todos_los_catalogos
+from .services import sincronizar_todos_los_catalogos
+
+
+class MockSOAPClient:
+    """
+    CORREGIDO 23/09/2026 (Etapa D): este archivo importaba
+    MockSOAPClient desde catalogos/services.py, pero ese modulo nunca
+    tuvo esa clase -- servicios.py trae solo el cliente REAL
+    (SOAPClienteSIN) desde que sincronizar_todos_los_catalogos() dejo
+    de tener un fallback mock propio ("cliente_soap es OBLIGATORIO --
+    ya no hay fallback mock en el flujo real", ver su docstring). Sin
+    esta clase, catalogos/tests.py ni siquiera podia importarse
+    (ImportError), asi que estas 3 pruebas nunca corrian.
+
+    Reemplaza a SOAPClienteSIN sin tocar la red: implementa la misma
+    interfaz que sincronizar_catalogo()/sincronizar_todos_los_catalogos()
+    esperan (obtener_catalogo, obtener_actividades_documento_sector),
+    devolviendo datos minimos pero validos para cualquier catalogo que
+    se le pida.
+    """
+    DATOS_MOCK = {
+        CatalogoSIN.TipoCatalogo.TIPO_MONEDA: [
+            {"codigo": "1", "descripcion": "BOLIVIANOS"},
+            {"codigo": "2", "descripcion": "DOLARES AMERICANOS"},
+        ],
+    }
+
+    def obtener_catalogo(self, tipo_catalogo, nombre_operacion):
+        return self.DATOS_MOCK.get(tipo_catalogo, [
+            {"codigo": "1", "descripcion": f"CODIGO DE PRUEBA ({tipo_catalogo})"},
+        ])
+
+    def obtener_actividades_documento_sector(self):
+        return [
+            {"codigo_actividad": "476000", "codigo_documento_sector": 1, "tipo_documento_sector": "FCV"},
+        ]
 
 
 class SincronizacionCatalogosTests(TestCase):
 
     def test_primera_sincronizacion_crea_codigos(self):
-        exitosa, mensaje = sincronizar_todos_los_catalogos(cliente_soap=MockSOAPClient())
+        # CORREGIDO 23/09/2026 (Etapa D): sincronizar_todos_los_catalogos
+        # ya no devuelve (exitosa, mensaje) -- registra el resultado en
+        # SincronizacionLog (ver test_registra_log_de_sincronizacion) y
+        # no devuelve nada. Se verifica el exito ahi, no desempacando un
+        # valor de retorno que ya no existe.
+        sincronizar_todos_los_catalogos(cliente_soap=MockSOAPClient())
 
-        self.assertTrue(exitosa)
+        log = SincronizacionLog.objects.latest("fecha_ejecucion")
+        self.assertTrue(log.exitosa)
         self.assertTrue(
             CatalogoSIN.objects.filter(
                 tipo_catalogo=CatalogoSIN.TipoCatalogo.TIPO_MONEDA,

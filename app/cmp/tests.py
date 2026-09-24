@@ -15,15 +15,24 @@ from django.contrib.auth import get_user_model
 
 from inv.models import Categoria, SubCategoria, Marca, UnidadMedida, Producto
 from cmp.models import Proveedor, ComprasEnc, ComprasDet
+from fe.models import Empresa, Sucursal
 
 User = get_user_model()
 
 
 class ComprasBaseTestCase(TestCase):
+    """CORREGIDO 23/09/2026 (Etapa D): ver docstring de
+    FacturacionBaseTestCase en fac/tests.py -- mismo motivo (falta
+    Sucursal en la base de tests), mismo fix."""
 
     def setUp(self):
         self.admin = User.objects.create_superuser(
             "admin_cmp_test", "admin_cmp@test.com", "AdminTest123!"
+        )
+
+        self.empresa = Empresa.objects.create(razon_social="EMPRESA DE PRUEBA CMP")
+        self.sucursal = Sucursal.objects.create(
+            empresa=self.empresa, codigo_sucursal=0, nombre="Central Test"
         )
 
         self.categoria = Categoria(descripcion="CATEGORIA TEST CMP", uc=self.admin)
@@ -98,6 +107,67 @@ class StockCompraTests(ComprasBaseTestCase):
         self.assertEqual(compra.sub_total, 0.0)
         self.assertEqual(compra.descuento, 0.0)
         self.assertEqual(compra.total, 0.0)
+
+
+class CompraDetDeleteTests(ComprasBaseTestCase):
+    """
+    NUEVO 23/09/2026 (Etapa D): CompraDetDelete ("quitar linea de una
+    compra") ya habia sido corregido el 10/09/2026 por el mismo bug de
+    Django 5.2 que se encontro de nuevo en FacturaDetDelete (delete()
+    es codigo muerto, la logica real tiene que vivir en post()) -- pero
+    nunca habia quedado una prueba de regresion para sus dos controles
+    reales (dia cerrado, stock negativo). Sin esta prueba, un futuro
+    cambio podria reintroducir el mismo bug en silencio, igual que paso
+    con FacturaDetDelete.
+    """
+
+    def test_no_se_puede_quitar_linea_de_compra_de_dia_cerrado(self):
+        from django.contrib.auth.models import Permission
+        from fac.models import CierreDia
+
+        self._post_nueva_compra(cantidad=20)
+        compra = ComprasEnc.objects.order_by('-id').first()
+        det = ComprasDet.objects.filter(compra=compra).first()
+        CierreDia.objects.create(fecha=compra.fecha_compra)
+
+        # Usuario NO superusuario -- self.admin (superuser) tiene todos
+        # los permisos automaticamente via has_perm(), incluido el
+        # bypass de dia cerrado, y no serviria para probar el bloqueo.
+        cajero = User.objects.create_user("cajero_cmp_test", "cajero@test.com", "CajeroTest123!")
+        cajero.user_permissions.add(Permission.objects.get(codename="delete_comprasdet", content_type__app_label="cmp"))
+        client_cajero = self.client_class()
+        client_cajero.login(username="cajero_cmp_test", password="CajeroTest123!")
+
+        client_cajero.post(f"/cmp/compras/{compra.id}/delete/{det.id}")
+
+        # "Quitar linea" crea una CONTRA-linea nueva con cantidad
+        # negativa (no modifica ni borra la original) -- si el bloqueo
+        # funciona, esa contra-linea nunca se crea.
+        self.assertEqual(ComprasDet.objects.filter(compra=compra).count(), 1)
+
+    def test_no_se_puede_quitar_linea_si_deja_stock_negativo(self):
+        from fac.models import Cliente, FacturaEnc, FacturaDet
+
+        self._post_nueva_compra(cantidad=20)
+        compra = ComprasEnc.objects.order_by('-id').first()
+        det = ComprasDet.objects.filter(compra=compra).first()
+
+        # Se vende parte de ese stock -- revertir la compra completa
+        # dejaria el producto en existencia negativa.
+        cliente = Cliente.objects.create(
+            ci="5555555", nombres="Cliente", apellidos="Negativo", nit="5555555",
+            razon="Cliente Negativo", tipo="Natural", uc=self.admin,
+        )
+        enc_venta = FacturaEnc.objects.create(cliente=cliente, sub_total=0, descuento=0, total=0)
+        FacturaDet.objects.create(
+            factura=enc_venta, producto=self.producto, cantidad=15,
+            precio=self.producto.precio, sub_total=15 * self.producto.precio,
+            descuento=0, total=15 * self.producto.precio, uc=self.admin,
+        )
+
+        self.client.post(f"/cmp/compras/{compra.id}/delete/{det.id}")
+
+        self.assertEqual(ComprasDet.objects.filter(compra=compra).count(), 1)
 
 
 class ImpresionComprasTests(ComprasBaseTestCase):

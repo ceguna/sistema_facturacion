@@ -582,6 +582,18 @@ def borrar_detalle_factura(request, id):
     return render(request,template_name,context)
 
 class FacturaDetDelete(SinPrivilegios, generic.DeleteView):
+    """
+    CORREGIDO 23/09/2026 (Etapa D, encontrado ampliando el banco de
+    pruebas): en Django 5.2, DeleteView.post() llama a form_valid(),
+    que borra el objeto directo -- el metodo delete() de ESTA clase ya
+    NO SE LLAMA NUNCA. Eso dejaba como codigo muerto tanto el mensaje
+    de exito como, mas grave, el chequeo de _bloqueada() que impide
+    borrar una linea de una factura ya reportada al SIN o anulada:
+    cualquier usuario con permiso podia borrar detalle de una factura
+    ya validada sin ningun freno. Mismo bug (y mismo fix -- mover la
+    logica a post()) que ya se habia corregido para CompraDetDelete
+    en cmp/views.py el 10/09/2026.
+    """
     permission_required = "fac.delete_facturadet"
     model = FacturaDet
     template_name = "fac/factura_det_del.html"
@@ -600,7 +612,7 @@ class FacturaDetDelete(SinPrivilegios, generic.DeleteView):
             return redirect('fac:factura_edit', id=self.object.factura.id)
         return super().get(request, *args, **kwargs)
 
-    def delete(self, request, *args, **kwargs):
+    def post(self, request, *args, **kwargs):
         self.object = self.get_object()
         if self._bloqueada(self.object):
             messages.error(
@@ -608,9 +620,10 @@ class FacturaDetDelete(SinPrivilegios, generic.DeleteView):
                 'No se puede eliminar: esta factura ya fue reportada al SIN o está anulada.'
             )
             return redirect('fac:factura_edit', id=self.object.factura.id)
-        response = super().delete(request, *args, **kwargs)
-        messages.success(self.request, 'Producto Eliminado')
-        return response
+        factura_id = self.object.factura.id
+        self.object.delete()
+        messages.success(request, 'Producto Eliminado')
+        return redirect('fac:factura_edit', id=factura_id)
 
     def get_success_url(self):
           id=self.kwargs['id']
