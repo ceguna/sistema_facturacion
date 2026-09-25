@@ -368,7 +368,7 @@
                          PerfilUsuario -- no ve el selector. -->
                     {% if sucursal_actual %}
                     <span class="ml-3 badge badge-light border d-none d-md-inline" title="Sucursal actual" style="font-size:0.85rem;">
-                        <i class="fas fa-store mr-1"></i>{{ sucursal_actual.nombre }}
+                        <i class="fas fa-store mr-1"></i>Sucursal:{% if not user.is_superuser or todas_sucursales|length <= 1 %} {{ sucursal_actual.nombre }}{% endif %}
                     </span>
                     {% endif %}
                     {% if user.is_superuser and todas_sucursales|length > 1 %}
