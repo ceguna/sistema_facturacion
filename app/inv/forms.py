@@ -105,12 +105,24 @@ class ProductoForm(forms.ModelForm):
             ),
         }
 
-    def __init__(self,*args,**kwargs):
+    CAMPOS_PRECIO = [
+        'precio', 'precio_referencia_usd', 'margen_deseado_pct',
+        'descuento_promocional_pct', 'descuento_vigencia_desde', 'descuento_vigencia_hasta',
+    ]
+
+    def __init__(self,*args,precios_editables=True,**kwargs):
         super().__init__(*args,**kwargs)
         for field in iter(self.fields):
             self.fields[field].widget.attrs.update({
                 'class':'form-control'
             })
+        # Precios solo desde la Central (25/09/2026, pedido de Carlos):
+        # desde una sucursal, los campos de precio se bloquean. disabled=True
+        # hace que Django IGNORE lo que llegue por POST y conserve el
+        # valor guardado -- no se puede saltear editando el HTML.
+        if not precios_editables:
+            for nombre in self.CAMPOS_PRECIO:
+                self.fields[nombre].disabled = True
         # CORREGIDO 12/09/2026: el select de Categoria/Sub Categoria se
         # arma a mano en la plantilla (no es un campo real del modelo,
         # solo filtra el chained de Sub Categoria), pero la validacion

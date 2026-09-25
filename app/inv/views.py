@@ -25,7 +25,7 @@ from .forms import CategoriaForm, SubCategoriaForm, MarcaForm, UnidadMedidaForm,
     AjusteInventarioEncForm
 
 from bases.alcance import requiere_alcance, AlcanceObjetoMixin
-from bases.views import SinPrivilegios, obtener_sucursal_actual
+from bases.views import SinPrivilegios, obtener_sucursal_actual, es_casa_matriz
 
 class CategoriaView(SinPrivilegios,generic.ListView):
     permission_required = "inv.view_categoria"
@@ -243,6 +243,18 @@ class ProductoView(SinPrivilegios, generic.ListView):
         context.update(contexto_filtro_sucursal(self.request))
         return context
 
+def _modal_solo_central(request, mensaje):
+    """Respuesta para pantallas que se abren como modal: un fragmento con
+    el aviso (un redirect inyectaria toda la pagina dentro del modal)."""
+    html = (
+        '<div class="modal-dialog"><div class="modal-content"><div class="modal-body">'
+        '<div class="alert alert-warning mb-3"><i class="fas fa-lock mr-2"></i>' + mensaje + '</div>'
+        '<button type="button" class="btn btn-secondary" data-dismiss="modal">Cerrar</button>'
+        '</div></div></div>'
+    )
+    return HttpResponse(html, status=200 if request.method == 'GET' else 403)
+
+
 class ProductoNew(SuccessMessageMixin,SinPrivilegios, generic.CreateView):
     permission_required = "inv.add_producto"
     model = Producto
@@ -252,6 +264,14 @@ class ProductoNew(SuccessMessageMixin,SinPrivilegios, generic.CreateView):
     success_url = reverse_lazy("inv:producto_list")
     login_url = "bases:login"
     success_message="Producto Creado Satisfactoriamente"
+
+    def dispatch(self, request, *args, **kwargs):
+        # Solo la Central da de alta productos (catalogo unico de la
+        # empresa, con su precio base) -- 25/09/2026, pedido de Carlos.
+        if request.user.is_authenticated and not es_casa_matriz(request):
+            return _modal_solo_central(
+                request, 'Los productos nuevos (y sus precios) solo se dan de alta desde la Central.')
+        return super().dispatch(request, *args, **kwargs)
 
     def form_valid(self, form):
         form.instance.uc = self.request.user
@@ -280,6 +300,14 @@ class ProductoEdit(SuccessMessageMixin,SinPrivilegios, generic.UpdateView):
     success_url = reverse_lazy("inv:producto_list")
     login_url = "bases:login"
     success_message="Producto Actualizado Satisfactoriamente"
+
+    def get_form_kwargs(self):
+        # Desde una sucursal los campos de precio quedan bloqueados (solo
+        # la Central cambia precios) -- se hace cumplir en el servidor,
+        # ver ProductoForm.
+        kwargs = super().get_form_kwargs()
+        kwargs['precios_editables'] = es_casa_matriz(self.request)
+        return kwargs
 
     def form_valid(self, form):
         form.instance.um = self.request.user.id
@@ -468,6 +496,12 @@ def precios_sucursal(request):
     from fe.models import Sucursal
     from bases.alcance import sucursales_visibles_ids, sucursal_elegida
 
+    # Solo la Central fija precios (25/09/2026, pedido de Carlos): una
+    # sucursal no cambia ningun precio, ni el suyo.
+    if not es_casa_matriz(request):
+        messages.error(request, _MSJ_PRECIOS_SOLO_CENTRAL)
+        return redirect('inv:producto_list')
+
     sucursales = Sucursal.objects.exclude(codigo_sucursal=0).order_by('codigo_sucursal')
     ids = sucursales_visibles_ids(request.user)
     if ids is not None:
@@ -543,8 +577,7 @@ def _precios_solo_lectura(request):
     Desde cualquier otra sucursal la pantalla es de solo lectura
     (25/09/2026, pedido de Carlos). Sin sucursal resuelta (instalacion de
     una sola sucursal o sin sucursales) no se restringe nada."""
-    sucursal = obtener_sucursal_actual(request)
-    return sucursal is not None and sucursal.codigo_sucursal != 0
+    return not es_casa_matriz(request)
 
 
 _MSJ_PRECIOS_SOLO_CENTRAL = (
@@ -1078,6 +1111,12 @@ def carga_inicial_importar(request):
 
         marca_obj = categoria_obj = subcat_obj = um_obj = None
         if not producto_existente:
+            if not es_casa_matriz(request):
+                errores.append(
+                    f"fila {fila_num}: el código '{codigo}' no existe -- los productos nuevos "
+                    "solo se pueden crear desde la Central."
+                )
+                continue
             if not descripcion:
                 errores.append(f"fila {fila_num}: falta la Descripción (producto nuevo, código '{codigo}').")
             if not precio:

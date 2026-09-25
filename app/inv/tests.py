@@ -452,20 +452,6 @@ class PreciosPorSucursalTests(InventarioBaseTestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertIn("sin_privilegios", resp.url)
 
-    def test_usuario_limitado_solo_puede_fijar_precios_de_su_sucursal(self):
-        from django.contrib.auth.models import Permission
-        from inv.models import PrecioSucursal
-        otra = Sucursal.objects.create(empresa=self.empresa, codigo_sucursal=2, nombre="Santa Cruz")
-        u = User.objects.create_user("sup_cbba", "s@t.com", "Test12345!")
-        u.user_permissions.add(Permission.objects.get(codename="gestionar_precios_sucursal", content_type__app_label="inv"))
-        PerfilUsuario.objects.create(user=u, sucursal=self.cbba, alcance="SUCURSAL")
-        c = self.client_class()
-        c.login(username="sup_cbba", password="Test12345!")
-        # Intenta escribir en Santa Cruz: el servidor lo lleva a la suya.
-        c.post("/inv/productos/precios-sucursal/", {"sucursal_id": otra.id, f"precio_{self.producto.id}": "99"})
-        self.assertFalse(PrecioSucursal.objects.filter(sucursal=otra).exists())
-        self.assertTrue(PrecioSucursal.objects.filter(sucursal=self.cbba, precio=99).exists())
-
     def test_el_servidor_factura_con_el_precio_de_la_sucursal_ignorando_el_del_navegador(self):
         from fac.models import Cliente, FacturaDet
         from inv.models import PrecioSucursal
@@ -481,3 +467,80 @@ class PreciosPorSucursalTests(InventarioBaseTestCase):
         })
         det = FacturaDet.objects.get()
         self.assertEqual(det.precio, 12.5)
+
+
+class PreciosSoloCentralTests(InventarioBaseTestCase):
+    """25/09/2026 (pedido de Carlos): solo la Central cambia precios de
+    venta y da de alta productos; una sucursal no cambia ningun precio."""
+
+    def setUp(self):
+        super().setUp()
+        self.cbba = Sucursal.objects.create(empresa=self.empresa, codigo_sucursal=1, nombre="Cochabamba")
+        Producto.objects.filter(pk=self.producto.pk).update(
+            precio=10, precio_referencia_usd=5, margen_deseado_pct=30)
+        self.producto.refresh_from_db()
+
+    def _desde(self, sucursal):
+        PerfilUsuario.objects.update_or_create(user=self.admin, defaults={"sucursal": sucursal})
+
+    def _datos_producto(self, **extra):
+        p = self.producto
+        datos = {
+            "codigo": p.codigo, "codigo_barra": p.codigo_barra, "descripcion": "DESC EDITADA",
+            "estado": True, "precio": 99, "existencia": 0, "marca": p.marca_id,
+            "subcategoria": p.subcategoria_id, "unidad_medida": p.unidad_medida_id,
+            "descuento_promocional_pct": 0, "precio_referencia_usd": 77, "margen_deseado_pct": 55,
+        }
+        datos.update(extra)
+        return datos
+
+    def test_desde_sucursal_la_edicion_conserva_los_precios_guardados(self):
+        self._desde(self.cbba)
+        self.client.post(f"/inv/productos/edit/{self.producto.pk}", self._datos_producto())
+        self.producto.refresh_from_db()
+        self.assertEqual(self.producto.descripcion, "DESC EDITADA")   # lo demas si se edita
+        self.assertEqual(self.producto.precio, 10)                    # el precio NO cambia
+        self.assertEqual(self.producto.precio_referencia_usd, 5)
+        self.assertEqual(self.producto.margen_deseado_pct, 30)
+
+    def test_desde_la_central_la_edicion_si_cambia_el_precio(self):
+        self._desde(self.sucursal)
+        self.client.post(f"/inv/productos/edit/{self.producto.pk}", self._datos_producto())
+        self.producto.refresh_from_db()
+        self.assertEqual(self.producto.precio, 99)
+
+    def test_desde_sucursal_no_se_pueden_crear_productos(self):
+        self._desde(self.cbba)
+        resp = self.client.get("/inv/productos/new")
+        self.assertContains(resp, "solo se dan de alta desde la Central")
+        datos = self._datos_producto(codigo="NUEVO1", codigo_barra="NUEVO1")
+        resp = self.client.post("/inv/productos/new", datos)
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(Producto.objects.filter(codigo="NUEVO1").exists())
+
+    def test_desde_sucursal_no_se_pueden_fijar_precios_por_sucursal(self):
+        from inv.models import PrecioSucursal
+        self._desde(self.cbba)
+        resp = self.client.post("/inv/productos/precios-sucursal/",
+                                {"sucursal_id": self.cbba.id, f"precio_{self.producto.id}": "50"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(PrecioSucursal.objects.exists())
+
+    def test_carga_inicial_desde_sucursal_rechaza_productos_nuevos(self):
+        import io
+        from openpyxl import Workbook
+        MotivoAjusteInventario.objects.create(
+            descripcion="Carga Inicial", es_entrada=True, afecta_costo_actual=True, uc=self.admin)
+        self._desde(self.cbba)
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Codigo", "Descripcion", "Marca", "Categoria", "Subcategoria", "UM",
+                   "Cantidad", "Costo", "Precio", "PrecioRef", "Margen"])
+        ws.append(["INEXISTENTE-1", "Nuevo", "MARCA INV TEST", "CATEGORIA INV TEST",
+                   "SUBCATEGORIA INV TEST", "UNIDAD INV TEST", 5, 2, 10, 1, 30])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        buf.name = "c.xlsx"
+        self.client.post("/inv/ajustes/carga-inicial/importar/", {"archivo": buf})
+        self.assertFalse(Producto.objects.filter(codigo="INEXISTENTE-1").exists())

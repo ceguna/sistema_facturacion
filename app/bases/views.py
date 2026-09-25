@@ -60,6 +60,16 @@ def obtener_sucursal_actual(request):
     return None
 
 
+def es_casa_matriz(request):
+    """True si el usuario esta operando desde la Central (Casa Matriz,
+    codigo_sucursal=0) o si no hay sucursal resuelta (instalacion de una
+    sola sucursal / sin sucursales, donde no hay nada que restringir).
+    Se usa para reservar a la Central lo que afecta a toda la empresa
+    (precios, alta de productos) -- 25/09/2026, pedido de Carlos."""
+    sucursal = obtener_sucursal_actual(request)
+    return sucursal is None or sucursal.codigo_sucursal == 0
+
+
 class CambiarSucursalActual(LoginRequiredMixin, generic.View):
     """
     Selector de sucursal para superusuarios (20/09/2026, Fase 2) --
