@@ -360,30 +360,30 @@
                     <span id="empresaRazonSocialTopbar" class="ml-3 font-weight-bold text-gray-800 d-none d-md-inline" style="font-size: 1.3rem;">{{ empresa_actual.razon_social }}</span>
                     {% endif %}
 
-                    <!-- Sucursal actual (20/09/2026, Fase 2): indicador
-                         para todos; selector solo para superusuarios y
-                         solo si hay mas de una sucursal cargada (con una
-                         sola no hay nada que elegir). Un cajero/almacenero
-                         normal SIEMPRE opera desde la sucursal fija de su
-                         PerfilUsuario -- no ve el selector. -->
-                    {% if sucursal_actual %}
-                    <span class="ml-3 badge badge-light border d-none d-md-inline" title="Sucursal actual" style="font-size:0.85rem;">
-                        <i class="fas fa-store mr-1"></i>Sucursal:{% if not user.is_superuser or todas_sucursales|length <= 1 %} {{ sucursal_actual.nombre }}{% endif %}
-                    </span>
-                    {% endif %}
-                    {% if user.is_superuser and todas_sucursales|length > 1 %}
-                    <form method="POST" action="{% url 'bases:cambiar_sucursal_actual' %}" class="ml-2 d-none d-md-inline">
-                        {% csrf_token %}
-                        <select name="sucursal_id" class="form-control form-control-sm d-inline-block" style="width:auto;" onchange="this.form.submit()">
-                            {% for suc in todas_sucursales %}
-                            <option value="{{ suc.id }}" {% if sucursal_actual.id == suc.id %}selected{% endif %}>{{ suc.nombre }}</option>
-                            {% endfor %}
-                        </select>
-                    </form>
-                    {% endif %}
-
                     <!-- Topbar Navbar -->
                     <ul class="navbar-nav ml-auto">
+
+                        <!-- Sucursal actual (20/09/2026, Fase 2; movido 25/09/2026 junto
+                             al interruptor claro/oscuro, pedido de Carlos, para separarlo
+                             de la razon social): indicador para todos; selector solo para
+                             superusuarios y solo si hay mas de una sucursal cargada. -->
+                        {% if sucursal_actual %}
+                        <li class="nav-item d-none d-md-flex align-items-center mr-3">
+                            <span class="badge badge-light border" title="Sucursal actual" style="font-size:0.85rem;">
+                                <i class="fas fa-store mr-1"></i>Sucursal:{% if not user.is_superuser or todas_sucursales|length <= 1 %} {{ sucursal_actual.nombre }}{% endif %}
+                            </span>
+                            {% if user.is_superuser and todas_sucursales|length > 1 %}
+                            <form method="POST" action="{% url 'bases:cambiar_sucursal_actual' %}" class="ml-2">
+                                {% csrf_token %}
+                                <select name="sucursal_id" class="form-control form-control-sm d-inline-block" style="width:auto;" onchange="this.form.submit()">
+                                    {% for suc in todas_sucursales %}
+                                    <option value="{{ suc.id }}" {% if sucursal_actual.id == suc.id %}selected{% endif %}>{{ suc.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                            </form>
+                            {% endif %}
+                        </li>
+                        {% endif %}
 
                         <!-- Interruptor de modo oscuro -->
                         <li class="nav-item d-flex align-items-center mr-3">
