@@ -61,7 +61,7 @@ class ComprasBaseTestCase(TestCase):
 
         self.proveedor = Proveedor(
             descripcion="Proveedor De Prueba", nit="6666666", direccion="Direccion Test",
-            uc=self.admin,
+            sucursal=self.sucursal, uc=self.admin,
         )
         self.proveedor.save()
 
@@ -187,8 +187,8 @@ class ImpresionComprasTests(ComprasBaseTestCase):
 
 
 class ProveedoresPorSucursalTests(ComprasBaseTestCase):
-    """25/09/2026: cada sucursal tiene sus proveedores locales; los de
-    sucursal vacia son compartidos."""
+    """25/09/2026: cada sucursal tiene sus proveedores propios, SIN
+    compartidos -- una sucursal solo ve y usa los suyos."""
 
     def setUp(self):
         super().setUp()
@@ -200,10 +200,10 @@ class ProveedoresPorSucursalTests(ComprasBaseTestCase):
         self.prov_local_cbba = Proveedor.objects.create(
             descripcion="Local Cbba", nit="222", contacto="x", telefono="1", email="b@b.com",
             sucursal=self.cbba, uc=self.admin)
-        # self.proveedor (base) es compartido (sucursal vacia)
+        # self.proveedor (base) pertenece a la Central (self.sucursal)
         PerfilUsuario.objects.create(user=self.admin, sucursal=self.cbba)
 
-    def test_listado_limitado_muestra_compartidos_y_los_de_su_sucursal(self):
+    def test_listado_limitado_muestra_solo_los_de_su_sucursal(self):
         from bases.models import PerfilUsuario
         from django.contrib.auth.models import Permission
         u = User.objects.create_user("lim_prov", "l@t.com", "Test12345!")
@@ -212,12 +212,12 @@ class ProveedoresPorSucursalTests(ComprasBaseTestCase):
         self.client.login(username="lim_prov", password="Test12345!")
         resp = self.client.get("/cmp/proveedores/")
         nombres = {p.descripcion for p in resp.context["obj"]}
-        self.assertEqual(nombres, {"PROVEEDOR DE PRUEBA", "LOCAL CBBA"})
+        self.assertEqual(nombres, {"LOCAL CBBA"})
 
     def test_compra_solo_ofrece_proveedores_de_la_sucursal_actual(self):
         resp = self.client.get("/cmp/compras/new")
         nombres = {p.descripcion for p in resp.context["form_enc"].fields["proveedor"].queryset}
-        self.assertEqual(nombres, {"PROVEEDOR DE PRUEBA", "LOCAL CBBA"})
+        self.assertEqual(nombres, {"LOCAL CBBA"})
 
     def test_no_se_puede_comprar_a_un_proveedor_de_otra_sucursal(self):
         self.client.post("/cmp/compras/new", {

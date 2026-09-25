@@ -124,6 +124,13 @@ class Command(BaseCommand):
             "inv", ["ajusteinventarioenc", "ajusteinventariodet"], ["add", "change", "view", "delete"]
         )
         perms_supervisor += get_perms("inv", ["motivoajusteinventario"], ["view"])
+        # 25/09/2026: el Supervisor puede fijar el precio de venta local de
+        # una sucursal (PrecioSucursal); Administrador lo tiene por ser
+        # superusuario / por su grupo manual.
+        for codename in ["gestionar_precios_sucursal"]:
+            p = get_perm_by_codename("inv", codename)
+            if p:
+                perms_supervisor.append(p)
         supervisor.permissions.set(perms_supervisor)
         self.stdout.write(self.style.SUCCESS(
             f"Grupo 'Supervisor' actualizado ({len(perms_supervisor)} permisos)"

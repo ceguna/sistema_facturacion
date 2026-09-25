@@ -18,7 +18,7 @@ from openpyxl.styles import Font
 from .models import (
     Categoria, SubCategoria, Marca, UnidadMedida, Producto, TipoCambio, HistorialPrecioProducto,
     AjusteInventarioEnc, AjusteInventarioDet, MotivoAjusteInventario,
-    StockSucursal, ajustar_stock_sucursal,
+    StockSucursal, ajustar_stock_sucursal, PrecioSucursal,
     TransferenciaStockEnc, TransferenciaStockDet,
 )
 from .forms import CategoriaForm, SubCategoriaForm, MarcaForm, UnidadMedidaForm, ProductoForm, TipoCambioForm, \
@@ -231,6 +231,14 @@ class ProductoView(SinPrivilegios, generic.ListView):
         if mapa is not None:
             for p in productos:
                 p.existencia = mapa.get(p.id, 0)
+        # Precio efectivo (25/09/2026): el local de la sucursal actual si
+        # lo tiene, si no el base -- es lo que se factura en esa sucursal.
+        _actual = obtener_sucursal_actual(self.request)
+        if _actual is not None:
+            _locales = dict(PrecioSucursal.objects.filter(sucursal=_actual).values_list('producto_id', 'precio'))
+            for p in productos:
+                if p.id in _locales:
+                    p.precio = _locales[p.id]
         context['obj'] = productos
         context.update(contexto_filtro_sucursal(self.request))
         return context
@@ -444,6 +452,88 @@ class TipoCambioEdit(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
     def form_valid(self, form):
         form.instance.um = self.request.user.id
         return super().form_valid(form)
+
+
+@login_required(login_url='/login/')
+@permission_required('inv.gestionar_precios_sucursal', login_url='bases:sin_privilegios')
+def precios_sucursal(request):
+    """
+    Precio de venta local por sucursal (25/09/2026, pedido de Carlos).
+    Solo Administrador/Supervisor (inv.gestionar_precios_sucursal).
+    Se edita el precio de UNA sucursal a la vez (las que el usuario puede
+    ver, sin la Central: la Central usa el precio base). Campo vacio =
+    sin precio local, la sucursal usa el precio base. Guardar valida todo
+    antes de tocar nada, y deja rastro en el historial de precios.
+    """
+    from fe.models import Sucursal
+    from bases.alcance import sucursales_visibles_ids, sucursal_elegida
+
+    sucursales = Sucursal.objects.exclude(codigo_sucursal=0).order_by('codigo_sucursal')
+    ids = sucursales_visibles_ids(request.user)
+    if ids is not None:
+        sucursales = sucursales.filter(pk__in=ids)
+    sucursales = list(sucursales)
+    if not sucursales:
+        return render(request, 'inv/precios_sucursal.html', {'sucursales': [], 'sin_sucursales': True})
+
+    pedido = request.POST.get('sucursal_id') if request.method == 'POST' else None
+    elegida_id = int(pedido) if pedido and pedido.isdigit() else sucursal_elegida(request)
+    actual = obtener_sucursal_actual(request)
+    sucursal = next((s for s in sucursales if s.pk == elegida_id), None) \
+        or next((s for s in sucursales if actual and s.pk == actual.pk), None) \
+        or sucursales[0]
+
+    productos = list(Producto.objects.filter(estado=True).order_by('codigo'))
+    locales = {
+        r.producto_id: r for r in PrecioSucursal.objects.filter(sucursal=sucursal)
+    }
+
+    if request.method == 'POST':
+        nuevos, errores = {}, []
+        for p in productos:
+            crudo = (request.POST.get(f'precio_{p.id}') or '').strip().replace(',', '.')
+            if crudo == '':
+                nuevos[p.id] = None
+                continue
+            try:
+                valor = float(crudo)
+                if valor <= 0:
+                    raise ValueError
+            except ValueError:
+                errores.append(f'{p.codigo}: "{crudo}" no es un precio válido (debe ser mayor a 0).')
+                continue
+            nuevos[p.id] = round(valor, 2)
+        if errores:
+            for e in errores[:10]:
+                messages.error(request, e)
+        else:
+            cambios = 0
+            with transaction.atomic():
+                for p in productos:
+                    nuevo = nuevos.get(p.id)
+                    previo = locales[p.id].precio if p.id in locales else None
+                    if nuevo == previo:
+                        continue
+                    if nuevo is None:
+                        locales[p.id].delete()
+                    else:
+                        PrecioSucursal.objects.update_or_create(
+                            producto=p, sucursal=sucursal, defaults={'precio': nuevo})
+                    HistorialPrecioProducto.objects.create(
+                        producto=p, sucursal=sucursal,
+                        precio_anterior=previo if previo is not None else p.precio,
+                        precio_nuevo=nuevo if nuevo is not None else p.precio,
+                        motivo=f'Precio local {sucursal.nombre}'
+                               + (' (quitado, vuelve al precio base)' if nuevo is None else ''),
+                    )
+                    cambios += 1
+            messages.success(request, f'Precios de {sucursal.nombre} guardados ({cambios} cambio(s)).')
+            return redirect(f"{reverse_lazy('inv:precios_sucursal')}?sucursal={sucursal.pk}")
+
+    filas = [{'producto': p, 'local': locales[p.id].precio if p.id in locales else None} for p in productos]
+    return render(request, 'inv/precios_sucursal.html', {
+        'sucursales': sucursales, 'sucursal': sucursal, 'filas': filas,
+    })
 
 
 def _precios_solo_lectura(request):

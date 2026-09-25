@@ -20,28 +20,21 @@ from bases.views import SinPrivilegios, obtener_sucursal_actual
 from inv.models import Producto, StockSucursal, ajustar_stock_sucursal
 
 def proveedores_visibles(request):
-    """Proveedores que el usuario puede ver: los compartidos (sucursal
-    vacia) mas los de las sucursales de su alcance; el selector de
-    pantalla (?sucursal=N) acota a esa sucursal + compartidos."""
-    from django.db.models import Q
-    from bases.alcance import sucursales_visibles_ids, sucursal_elegida
-    qs = Proveedor.objects.all()
-    ids = sucursales_visibles_ids(request.user)
-    if ids is not None:
-        qs = qs.filter(Q(sucursal__isnull=True) | Q(sucursal_id__in=ids))
-    elegida = sucursal_elegida(request)
-    if elegida:
-        qs = qs.filter(Q(sucursal__isnull=True) | Q(sucursal_id=elegida))
-    return qs
+    """Proveedores que el usuario puede ver: SOLO los de las sucursales
+    de su alcance (25/09/2026, pedido de Carlos: cada sucursal tiene sus
+    propios proveedores, sin compartidos). Los registros viejos sin
+    sucursal solo los ve quien no tiene restriccion. El selector de
+    pantalla (?sucursal=N) acota a esa sucursal."""
+    from bases.alcance import filtrar_por_sucursal
+    return filtrar_por_sucursal(Proveedor.objects.all(), request)
 
 
 def proveedores_para_sucursal(sucursal):
-    """Proveedores utilizables en una compra de `sucursal`: los
-    compartidos + los propios de esa sucursal (None = todos)."""
-    from django.db.models import Q
+    """Proveedores utilizables en una compra de `sucursal`: solo los
+    propios de esa sucursal (None = instalacion sin sucursales: todos)."""
     qs = Proveedor.objects.all()
     if sucursal is not None:
-        qs = qs.filter(Q(sucursal__isnull=True) | Q(sucursal=sucursal))
+        qs = qs.filter(sucursal=sucursal)
     return qs
 
 

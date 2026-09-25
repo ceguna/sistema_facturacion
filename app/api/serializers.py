@@ -38,6 +38,10 @@ class ProductoSerializer(serializers.ModelSerializer):
                 fila = StockSucursal.objects.filter(producto=instance, sucursal=sucursal).first()
                 data['existencia_total'] = data['existencia']
                 data['existencia'] = fila.cantidad if fila else 0
+                # Precio efectivo de la sucursal (25/09/2026): el local si
+                # existe, si no el base; el base queda en 'precio_base'.
+                data['precio_base'] = data['precio']
+                data['precio'] = instance.precio_para(sucursal)
         return data
 
 

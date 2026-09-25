@@ -10,7 +10,7 @@ class ProveedorForm(forms.ModelForm):
         #Al no especificar los campos que va tomar, automaticamente toma todos
         exclude = ['um','fm','uc','fc'] #Excluye del formulario esos campos para que no se tomen en cuenta
         widget={'descripcion': forms.TextInput}
-        labels = {'sucursal': 'Sucursal (vacío = compartido con todas)'}
+        labels = {'sucursal': 'Sucursal'}
 
     def __init__(self, *args, user=None, sucursal_actual=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -25,8 +25,10 @@ class ProveedorForm(forms.ModelForm):
         ids = sucursales_visibles_ids(user) if user is not None else None
         if ids is not None:
             self.fields['sucursal'].queryset = self.fields['sucursal'].queryset.filter(pk__in=ids)
-            self.fields['sucursal'].required = True
             self.fields['sucursal'].empty_label = None
+        # Sin compartidos (25/09/2026): todo proveedor pertenece a una
+        # sucursal. Solo queda opcional en instalaciones sin sucursales.
+        self.fields['sucursal'].required = self.fields['sucursal'].queryset.exists()
         if not self.instance.pk and sucursal_actual is not None and 'sucursal' not in self.initial:
             self.initial['sucursal'] = sucursal_actual.pk
 

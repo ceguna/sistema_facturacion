@@ -207,6 +207,15 @@ class Producto(ClaseModelo):
                    "desde la pantalla de Revision de Precios."
     )
 
+    def precio_para(self, sucursal):
+        """Precio de venta efectivo en `sucursal` (25/09/2026): el precio
+        LOCAL si esa sucursal tiene uno cargado (PrecioSucursal), o el
+        precio base (Producto.precio, el de la Central) si no."""
+        if sucursal is None:
+            return self.precio
+        fila = self.precios_sucursal.filter(sucursal=sucursal).first()
+        return fila.precio if fila else self.precio
+
     def __str__(self):
         return '{}'.format(self.descripcion)
     
@@ -281,6 +290,33 @@ class Producto(ClaseModelo):
         ]
 
 
+class PrecioSucursal(ClaseModelo2):
+    """
+    Precio de venta LOCAL de un producto en una sucursal (25/09/2026,
+    pedido de Carlos). El precio base (Producto.precio) es el de la
+    Central; si una sucursal tiene una fila aca, factura con ese precio.
+    Solo lo cambia quien tenga inv.gestionar_precios_sucursal
+    (Supervisor/Administrador). El costo de transporte entre sucursales
+    NO se modela aca: se absorbe contablemente, fuera del sistema.
+    """
+    producto = models.ForeignKey(Producto, on_delete=models.CASCADE, related_name='precios_sucursal')
+    sucursal = models.ForeignKey('fe.Sucursal', on_delete=models.CASCADE, related_name='precios_producto')
+    precio = models.FloatField()
+
+    def __str__(self):
+        return f"{self.producto} @ {self.sucursal}: {self.precio}"
+
+    class Meta:
+        verbose_name = "Precio por Sucursal"
+        verbose_name_plural = "Precios por Sucursal"
+        constraints = [
+            models.UniqueConstraint(fields=['producto', 'sucursal'], name='precio_unico_por_producto_sucursal'),
+        ]
+        permissions = [
+            ('gestionar_precios_sucursal', 'Puede fijar el precio de venta local de una sucursal'),
+        ]
+
+
 class HistorialPrecioProducto(ClaseModelo2):
     """
     Auditoria de cada cambio de precio de un producto: cuando, con que
@@ -294,6 +330,11 @@ class HistorialPrecioProducto(ClaseModelo2):
         TipoCambio, on_delete=models.SET_NULL, null=True, blank=True
     )
     motivo = models.CharField(max_length=250, blank=True, default="Ajuste por tipo de cambio")
+    # Cambios de precio LOCAL de una sucursal (PrecioSucursal, 25/09/2026);
+    # null = cambio del precio base.
+    sucursal = models.ForeignKey(
+        'fe.Sucursal', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
 
     def __str__(self):
         return f"{self.producto} — Bs {self.precio_anterior} -> Bs {self.precio_nuevo}"

@@ -11,10 +11,20 @@ from fe.models import Empresa
 from fe.utils import datos_logo_header
 
 
-def _contexto_lista_precios():
-    productos = Producto.objects.filter(estado=True).select_related(
+def _contexto_lista_precios(request=None):
+    productos = list(Producto.objects.filter(estado=True).select_related(
         'unidad_medida', 'marca', 'subcategoria'
-    ).order_by('codigo')
+    ).order_by('codigo'))
+    # Precio efectivo de la sucursal actual (25/09/2026).
+    if request is not None:
+        from bases.views import obtener_sucursal_actual
+        from .models import PrecioSucursal
+        _actual = obtener_sucursal_actual(request)
+        if _actual is not None:
+            _locales = dict(PrecioSucursal.objects.filter(sucursal=_actual).values_list('producto_id', 'precio'))
+            for p in productos:
+                if p.id in _locales:
+                    p.precio = _locales[p.id]
     empresa = Empresa.objects.first()
     context = {
         'productos': productos,
@@ -28,7 +38,7 @@ def _contexto_lista_precios():
 @login_required(login_url='/login/')
 @permission_required('inv.view_producto', login_url='bases:sin_privilegios')
 def lista_precios(request):
-    context = _contexto_lista_precios()
+    context = _contexto_lista_precios(request)
     context['es_pdf'] = False
     context['url_descargar_pdf'] = '/inv/productos/reportes/lista-precios-pdf/'
     return render(request, 'inv/lista_precios.html', context)
@@ -37,7 +47,7 @@ def lista_precios(request):
 @login_required(login_url='/login/')
 @permission_required('inv.view_producto', login_url='bases:sin_privilegios')
 def lista_precios_pdf(request):
-    context = _contexto_lista_precios()
+    context = _contexto_lista_precios(request)
     context['es_pdf'] = True
     html = render_to_string('inv/lista_precios.html', context)
 

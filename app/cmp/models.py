@@ -11,13 +11,14 @@ from inv.models import Producto, ajustar_stock_sucursal
 
 class Proveedor(ClaseModelo):
     # sucursal (25/09/2026, pedido de Carlos): cada sucursal tiene sus
-    # proveedores locales. Vacio = proveedor COMPARTIDO (lo ven y usan
-    # todas las sucursales; es el caso de todos los proveedores
-    # existentes antes de este cambio y de los proveedores de la Central).
+    # proveedores propios, SIN compartidos. Nullable solo por datos viejos
+    # (una migracion de datos los paso a la Central) e instalaciones sin
+    # sucursales.
     sucursal = models.ForeignKey(
         'fe.Sucursal', on_delete=models.PROTECT, null=True, blank=True,
         related_name='proveedores',
-        help_text="Vacío = proveedor compartido con todas las sucursales."
+        help_text="Sucursal a la que pertenece este proveedor (cada sucursal "
+                  "maneja sus propios proveedores)."
     )
     descripcion=models.CharField(
         max_length=100,

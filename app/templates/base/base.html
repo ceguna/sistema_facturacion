@@ -148,6 +148,9 @@
                         {% if perms.inv.view_producto %}
                         <a class="collapse-item" href="{% url 'inv:producto_list' %}">Producto</a>
                         {% endif %}
+                        {% if perms.inv.gestionar_precios_sucursal %}
+                        <a class="collapse-item" href="{% url 'inv:precios_sucursal' %}">Precios por Sucursal</a>
+                        {% endif %}
                         {% if perms.inv.gestionar_precios_tc %}
                         <a class="collapse-item" href="{% url 'inv:tipo_cambio_list' %}">Tipo de Cambio</a>
                         <a class="collapse-item" href="{% url 'inv:revision_precios' %}">Revisión de Precios</a>

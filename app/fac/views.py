@@ -409,6 +409,11 @@ def facturas(request,id=None):
         # la sucursal YA FIJADA en esa factura (no la del cajero
         # actual, por si un supervisor la retoma desde otra sucursal).
         sucursal_para_stock = enc_existente.sucursal if (id and enc_existente) else sucursal_actual
+        # El precio lo fija el SERVIDOR (25/09/2026): el de la sucursal
+        # donde se factura (local si existe, si no el base). Antes se
+        # tomaba tal cual el que venia en el POST, sin validarlo contra el
+        # producto -- cualquiera podia alterarlo desde el navegador.
+        precio_num = prod.precio_para(sucursal_para_stock)
         if sucursal_para_stock is not None:
             stock_en_sucursal = StockSucursal.objects.filter(
                 producto=prod, sucursal=sucursal_para_stock

@@ -399,3 +399,85 @@ class RevisionPreciosSoloCentralTests(InventarioBaseTestCase):
         self.client.post(f"/inv/productos/revision-precios/aplicar/{self.producto.pk}/")
         self.producto.refresh_from_db()
         self.assertNotEqual(self.producto.precio, 5)
+
+
+class PreciosPorSucursalTests(InventarioBaseTestCase):
+    """25/09/2026: precio de venta local por sucursal (PrecioSucursal).
+    Base = Producto.precio (Central); la sucursal factura con su precio
+    local si lo tiene."""
+
+    def setUp(self):
+        super().setUp()
+        self.cbba = Sucursal.objects.create(empresa=self.empresa, codigo_sucursal=1, nombre="Cochabamba")
+        Producto.objects.filter(pk=self.producto.pk).update(precio=10)
+        self.producto.refresh_from_db()
+
+    def _guardar(self, valor, sucursal=None):
+        sucursal = sucursal or self.cbba
+        return self.client.post("/inv/productos/precios-sucursal/", {
+            "sucursal_id": sucursal.id, f"precio_{self.producto.id}": valor,
+        })
+
+    def test_guarda_el_precio_local_y_deja_historial(self):
+        from inv.models import PrecioSucursal, HistorialPrecioProducto
+        self._guardar("12,5")
+        self.assertEqual(PrecioSucursal.objects.get(producto=self.producto, sucursal=self.cbba).precio, 12.5)
+        h = HistorialPrecioProducto.objects.get(producto=self.producto)
+        self.assertEqual((h.sucursal, h.precio_anterior, h.precio_nuevo), (self.cbba, 10, 12.5))
+
+    def test_precio_para_usa_el_local_y_cae_al_base(self):
+        self._guardar("12.5")
+        self.assertEqual(self.producto.precio_para(self.cbba), 12.5)
+        self.assertEqual(self.producto.precio_para(self.sucursal), 10)   # Central: base
+        self.assertEqual(self.producto.precio_para(None), 10)
+
+    def test_campo_vacio_quita_el_precio_local(self):
+        from inv.models import PrecioSucursal
+        self._guardar("12.5")
+        self._guardar("")
+        self.assertFalse(PrecioSucursal.objects.exists())
+        self.assertEqual(self.producto.precio_para(self.cbba), 10)
+
+    def test_precio_invalido_no_guarda_nada(self):
+        from inv.models import PrecioSucursal
+        self._guardar("abc")
+        self._guardar("-3")
+        self.assertFalse(PrecioSucursal.objects.exists())
+
+    def test_sin_el_permiso_no_puede_entrar(self):
+        u = User.objects.create_user("sin_perm_precios", "s@t.com", "Test12345!")
+        c = self.client_class()
+        c.login(username="sin_perm_precios", password="Test12345!")
+        resp = c.get("/inv/productos/precios-sucursal/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("sin_privilegios", resp.url)
+
+    def test_usuario_limitado_solo_puede_fijar_precios_de_su_sucursal(self):
+        from django.contrib.auth.models import Permission
+        from inv.models import PrecioSucursal
+        otra = Sucursal.objects.create(empresa=self.empresa, codigo_sucursal=2, nombre="Santa Cruz")
+        u = User.objects.create_user("sup_cbba", "s@t.com", "Test12345!")
+        u.user_permissions.add(Permission.objects.get(codename="gestionar_precios_sucursal", content_type__app_label="inv"))
+        PerfilUsuario.objects.create(user=u, sucursal=self.cbba, alcance="SUCURSAL")
+        c = self.client_class()
+        c.login(username="sup_cbba", password="Test12345!")
+        # Intenta escribir en Santa Cruz: el servidor lo lleva a la suya.
+        c.post("/inv/productos/precios-sucursal/", {"sucursal_id": otra.id, f"precio_{self.producto.id}": "99"})
+        self.assertFalse(PrecioSucursal.objects.filter(sucursal=otra).exists())
+        self.assertTrue(PrecioSucursal.objects.filter(sucursal=self.cbba, precio=99).exists())
+
+    def test_el_servidor_factura_con_el_precio_de_la_sucursal_ignorando_el_del_navegador(self):
+        from fac.models import Cliente, FacturaDet
+        from inv.models import PrecioSucursal
+        PrecioSucursal.objects.create(producto=self.producto, sucursal=self.cbba, precio=12.5)
+        ajustar_stock_sucursal(self.producto.id, self.cbba, 10)
+        PerfilUsuario.objects.create(user=self.admin, sucursal=self.cbba)
+        cli = Cliente.objects.create(ci="5", nombres="A", apellidos="B", nit="5", razon="AB",
+                                     tipo="Natural", sucursal=self.cbba, uc=self.admin)
+        self.client.post("/fac/facturas/new", {
+            "enc_cliente": cli.id, "fecha": "2026-09-25", "codigo": self.producto.codigo,
+            "cantidad": 2, "precio": 1,          # el navegador manda un precio adulterado
+            "sub_total_detalle": 2, "descuento_detalle": 0, "total_detalle": 2,
+        })
+        det = FacturaDet.objects.get()
+        self.assertEqual(det.precio, 12.5)

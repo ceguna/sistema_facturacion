@@ -8,7 +8,7 @@ from .views import CategoriaView, CategoriaNew, CategoriaEdit, CategoriaDel, \
     ProductoView, ProductoNew, ProductoEdit, producto_inactivar, \
     producto_homologar, producto_homologar_pendientes, \
     TipoCambioView, TipoCambioNew, TipoCambioEdit, \
-    revision_precios, aplicar_precio_sugerido, aplicar_todos_sugeridos, \
+    revision_precios, aplicar_precio_sugerido, aplicar_todos_sugeridos, precios_sucursal, \
     AjusteInventarioView, ajuste_inventario, ajuste_inventario_det_eliminar, \
     eliminar_ajuste_inventario, carga_inicial, carga_inicial_exportar_plantilla, \
     carga_inicial_importar, \
@@ -54,6 +54,7 @@ urlpatterns = [
     path('tipo-cambio/edit/<int:pk>', TipoCambioEdit.as_view(), name='tipo_cambio_edit'),
 
     path('productos/revision-precios/', revision_precios, name='revision_precios'),
+    path('productos/precios-sucursal/', precios_sucursal, name='precios_sucursal'),
     path('productos/revision-precios/aplicar/<int:id>/', aplicar_precio_sugerido, name='aplicar_precio_sugerido'),
     path('productos/revision-precios/aplicar-todos/', aplicar_todos_sugeridos, name='aplicar_todos_sugeridos'),
 
