@@ -25,6 +25,7 @@
         </div>
     </div>
     <div class="card-body">
+    {% include 'base/filtro_sucursal_form.html' %}
         {% if not obj %}
             <div class="alert alert-info"><i class="fas fa-box mr-2"></i>Aún no registraste ningún producto. Usa el botón <b>Nuevo</b> para crear el primero.</div>
         {% else %}

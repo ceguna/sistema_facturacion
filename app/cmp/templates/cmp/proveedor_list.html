@@ -21,6 +21,7 @@
     </div>
     <!-- Card Body -->
     <div class="card-body">
+    {% include 'base/filtro_sucursal_form.html' %}
         {% if not obj %}
             <div class="alert alert-info"><i class="fas fa-truck mr-2"></i>Aún no registraste ningún proveedor. Usa el botón <b>Nuevo</b> para crear el primero.</div>
         {% else %}
@@ -41,6 +42,7 @@
                 <th data-sortable="true" data-field="id">Id</th>
                 <th data-sortable="true" data-field="descripcion">Descripción</th>
                 <th data-sortable="true" data-field="nit">NIT</th>
+                <th data-sortable="true" data-field="sucursal">Sucursal</th>
                 <th data-sortable="true" data-field="direccion">Dirección</th>
                 <th data-sortable="true" data-field="contacto">Contacto</th>
                 <th data-sortable="true" data-field="telefono">Teléfono</th>
@@ -54,6 +56,7 @@
                     <td data-tableexport-msonumberformat="0">{{ item.id|stringformat:"d" }}</td>
                     <td>{{ item.descripcion }}</td>
                     <td data-tableexport-msonumberformat="0">{{ item.nit }}</td>
+                    <td>{{ item.sucursal.nombre|default:"Compartido" }}</td>
                     <td>{{ item.direccion }}</td>
                     <td>{{ item.contacto }}</td>
                     <td data-tableexport-msonumberformat="0">{{ item.telefono }}</td>

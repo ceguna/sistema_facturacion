@@ -19,13 +19,56 @@ from bases.alcance import requiere_alcance, AlcanceObjetoMixin
 from bases.views import SinPrivilegios, obtener_sucursal_actual
 from inv.models import Producto, StockSucursal, ajustar_stock_sucursal
 
+def proveedores_visibles(request):
+    """Proveedores que el usuario puede ver: los compartidos (sucursal
+    vacia) mas los de las sucursales de su alcance; el selector de
+    pantalla (?sucursal=N) acota a esa sucursal + compartidos."""
+    from django.db.models import Q
+    from bases.alcance import sucursales_visibles_ids, sucursal_elegida
+    qs = Proveedor.objects.all()
+    ids = sucursales_visibles_ids(request.user)
+    if ids is not None:
+        qs = qs.filter(Q(sucursal__isnull=True) | Q(sucursal_id__in=ids))
+    elegida = sucursal_elegida(request)
+    if elegida:
+        qs = qs.filter(Q(sucursal__isnull=True) | Q(sucursal_id=elegida))
+    return qs
+
+
+def proveedores_para_sucursal(sucursal):
+    """Proveedores utilizables en una compra de `sucursal`: los
+    compartidos + los propios de esa sucursal (None = todos)."""
+    from django.db.models import Q
+    qs = Proveedor.objects.all()
+    if sucursal is not None:
+        qs = qs.filter(Q(sucursal__isnull=True) | Q(sucursal=sucursal))
+    return qs
+
+
+class _FormKwargsProveedor:
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['user'] = self.request.user
+        kwargs['sucursal_actual'] = obtener_sucursal_actual(self.request)
+        return kwargs
+
+
 class ProveedorView(SinPrivilegios, generic.ListView):
     model = Proveedor
     template_name = "cmp/proveedor_list.html"
     context_object_name = "obj"
     permission_required="cmp.view_proveedor"
 
-class ProveedorNew(SuccessMessageMixin,SinPrivilegios,\
+    def get_queryset(self):
+        return proveedores_visibles(self.request).select_related('sucursal')
+
+    def get_context_data(self, **kwargs):
+        from bases.alcance import contexto_filtro_sucursal
+        context = super().get_context_data(**kwargs)
+        context.update(contexto_filtro_sucursal(self.request))
+        return context
+
+class ProveedorNew(_FormKwargsProveedor, SuccessMessageMixin,SinPrivilegios,\
                    generic.CreateView):
     permission_required="cmp.add_proveedor"
     model=Proveedor
@@ -56,7 +99,7 @@ class ProveedorNew(SuccessMessageMixin,SinPrivilegios,\
 
         return super().form_valid(form)
     
-class ProveedorEdit(SuccessMessageMixin, SinPrivilegios,\
+class ProveedorEdit(_FormKwargsProveedor, SuccessMessageMixin, SinPrivilegios,\
                    generic.UpdateView):
     model=Proveedor
     template_name="cmp/proveedor_form.html"
@@ -184,6 +227,7 @@ def compras(request,compra_id=None):
 
     if request.method=='GET':
         form_compras=ComprasEncForm()
+        form_compras.fields['proveedor'].queryset = proveedores_para_sucursal(obtener_sucursal_actual(request))
         enc = ComprasEnc.objects.filter(pk=compra_id).first()
 
         if enc:
@@ -208,6 +252,16 @@ def compras(request,compra_id=None):
                 'fecha_factura': datetime.date.today(),
             })
         
+        # Proveedores utilizables (25/09/2026): compartidos + los de la
+        # sucursal de la compra (o del usuario si es nueva); en una compra
+        # existente se conserva ademas su proveedor actual.
+        from django.db.models import Q as _Q
+        _prov_ids = proveedores_para_sucursal(
+            enc.sucursal if enc else obtener_sucursal_actual(request)
+        ).values_list('pk', flat=True)
+        _filtro = _Q(pk__in=_prov_ids) | (_Q(pk=enc.proveedor_id) if enc else _Q(pk__in=[]))
+        form_compras.fields['proveedor'].queryset = Proveedor.objects.filter(_filtro)
+
         # Cantidad NETA del detalle (suma de cantidades, contando las
         # lineas de reversion en negativo). Si es 0, la compra no tiene
         # ningun producto "util" -- se trata igual que "sin detalle"
@@ -259,7 +313,7 @@ def compras(request,compra_id=None):
         # para borrar lineas. Se chequean las dos: la guardada (que la
         # linea nueva pertenece a un dia cerrado) y la del POST (que no
         # se este moviendo la compra HACIA un dia cerrado). ---
-        from fac.models import CierreDia
+        from fac.models import dia_cerrado
 
         fechas_a_validar = []
         if compra_id:
@@ -273,8 +327,11 @@ def compras(request,compra_id=None):
                 pass
 
         if not _tiene_permiso_dia_cerrado(request.user):
+            # Cierre por sucursal (25/09/2026): la de la compra si ya
+            # existe, o la del usuario si es nueva.
+            _suc_compra = (enc_actual.sucursal if compra_id and enc_actual else None) or obtener_sucursal_actual(request)
             for f in fechas_a_validar:
-                if CierreDia.objects.filter(fecha=f).exists():
+                if dia_cerrado(f, _suc_compra):
                     messages.error(
                         request,
                         f'El día {f.strftime("%d/%m/%Y")} ya fue cerrado -- '
@@ -290,7 +347,7 @@ def compras(request,compra_id=None):
         # un encabezado vacio (sin ningun detalle) guardado en la
         # base. Mismo criterio que ya usa facturas() en fac/views.py.
         if not compra_id:
-            prov = Proveedor.objects.filter(pk=proveedor).first()
+            prov = proveedores_para_sucursal(obtener_sucursal_actual(request)).filter(pk=proveedor).first()
             if not prov:
                 messages.error(request, 'El proveedor seleccionado no existe o no es válido')
                 return redirect("cmp:compras_list")
@@ -567,8 +624,8 @@ class CompraDetDelete(AlcanceObjetoMixin, SinPrivilegios, generic.DetailView):
 
         # --- Control 1: dia cerrado (bypass solo con el permiso
         # editar_compra_dia_cerrado -- Administrador). ---
-        from fac.models import CierreDia
-        if compra.fecha_compra and CierreDia.objects.filter(fecha=compra.fecha_compra).exists() \
+        from fac.models import dia_cerrado
+        if compra.fecha_compra and dia_cerrado(compra.fecha_compra, compra.sucursal) \
                 and not request.user.has_perm('cmp.editar_compra_dia_cerrado'):
             return _rechazar_envio_modal(
                 request,

@@ -10,13 +10,20 @@ from bases.models import ClaseModelo
 from inv.models import Producto, ajustar_stock_sucursal
 
 class Proveedor(ClaseModelo):
+    # sucursal (25/09/2026, pedido de Carlos): cada sucursal tiene sus
+    # proveedores locales. Vacio = proveedor COMPARTIDO (lo ven y usan
+    # todas las sucursales; es el caso de todos los proveedores
+    # existentes antes de este cambio y de los proveedores de la Central).
+    sucursal = models.ForeignKey(
+        'fe.Sucursal', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='proveedores',
+        help_text="Vacío = proveedor compartido con todas las sucursales."
+    )
     descripcion=models.CharField(
         max_length=100,
-        unique=True
         )
     nit = models.CharField(
         max_length=30,
-        unique=True
     )
     direccion=models.CharField(
         max_length=250,
@@ -43,6 +50,18 @@ class Proveedor(ClaseModelo):
 
     class Meta:
         verbose_name_plural = "Proveedores"
+        # La unicidad ya no es global sino por sucursal (dos sucursales
+        # pueden tener cada una su propio registro de un mismo proveedor);
+        # los compartidos (sucursal null) siguen siendo unicos entre si,
+        # porque un UniqueConstraint comun no compara NULL contra NULL.
+        constraints = [
+            models.UniqueConstraint(fields=['sucursal', 'descripcion'], name='proveedor_descripcion_unica_por_sucursal'),
+            models.UniqueConstraint(fields=['sucursal', 'nit'], name='proveedor_nit_unico_por_sucursal'),
+            models.UniqueConstraint(fields=['descripcion'], condition=models.Q(sucursal__isnull=True),
+                                    name='proveedor_descripcion_unica_compartido'),
+            models.UniqueConstraint(fields=['nit'], condition=models.Q(sucursal__isnull=True),
+                                    name='proveedor_nit_unico_compartido'),
+        ]
 
 
 class ComprasEnc(ClaseModelo):

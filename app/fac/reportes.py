@@ -696,10 +696,21 @@ def _contexto_reporte_cierre_ventas(f1, f2, request=None):
     )
 
     from .models import CierreDia
-    cierres = {
-        c.fecha: c
-        for c in CierreDia.objects.filter(fecha__gte=f1_parsed, fecha__lte=f2_parsed)
-    }
+    # Cierre por sucursal (25/09/2026): si el reporte esta acotado a UNA
+    # sucursal (alcance del usuario o selector), se muestran los cierres
+    # de esa sucursal (mas los globales). Con varias, se muestra el
+    # primer cierre que exista para cada fecha (comportamiento anterior).
+    cierres_qs = CierreDia.objects.filter(fecha__gte=f1_parsed, fecha__lte=f2_parsed)
+    if request is not None:
+        from bases.alcance import sucursales_visibles_ids, sucursal_elegida
+        _vis = sucursales_visibles_ids(request.user)
+        _sel = sucursal_elegida(request)
+        _ids = ([_sel] if (_vis is None or _sel in _vis) else []) if _sel else _vis
+        if _ids is not None and len(_ids) == 1:
+            cierres_qs = cierres_qs.filter(Q(sucursal_id=_ids[0]) | Q(sucursal__isnull=True))
+    cierres = {}
+    for c in cierres_qs.order_by('-sucursal_id'):
+        cierres.setdefault(c.fecha, c)
 
     dias = []
     total_activo = 0

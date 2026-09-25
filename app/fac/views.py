@@ -22,7 +22,7 @@ from bases.alcance import filtrar_por_sucursal, contexto_filtro_sucursal, puede_
 from bases.alcance import requiere_alcance, AlcanceObjetoMixin
 from bases.views import SinPrivilegios, obtener_sucursal_actual
 
-from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, Pago, NotaCreditoDebito, \
+from .models import Cliente, FacturaEnc, FacturaDet, CierreDia, dias_pendientes_de_cierre, dia_cerrado, Pago, NotaCreditoDebito, \
     EventoSignificativo, PaqueteFacturas
 from .forms import ClienteForm
 import inv.views as inv
@@ -172,9 +172,15 @@ class FacturaView(SinPrivilegios, generic.ListView):
         context = super().get_context_data(**kwargs)
         context.update(contexto_filtro_sucursal(self.request))
         context['sucursal_sel'] = self.sucursal_sel
-        fechas_cerradas = set(CierreDia.objects.values_list('fecha', flat=True))
+        # Cierre de dia POR SUCURSAL (25/09/2026): un cierre global
+        # (sucursal null) cuenta para todas; uno con sucursal, solo para
+        # las facturas de esa sucursal.
+        _cierres = list(CierreDia.objects.values_list('fecha', 'sucursal_id'))
+        _globales = {f for f, s in _cierres if s is None}
+        _por_sucursal = {(f, s) for f, s in _cierres if s is not None}
         for item in context['obj']:
-            item.dia_cerrado = timezone.localtime(item.fecha).date() in fechas_cerradas
+            _dia = timezone.localtime(item.fecha).date()
+            item.dia_cerrado = _dia in _globales or (_dia, item.sucursal_id) in _por_sucursal
             # ncd_validada guarda el OBJETO (no solo un booleano) --
             # agregado 15/09/2026 junto con anular_ncd, que necesita el
             # id real de la NCD para armar el link de accion.
@@ -245,7 +251,7 @@ def facturas(request,id=None):
         clientes = clientes.filter(sucursal=sucursal_actual)
 
     if request.method == "GET":
-        if not id and dias_pendientes_de_cierre():
+        if not id and dias_pendientes_de_cierre(sucursal_actual):
             messages.warning(
                 request,
                 'No puede registrar facturas nuevas: hay días anteriores pendientes de Cierre de Día.'
@@ -283,7 +289,7 @@ def facturas(request,id=None):
         return render(request, template_name, contexto)
     
     if request.method == "POST":
-        if not id and dias_pendientes_de_cierre():
+        if not id and dias_pendientes_de_cierre(sucursal_actual):
             messages.warning(
                 request,
                 'No puede registrar facturas nuevas: hay días anteriores pendientes de Cierre de Día.'
@@ -1213,7 +1219,7 @@ def eliminar_factura(request, id):
     # sus totales en silencio invalidaria un Cierre de Dia que ya se
     # dio por definitivo.
     fecha_factura = timezone.localtime(enc.fecha).date()
-    if CierreDia.objects.filter(fecha=fecha_factura).exists():
+    if dia_cerrado(fecha_factura, enc.sucursal):
         messages.error(
             request,
             f'No se puede eliminar: el día {fecha_factura.strftime("%d/%m/%Y")} '
@@ -1333,12 +1339,30 @@ def factura_emitir_sin(request, id):
         })
 
 
+def _sucursal_de_cierre(request):
+    """Sucursal cuyo dia se esta cerrando: la sucursal ACTUAL del usuario
+    (25/09/2026, el cierre es por sucursal). Devuelve (sucursal, error);
+    error solo si hay varias sucursales y no se puede resolver cual."""
+    from fe.models import Sucursal
+    sucursal = obtener_sucursal_actual(request)
+    if sucursal is None and Sucursal.objects.exists():
+        return None, ('No se pudo determinar su sucursal. Pida a un Administrador que se la '
+                      'asigne en Usuarios y Roles antes de cerrar el día.')
+    return sucursal, None
+
+
 @login_required(login_url='/login/')
 def cierre_dia_pendientes(request):
-    pendientes = dias_pendientes_de_cierre()
+    sucursal_cierre, error_suc = _sucursal_de_cierre(request)
+    if error_suc:
+        messages.error(request, error_suc)
+        return redirect('bases:home')
+    pendientes = dias_pendientes_de_cierre(sucursal_cierre)
     dias = []
     for fecha in pendientes:
         facturas_dia = FacturaEnc.objects.filter(fecha__date=fecha, estado=True)
+        if sucursal_cierre is not None:
+            facturas_dia = facturas_dia.filter(sucursal=sucursal_cierre)
         sin_resolver = facturas_dia.filter(
             estado_sin__in=[FacturaEnc.SIN_NO_ENVIADA, FacturaEnc.SIN_OBSERVADA],
             anulado=False,
@@ -1349,7 +1373,7 @@ def cierre_dia_pendientes(request):
             'total_facturado': round(facturas_dia.aggregate(t=Sum('total'))['t'] or 0, 2),
             'pendientes_sin': sin_resolver.count(),
         })
-    return render(request, 'fac/cierre_dia_pendientes.html', {'dias': dias})
+    return render(request, 'fac/cierre_dia_pendientes.html', {'dias': dias, 'sucursal_cierre': sucursal_cierre})
 
 
 @login_required(login_url='/login/')
@@ -1357,7 +1381,11 @@ def cierre_dia_detalle(request, fecha):
     from django.utils.dateparse import parse_date
 
     fecha_parsed = parse_date(fecha)
-    pendientes = dias_pendientes_de_cierre()
+    sucursal_cierre, error_suc = _sucursal_de_cierre(request)
+    if error_suc:
+        messages.error(request, error_suc)
+        return redirect('bases:home')
+    pendientes = dias_pendientes_de_cierre(sucursal_cierre)
 
     if fecha_parsed not in pendientes:
         messages.error(request, 'Esa fecha no está pendiente de cierre.')
@@ -1372,6 +1400,8 @@ def cierre_dia_detalle(request, fecha):
         return redirect('fac:cierre_dia_pendientes')
 
     facturas_dia = FacturaEnc.objects.filter(fecha__date=fecha_parsed, estado=True).order_by('id')
+    if sucursal_cierre is not None:
+        facturas_dia = facturas_dia.filter(sucursal=sucursal_cierre)
     sin_resolver = facturas_dia.filter(
         estado_sin__in=[FacturaEnc.SIN_NO_ENVIADA, FacturaEnc.SIN_OBSERVADA],
         anulado=False,
@@ -1404,6 +1434,7 @@ def cierre_dia_detalle(request, fecha):
 
         CierreDia.objects.create(
             fecha=fecha_parsed,
+            sucursal=sucursal_cierre,
             estado=CierreDia.ESTADO_CERRADO_CON_PENDIENTES if cantidad_pendientes > 0 else CierreDia.ESTADO_CERRADO,
             usuario_cierre=request.user,
             total_facturado=round(facturas_dia.aggregate(t=Sum('total'))['t'] or 0, 2),
@@ -1418,6 +1449,7 @@ def cierre_dia_detalle(request, fecha):
 
     return render(request, 'fac/cierre_dia_detalle.html', {
         'fecha': fecha_parsed,
+        'sucursal_cierre': sucursal_cierre,
         'facturas': facturas_dia,
         'sin_resolver': sin_resolver,
         'total_facturado': round(facturas_dia.aggregate(t=Sum('total'))['t'] or 0, 2),

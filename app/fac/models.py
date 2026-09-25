@@ -705,7 +705,16 @@ class CierreDia(ClaseModelo2):
         (ESTADO_CERRADO_CON_PENDIENTES, 'Cerrado con pendientes (forzado por supervisor)'),
     ]
 
-    fecha = models.DateField(unique=True)
+    # sucursal (25/09/2026, pedido de Carlos): el cierre de dia pasa a ser
+    # POR SUCURSAL -- antes era unico por fecha para toda la empresa y,
+    # con 2+ sucursales, que una cerrara su dia bloqueaba a las demas.
+    # Null = cierre "global" (datos anteriores o instalaciones sin
+    # sucursales): cuenta como cerrado para TODAS las sucursales.
+    sucursal = models.ForeignKey(
+        'fe.Sucursal', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cierres_dia'
+    )
+    fecha = models.DateField()
     estado = models.CharField(max_length=25, choices=ESTADO_CHOICES, default=ESTADO_CERRADO)
     fecha_hora_cierre = models.DateTimeField(auto_now_add=True)
     usuario_cierre = models.ForeignKey(
@@ -717,11 +726,14 @@ class CierreDia(ClaseModelo2):
     observaciones = models.TextField(null=True, blank=True)
 
     def __str__(self):
-        return f"Cierre {self.fecha}"
+        return f"Cierre {self.fecha}" + (f" ({self.sucursal})" if self.sucursal_id else "")
 
     class Meta:
         verbose_name = "Cierre de Día"
         verbose_name_plural = "Cierres de Día"
+        constraints = [
+            models.UniqueConstraint(fields=['fecha', 'sucursal'], name='cierre_dia_unico_por_sucursal'),
+        ]
         permissions = [
             ('gestionar_cierre_dia', 'Permiso para gestionar el Cierre de Día'),
             # Agregado 27/08/2026 -- antes, forzar el cierre con facturas
@@ -823,15 +835,39 @@ class PaqueteFacturas(ClaseModelo2):
         verbose_name_plural = "Paquetes de Facturas (contingencia)"
 
 
-def dias_pendientes_de_cierre():
+def _cierres_que_aplican(sucursal):
+    """Cierres que cuentan para `sucursal`: los suyos + los globales
+    (sucursal null). sucursal=None -> solo los globales."""
+    q = models.Q(sucursal__isnull=True)
+    if sucursal is not None:
+        q |= models.Q(sucursal=sucursal)
+    return CierreDia.objects.filter(q)
+
+
+def dia_cerrado(fecha, sucursal):
+    """True si `fecha` ya esta cerrada para esa sucursal (25/09/2026:
+    el cierre es por sucursal; un cierre global cuenta para todas)."""
+    return _cierres_que_aplican(sucursal).filter(fecha=fecha).exists()
+
+
+def fechas_cerradas_de(sucursal):
+    return set(_cierres_que_aplican(sucursal).values_list('fecha', flat=True))
+
+
+def dias_pendientes_de_cierre(sucursal=None):
+    """Dias anteriores a hoy con facturas y sin cierre. Con `sucursal`,
+    solo mira las facturas y los cierres de esa sucursal; sin ella
+    (instalaciones sin sucursales) mira todo, como siempre."""
     hoy = timezone.localdate()
+    facturas = FacturaEnc.objects.filter(fecha__date__lt=hoy, estado=True)
+    if sucursal is not None:
+        facturas = facturas.filter(sucursal=sucursal)
     fechas_con_facturas = (
-        FacturaEnc.objects.filter(fecha__date__lt=hoy, estado=True)
-        .annotate(dia=TruncDate('fecha'))
+        facturas.annotate(dia=TruncDate('fecha'))
         .values_list('dia', flat=True)
         .distinct()
     )
-    fechas_cerradas = set(CierreDia.objects.values_list('fecha', flat=True))
+    fechas_cerradas = fechas_cerradas_de(sucursal)
     return sorted(d for d in fechas_con_facturas if d not in fechas_cerradas)
 
 

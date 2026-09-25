@@ -113,3 +113,27 @@ class ProductoDetalleTests(ApiBaseTestCase):
     def test_codigo_inexistente_devuelve_404_no_error_de_servidor(self):
         resp = self.client.get("/api/v1/productos/CODIGO-QUE-NO-EXISTE")
         self.assertEqual(resp.status_code, 404)
+
+
+
+
+class ExistenciaPorSucursalApiTests(ApiBaseTestCase):
+    """25/09/2026: 'existencia' del API es la de la sucursal actual del
+    usuario (la pantalla de Facturas la usa para avisar 'sin
+    existencia'); el total queda en 'existencia_total'."""
+
+    def test_existencia_es_la_de_la_sucursal_actual(self):
+        from fe.models import Empresa, Sucursal
+        from inv.models import ajustar_stock_sucursal
+        empresa = Empresa.objects.create(razon_social="EMPRESA API")
+        central = Sucursal.objects.create(empresa=empresa, codigo_sucursal=0, nombre="Central")
+        cbba = Sucursal.objects.create(empresa=empresa, codigo_sucursal=1, nombre="Cochabamba")
+        ajustar_stock_sucursal(self.producto.id, central, 40)
+        ajustar_stock_sucursal(self.producto.id, cbba, 3)
+        from bases.models import PerfilUsuario
+        PerfilUsuario.objects.create(user=self.usuario, sucursal=cbba)
+        self.client.login(username="api_test_user", password="ApiTest123!")
+        data = self.client.get(f"/api/v1/productos/{self.producto.codigo}").json()
+        self.assertEqual(data["existencia"], 3)
+        self.assertEqual(data["existencia_total"], 43)
+

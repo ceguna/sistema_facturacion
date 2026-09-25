@@ -4,6 +4,7 @@
 <div class="card shadow mb-4">
   <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
     <h4 class="m-0 font-weight-bold text-primary">Cierre de Día — Días Pendientes</h4>
+    {% if sucursal_cierre %}<span class="badge badge-light border ml-2"><i class="fas fa-store mr-1"></i>{{ sucursal_cierre.nombre }}</span>{% endif %}
     <a href="{% url 'bases:home' %}" class="btn btn-secondary btn-sm">
       <i class="fas fa-arrow-left mr-1"></i>Volver
     </a>

@@ -184,3 +184,56 @@ class ImpresionComprasTests(ComprasBaseTestCase):
         resp = self.client.get("/cmp/compras/listado")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get("Content-Type"), "application/pdf")
+
+
+class ProveedoresPorSucursalTests(ComprasBaseTestCase):
+    """25/09/2026: cada sucursal tiene sus proveedores locales; los de
+    sucursal vacia son compartidos."""
+
+    def setUp(self):
+        super().setUp()
+        from bases.models import PerfilUsuario
+        self.cbba = Sucursal.objects.create(empresa=self.empresa, codigo_sucursal=1, nombre="Cochabamba")
+        self.prov_local_central = Proveedor.objects.create(
+            descripcion="Local Central", nit="111", contacto="x", telefono="1", email="a@a.com",
+            sucursal=self.sucursal, uc=self.admin)
+        self.prov_local_cbba = Proveedor.objects.create(
+            descripcion="Local Cbba", nit="222", contacto="x", telefono="1", email="b@b.com",
+            sucursal=self.cbba, uc=self.admin)
+        # self.proveedor (base) es compartido (sucursal vacia)
+        PerfilUsuario.objects.create(user=self.admin, sucursal=self.cbba)
+
+    def test_listado_limitado_muestra_compartidos_y_los_de_su_sucursal(self):
+        from bases.models import PerfilUsuario
+        from django.contrib.auth.models import Permission
+        u = User.objects.create_user("lim_prov", "l@t.com", "Test12345!")
+        u.user_permissions.add(Permission.objects.get(codename="view_proveedor", content_type__app_label="cmp"))
+        PerfilUsuario.objects.create(user=u, sucursal=self.cbba, alcance="SUCURSAL")
+        self.client.login(username="lim_prov", password="Test12345!")
+        resp = self.client.get("/cmp/proveedores/")
+        nombres = {p.descripcion for p in resp.context["obj"]}
+        self.assertEqual(nombres, {"PROVEEDOR DE PRUEBA", "LOCAL CBBA"})
+
+    def test_compra_solo_ofrece_proveedores_de_la_sucursal_actual(self):
+        resp = self.client.get("/cmp/compras/new")
+        nombres = {p.descripcion for p in resp.context["form_enc"].fields["proveedor"].queryset}
+        self.assertEqual(nombres, {"PROVEEDOR DE PRUEBA", "LOCAL CBBA"})
+
+    def test_no_se_puede_comprar_a_un_proveedor_de_otra_sucursal(self):
+        self.client.post("/cmp/compras/new", {
+            "fecha_compra": "2026-07-18", "observacion": "x", "no_factura": "F-1",
+            "fecha_factura": "2026-07-18", "proveedor": self.prov_local_central.id,
+            "id_id_producto": self.producto.id, "id_cantidad_detalle": 5,
+            "id_precio_detalle": 8, "id_sub_total_detalle": 40,
+            "id_descuento_detalle": 0, "id_total_detalle": 40,
+        })
+        self.assertFalse(ComprasEnc.objects.exists())
+
+    def test_mismo_nombre_permitido_en_sucursales_distintas_pero_no_en_la_misma(self):
+        from cmp.forms import ProveedorForm
+        datos = {"descripcion": "Local Central", "nit": "999", "contacto": "x",
+                 "telefono": "1", "email": "z@z.com", "estado": True}
+        otra = ProveedorForm(data={**datos, "sucursal": self.cbba.id})
+        self.assertTrue(otra.is_valid(), otra.errors)
+        misma = ProveedorForm(data={**datos, "sucursal": self.sucursal.id})
+        self.assertFalse(misma.is_valid())

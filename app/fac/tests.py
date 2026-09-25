@@ -382,3 +382,49 @@ class ImpresionFacturaTests(FacturacionBaseTestCase):
         enc = self._crear_factura_directa(cantidad=4)
         resp = self.client.get(f"/fac/facturas/imprimir/{enc.id}")
         self.assertEqual(resp.status_code, 200)
+
+
+
+
+class CierreDiaPorSucursalTests(FacturacionBaseTestCase):
+    """25/09/2026: el cierre de dia es POR SUCURSAL -- antes era unico
+    por fecha para toda la empresa y, con 2+ sucursales, que una
+    cerrara su dia bloqueaba a las demas."""
+
+    def setUp(self):
+        super().setUp()
+        from fac.models import CierreDia
+        self.cbba = Sucursal.objects.create(empresa=self.empresa, codigo_sucursal=1, nombre="Cochabamba")
+        self.ayer = timezone.localdate() - datetime.timedelta(days=1)
+        for suc in (self.sucursal, self.cbba):
+            enc = FacturaEnc.objects.create(cliente=self.cliente, sub_total=10, descuento=0, total=10, sucursal=suc)
+            FacturaEnc.objects.filter(pk=enc.pk).update(fecha=timezone.now() - datetime.timedelta(days=1))
+        self.CierreDia = CierreDia
+
+    def test_pendientes_se_calculan_por_sucursal(self):
+        from fac.models import dias_pendientes_de_cierre
+        self.assertEqual(dias_pendientes_de_cierre(self.sucursal), [self.ayer])
+        self.CierreDia.objects.create(fecha=self.ayer, sucursal=self.sucursal, uc=self.admin)
+        self.assertEqual(dias_pendientes_de_cierre(self.sucursal), [])
+        # La otra sucursal sigue pendiente.
+        self.assertEqual(dias_pendientes_de_cierre(self.cbba), [self.ayer])
+
+    def test_cierre_global_cuenta_para_todas(self):
+        from fac.models import dia_cerrado
+        self.CierreDia.objects.create(fecha=self.ayer, sucursal=None, uc=self.admin)
+        self.assertTrue(dia_cerrado(self.ayer, self.sucursal))
+        self.assertTrue(dia_cerrado(self.ayer, self.cbba))
+
+    def test_cerrar_el_dia_desde_una_sucursal_no_cierra_la_otra(self):
+        from bases.models import PerfilUsuario
+        PerfilUsuario.objects.create(user=self.admin, sucursal=self.cbba)
+        # Las facturas de prueba no se emitieron al SIN, asi que el cierre
+        # limpio no aplica: se fuerza con observacion (admin tiene el permiso).
+        resp = self.client.post(f"/fac/cierre-dia/{self.ayer.isoformat()}/",
+                                {"forzar": "1", "observaciones": "prueba"})
+        self.assertEqual(resp.status_code, 302)
+        cierre = self.CierreDia.objects.get()
+        self.assertEqual(cierre.sucursal, self.cbba)
+        from fac.models import dia_cerrado
+        self.assertTrue(dia_cerrado(self.ayer, self.cbba))
+        self.assertFalse(dia_cerrado(self.ayer, self.sucursal))

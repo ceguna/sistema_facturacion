@@ -21,6 +21,25 @@ class ProductoSerializer(serializers.ModelSerializer):
         model=Producto
         fields='__all__' #Todos los campos del producto.
 
+    def to_representation(self, instance):
+        # 25/09/2026: 'existencia' pasa a ser la de la SUCURSAL ACTUAL del
+        # usuario (StockSucursal), no el total de la empresa -- la
+        # pantalla de Facturas usa este valor para avisar "sin
+        # existencia", y el servidor ya validaba por sucursal, asi que el
+        # cajero veia stock disponible que su sucursal no tenia. El total
+        # sigue disponible como 'existencia_total'.
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request is not None:
+            from bases.views import obtener_sucursal_actual
+            from inv.models import StockSucursal
+            sucursal = obtener_sucursal_actual(request)
+            if sucursal is not None:
+                fila = StockSucursal.objects.filter(producto=instance, sucursal=sucursal).first()
+                data['existencia_total'] = data['existencia']
+                data['existencia'] = fila.cantidad if fila else 0
+        return data
+
 
 class ClienteSerializer(serializers.ModelSerializer):
 

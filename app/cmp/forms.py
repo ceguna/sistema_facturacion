@@ -4,36 +4,45 @@ from .models import Proveedor, ComprasEnc
 
 class ProveedorForm(forms.ModelForm):
     email = forms.EmailField(max_length=254)
+
     class Meta:
-        model=Proveedor 
+        model=Proveedor
         #Al no especificar los campos que va tomar, automaticamente toma todos
         exclude = ['um','fm','uc','fc'] #Excluye del formulario esos campos para que no se tomen en cuenta
         widget={'descripcion': forms.TextInput}
+        labels = {'sucursal': 'Sucursal (vacío = compartido con todas)'}
 
-    def __init__(self,*args,**kwargs):
-        super().__init__(*args,**kwargs)
+    def __init__(self, *args, user=None, sucursal_actual=None, **kwargs):
+        super().__init__(*args, **kwargs)
         for field in iter(self.fields):
             self.fields[field].widget.attrs.update({
                 'class':'form-control'
             })
+        # Alcance (25/09/2026): un usuario limitado a su sucursal solo puede
+        # crear proveedores de SU sucursal (no compartidos ni de otra); uno
+        # sin restriccion puede elegir cualquiera o dejarlo compartido.
+        from bases.alcance import sucursales_visibles_ids
+        ids = sucursales_visibles_ids(user) if user is not None else None
+        if ids is not None:
+            self.fields['sucursal'].queryset = self.fields['sucursal'].queryset.filter(pk__in=ids)
+            self.fields['sucursal'].required = True
+            self.fields['sucursal'].empty_label = None
+        if not self.instance.pk and sucursal_actual is not None and 'sucursal' not in self.initial:
+            self.initial['sucursal'] = sucursal_actual.pk
 
-    def clean(self): #Clean abarca a todos los campos del formulario
-        try:
-            #Luego se toma de la instancia el campo unique con el metodo GET del modelo proveedor.
-            sc = Proveedor.objects.get(
-                descripcion=self.cleaned_data["descripcion"].upper()
-            )
-
-            if not self.instance.pk:
-                print("Registro ya existe")
-                raise forms.ValidationError("Registro Ya Existe")
-            elif self.instance.pk!=sc.pk:
-                print("Cambio no permitido")
-                raise forms.ValidationError("Cambio No Permitido, coincide con otro registro")
-        #Si no encuentra el objeto, entonces manda un error para que se continue sin problema
-        except Proveedor.DoesNotExist: 
-            pass
-        return self.cleaned_data #Se retorna toda la data que se valido
+    def clean(self):
+        cleaned = super().clean()
+        descripcion = (cleaned.get('descripcion') or '').upper()
+        sucursal = cleaned.get('sucursal')
+        if descripcion:
+            repetido = Proveedor.objects.filter(descripcion=descripcion, sucursal=sucursal) \
+                .exclude(pk=self.instance.pk).first()
+            if repetido:
+                raise forms.ValidationError(
+                    "Registro Ya Existe" if not self.instance.pk
+                    else "Cambio No Permitido, coincide con otro registro"
+                )
+        return cleaned
 
 class ComprasEncForm(forms.ModelForm):
 

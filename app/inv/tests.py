@@ -310,3 +310,92 @@ class ProductoHomologarPendientesPermisosTests(InventarioBaseTestCase):
     def test_usuario_con_view_producto_accede(self):
         resp = self.client.get("/inv/productos/homologar-pendientes/")
         self.assertEqual(resp.status_code, 200)
+
+
+class CargaInicialSucursalTests(InventarioBaseTestCase):
+    """25/09/2026: la Carga Inicial por Excel guardaba el ajuste SIN
+    sucursal -- el stock entraba solo al total de la empresa (no a
+    StockSucursal), asi que ninguna sucursal podia vender ni transferir
+    lo cargado."""
+
+    def _excel(self):
+        import io
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Codigo", "Descripcion", "Marca", "Categoria", "Subcategoria", "UM",
+                   "Cantidad", "Costo", "Precio", "PrecioRef", "Margen"])
+        ws.append([self.producto.codigo, self.producto.descripcion, "", "", "", "",
+                   25, 4.5, "", "", ""])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        buf.name = "carga.xlsx"
+        return buf
+
+    def test_carga_inicial_suma_a_la_sucursal_del_usuario(self):
+        MotivoAjusteInventario.objects.create(
+            descripcion="Carga Inicial", es_entrada=True, afecta_costo_actual=True, uc=self.admin)
+        resp = self.client.post("/inv/ajustes/carga-inicial/importar/", {"archivo": self._excel()})
+        self.assertEqual(resp.status_code, 302)
+        enc = AjusteInventarioEnc.objects.get()
+        self.assertEqual(enc.sucursal, self.sucursal)
+        fila = StockSucursal.objects.get(producto=self.producto, sucursal=self.sucursal)
+        self.assertEqual(fila.cantidad, 25)
+
+
+class ProductoExistenciaPorSucursalTests(InventarioBaseTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.cbba = Sucursal.objects.create(empresa=self.empresa, codigo_sucursal=1, nombre="Cochabamba")
+        ajustar_stock_sucursal(self.producto.id, self.sucursal, 30)
+        ajustar_stock_sucursal(self.producto.id, self.cbba, 7)
+
+    def _existencia(self, resp):
+        return {p.id: p.existencia for p in resp.context["obj"]}[self.producto.id]
+
+    def test_sin_filtro_muestra_el_total(self):
+        resp = self.client.get("/inv/productos/")
+        self.assertEqual(self._existencia(resp), 37)
+
+    def test_selector_muestra_el_stock_de_esa_sucursal(self):
+        resp = self.client.get(f"/inv/productos/?sucursal={self.cbba.id}")
+        self.assertEqual(self._existencia(resp), 7)
+
+    def test_usuario_limitado_ve_solo_el_stock_de_su_sucursal(self):
+        from django.contrib.auth.models import Permission
+        u = User.objects.create_user("lim_prod", "l@t.com", "Test12345!")
+        u.user_permissions.add(Permission.objects.get(codename="view_producto", content_type__app_label="inv"))
+        PerfilUsuario.objects.create(user=u, sucursal=self.cbba, alcance="SUCURSAL")
+        self.client.login(username="lim_prod", password="Test12345!")
+        resp = self.client.get("/inv/productos/")
+        self.assertEqual(self._existencia(resp), 7)
+
+
+class RevisionPreciosSoloCentralTests(InventarioBaseTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.cbba = Sucursal.objects.create(empresa=self.empresa, codigo_sucursal=1, nombre="Cochabamba")
+        from inv.models import TipoCambio
+        import datetime
+        TipoCambio.objects.create(fecha=datetime.date(2026, 9, 1), valor=7.0, uc=self.admin)
+        Producto.objects.filter(pk=self.producto.pk).update(
+            precio_referencia_usd=10, margen_deseado_pct=30, precio=5)
+
+    def test_desde_una_sucursal_no_central_es_solo_lectura(self):
+        PerfilUsuario.objects.create(user=self.admin, sucursal=self.cbba)
+        resp = self.client.get("/inv/productos/revision-precios/")
+        self.assertTrue(resp.context["solo_lectura"])
+        self.client.post(f"/inv/productos/revision-precios/aplicar/{self.producto.pk}/")
+        self.producto.refresh_from_db()
+        self.assertEqual(self.producto.precio, 5)
+
+    def test_desde_la_central_si_se_puede_aplicar(self):
+        PerfilUsuario.objects.create(user=self.admin, sucursal=self.sucursal)
+        resp = self.client.get("/inv/productos/revision-precios/")
+        self.assertFalse(resp.context["solo_lectura"])
+        self.client.post(f"/inv/productos/revision-precios/aplicar/{self.producto.pk}/")
+        self.producto.refresh_from_db()
+        self.assertNotEqual(self.producto.precio, 5)

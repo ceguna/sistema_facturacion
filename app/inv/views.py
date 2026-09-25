@@ -219,6 +219,22 @@ class ProductoView(SinPrivilegios, generic.ListView):
     context_object_name = "obj"
     login_url = "bases:login"
 
+    def get_context_data(self, **kwargs):
+        # Existencia por sucursal (25/09/2026): con alcance limitado o un
+        # sucursal elegida en el selector, se muestra el stock de ESAS
+        # sucursales (StockSucursal), no el total de la empresa. Sin
+        # restriccion ni seleccion, sigue mostrando el total.
+        from bases.alcance import mapa_stock, contexto_filtro_sucursal
+        context = super().get_context_data(**kwargs)
+        mapa = mapa_stock(self.request)
+        productos = list(context['obj'])
+        if mapa is not None:
+            for p in productos:
+                p.existencia = mapa.get(p.id, 0)
+        context['obj'] = productos
+        context.update(contexto_filtro_sucursal(self.request))
+        return context
+
 class ProductoNew(SuccessMessageMixin,SinPrivilegios, generic.CreateView):
     permission_required = "inv.add_producto"
     model = Producto
@@ -430,6 +446,23 @@ class TipoCambioEdit(SuccessMessageMixin, SinPrivilegios, generic.UpdateView):
         return super().form_valid(form)
 
 
+def _precios_solo_lectura(request):
+    """Revision de Precios se ANALIZA y EJECUTA solo desde la Central (Casa
+    Matriz, codigo_sucursal=0) -- Producto.precio es unico para toda la
+    empresa, asi que un cambio hecho desde una sucursal afectaria a todas.
+    Desde cualquier otra sucursal la pantalla es de solo lectura
+    (25/09/2026, pedido de Carlos). Sin sucursal resuelta (instalacion de
+    una sola sucursal o sin sucursales) no se restringe nada."""
+    sucursal = obtener_sucursal_actual(request)
+    return sucursal is not None and sucursal.codigo_sucursal != 0
+
+
+_MSJ_PRECIOS_SOLO_CENTRAL = (
+    'Los precios solo se pueden actualizar desde la Central (Casa Matriz). '
+    'Desde una sucursal esta pantalla es de solo lectura.'
+)
+
+
 @login_required(login_url='/login/')
 @permission_required('inv.gestionar_precios_tc', login_url='bases:sin_privilegios')
 def revision_precios(request):
@@ -455,6 +488,7 @@ def revision_precios(request):
         'filas': filas,
         'tipo_cambio_actual': tipo_cambio_actual,
         'umbral': UMBRAL_VARIACION_PCT,
+        'solo_lectura': _precios_solo_lectura(request),
     })
 
 
@@ -482,6 +516,9 @@ def _aplicar_precio_sugerido(producto, tipo_cambio_actual, usuario):
 def aplicar_precio_sugerido(request, id):
     if request.method != 'POST':
         return redirect('inv:revision_precios')
+    if _precios_solo_lectura(request):
+        messages.error(request, _MSJ_PRECIOS_SOLO_CENTRAL)
+        return redirect('inv:revision_precios')
 
     producto = Producto.objects.filter(pk=id).first()
     if not producto:
@@ -503,6 +540,9 @@ def aplicar_precio_sugerido(request, id):
 @permission_required('inv.gestionar_precios_tc', login_url='bases:sin_privilegios')
 def aplicar_todos_sugeridos(request):
     if request.method != 'POST':
+        return redirect('inv:revision_precios')
+    if _precios_solo_lectura(request):
+        messages.error(request, _MSJ_PRECIOS_SOLO_CENTRAL)
         return redirect('inv:revision_precios')
 
     UMBRAL_VARIACION_PCT = 3
@@ -880,6 +920,19 @@ def carga_inicial_importar(request):
         messages.error(request, 'Debe seleccionar un archivo Excel (.xlsx).')
         return redirect('inv:carga_inicial')
 
+    # Sucursal (25/09/2026): la carga inicial suma stock a la sucursal
+    # ACTUAL del usuario -- antes el ajuste se guardaba sin sucursal y el
+    # stock solo entraba al total de la empresa (no a StockSucursal), asi
+    # que esa sucursal no podia vender lo cargado ni transferirlo.
+    sucursal_actual = obtener_sucursal_actual(request)
+    if sucursal_actual is None:
+        messages.error(
+            request,
+            'No se pudo determinar su sucursal. Pida a un Administrador que se la '
+            'asigne en Usuarios y Roles antes de hacer la carga inicial.'
+        )
+        return redirect('inv:carga_inicial')
+
     try:
         wb = load_workbook(archivo, data_only=True)
         ws = wb.active
@@ -1004,7 +1057,8 @@ def carga_inicial_importar(request):
     with transaction.atomic():
         enc = AjusteInventarioEnc.objects.create(
             fecha=timezone.localdate(), motivo=motivo,
-            observacion='Carga inicial de inventario por Excel', uc=request.user
+            observacion='Carga inicial de inventario por Excel', uc=request.user,
+            sucursal=sucursal_actual,
         )
         creados = 0
         for f in filas_validas:
